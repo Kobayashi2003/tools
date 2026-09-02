@@ -1,0 +1,7 @@
+.env
+config.json
+cache/
+links_*.json
+state.json
+__pycache__/
+*.pyc

@@ -1,0 +1,13 @@
+{
+  "site": "https://n.novelia.cc",
+  "output_dir": "downloads",
+  "token": "",
+  "mode": "jp-zh",
+  "translations": ["sakura", "gpt", "youdao", "baidu"],
+  "convert": true,
+  "vertical": true,
+  "verify": true,
+  "keep_original": false,
+  "workers": 3,
+  "proxy": ""
+}

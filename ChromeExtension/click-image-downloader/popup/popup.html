@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="icon" aria-hidden="true">
+      <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="4" width="14" height="11" rx="2" stroke="white" stroke-width="1.5"/>
+        <circle cx="7.5" cy="8" r="1.3" fill="white"/>
+        <path d="M4 13l4-4 3 3 2-2 3 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div>
+      <div class="title">Click Image Downloader</div>
+      <div class="subtitle">Modifier + click to save images</div>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="row">
+      <div>
+        <div class="row-label">Enable on pages</div>
+        <div class="row-hint">Turn the click-to-download capture on or off</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="toggle-enabled">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="section-label">Trigger key</div>
+    <div class="key-grid" id="key-grid">
+      <button class="key-btn" data-key="alt">Alt</button>
+      <button class="key-btn" data-key="ctrl">Ctrl</button>
+      <button class="key-btn" data-key="shift">Shift</button>
+      <button class="key-btn" data-key="meta">⌘ / Win</button>
+    </div>
+
+    <div class="howto">
+      <div class="howto-title">How to use</div>
+      <ol>
+        <li>Hold <b id="key-name">Alt</b> and hover an image — it gets outlined.</li>
+        <li>If images overlap, <b>scroll</b> to switch between them (<span class="mono">1/N</span>).</li>
+        <li><b>Left-click</b> while holding <b id="key-name-2">Alt</b> to download it.</li>
+      </ol>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

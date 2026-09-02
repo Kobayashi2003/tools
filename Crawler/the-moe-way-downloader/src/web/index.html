@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#151a2a">
+<title>book-sharing — the moe way</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-inner ident-row">
+    <div class="ident">
+      <span class="logo">TMW</span>
+      <label class="channel">
+        <span class="hash">#</span>
+        <select id="channel-pick" aria-label="Channel"></select>
+      </label>
+      <a id="channel-link" class="quiet" href="#" target="_blank" rel="noreferrer">Discord</a>
+    </div>
+
+    <div class="counts" id="counts"></div>
+
+    <div class="acts">
+      <button id="marks-open" class="act ribbon" title="Bookmarks (b to add)">
+        Bookmarks <span id="marks-count">0</span>
+      </button>
+      <button id="sync" class="act" title="Ask Discord for anything newer">Refresh</button>
+      <button id="fetch-open" class="act" title="Read more of the channel">Fetch</button>
+      <button id="help-open" class="act icon" title="Keyboard shortcuts (?)"
+              aria-label="Keyboard shortcuts">?</button>
+    </div>
+  </div>
+
+  <div class="bar-inner tools">
+    <label class="find">
+      <span class="sr-only">Search</span>
+      <input id="search" type="search" placeholder="Search titles, authors, filenames"
+             autocomplete="off" spellcheck="false">
+      <span class="slash" aria-hidden="true">/</span>
+    </label>
+
+    <div class="filters">
+      <div class="seg" id="source" role="group" aria-label="Source">
+        <button class="chip" data-source="" aria-pressed="true">All</button>
+        <button class="chip" data-source="files" aria-pressed="false">Files</button>
+        <button class="chip" data-source="links" aria-pressed="false">Links</button>
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="Category"></div>
+      <label class="switch"><input type="checkbox" id="saved-only"><span>Bookmarked</span></label>
+      <label class="switch"><input type="checkbox" id="descending"><span>Newest first</span></label>
+      <button id="reset" class="quiet-btn" hidden>Clear filters</button>
+    </div>
+  </div>
+
+  <div class="bar-inner job" id="job" role="status" hidden>
+    <span id="job-text"></span>
+    <button id="job-stop" class="quiet-btn">Stop</button>
+  </div>
+
+  <div class="bar-inner note" id="note" hidden>
+    <span id="note-text"></span>
+    <button id="note-act" class="quiet-btn"></button>
+  </div>
+
+  <div class="bar-inner alert" id="alert" role="alert" hidden>
+    <span id="alert-text"></span>
+    <button id="alert-dismiss" class="quiet-btn">Dismiss</button>
+  </div>
+</header>
+
+<div class="stage">
+  <nav class="rail" id="rail" aria-label="Timeline"></nav>
+  <main class="feed" id="feed"><div class="spacer" id="spacer"></div></main>
+</div>
+
+<div id="growing" class="growing" role="status" hidden></div>
+
+<div id="boot" class="boot">Reading the archive…</div>
+
+<div id="light" class="light" role="dialog" aria-modal="true" aria-label="Cover" hidden>
+  <div class="light-bar">
+    <span id="light-count" class="light-count"></span>
+    <a id="light-open" class="quiet-btn" href="#" target="_blank" rel="noreferrer">Open original</a>
+    <button id="light-close" class="quiet-btn">Close</button>
+  </div>
+  <button id="light-prev" class="light-step prev" aria-label="Previous">&#8249;</button>
+  <div id="light-body" class="light-body"></div>
+  <button id="light-next" class="light-step next" aria-label="Next">&#8250;</button>
+</div>
+
+<div id="fetch" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Read more of the channel">
+    <div class="sheet-head">
+      <h3>Read more</h3>
+      <button id="fetch-close" class="quiet-btn">Close</button>
+    </div>
+    <div class="sheet-body">
+      <p class="fetch-line" id="fetch-coverage"></p>
+
+      <p class="fetch-label" id="fetch-dir-label">Which way</p>
+      <div class="chips" id="fetch-dir" role="group" aria-labelledby="fetch-dir-label">
+        <button class="chip" data-dir="older" aria-pressed="true">Earlier</button>
+        <button class="chip" data-dir="newer" aria-pressed="false">Newer</button>
+      </div>
+
+      <p class="fetch-label" id="fetch-amount-label">How much</p>
+      <div class="chips" id="fetch-amount" role="group" aria-labelledby="fetch-amount-label"></div>
+
+      <p class="fetch-note" id="fetch-note"></p>
+      <p class="fetch-line" id="fetch-progress"></p>
+
+      <div class="fetch-go">
+        <button id="fetch-start" class="act">Start reading</button>
+        <button id="fetch-stop" class="act" hidden>Stop</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="marks" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Bookmarks">
+    <div class="sheet-head">
+      <h3>Bookmarks</h3>
+      <button id="marks-close" class="quiet-btn">Close</button>
+    </div>
+    <div id="marks-list" class="sheet-list"></div>
+  </div>
+</div>
+
+<div id="help" class="sheet help" hidden>
+  <div class="sheet-card help-card" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div class="sheet-head">
+      <h3>Keys</h3>
+      <button id="help-close" class="quiet-btn">Close</button>
+    </div>
+    <dl>
+      <dt>/</dt><dd>search</dd>
+      <dt>j / k</dt><dd>next / previous share</dd>
+      <dt>b</dt><dd>bookmark the share under the cursor</dd>
+      <dt>Home / End</dt><dd>oldest / newest</dd>
+      <dt>Enter</dt><dd>open the first link of the share</dd>
+      <dt>c</dt><dd>copy every link of the share</dd>
+      <dt>Esc</dt><dd>clear search, or close this</dd>
+      <dt>?</dt><dd>this list</dd>
+    </dl>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status"></div>
+
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

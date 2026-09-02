@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="icon" aria-hidden="true">
+      <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="3" width="10" height="13" rx="1.5" stroke="white" stroke-width="1.5" opacity="0.55"/>
+        <rect x="6" y="1" width="10" height="13" rx="1.5" stroke="white" stroke-width="1.5"/>
+        <path d="M9 5h4M9 8h4M9 11h2.5" stroke="white" stroke-width="1.3" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div>
+      <div class="title">Page Screenshot</div>
+      <div class="subtitle">Capture the visible area or the whole page</div>
+    </div>
+  </div>
+
+  <div class="body">
+    <button class="btn-main" id="capture-full-btn">
+      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M7.5 2v8M4 7l3.5 3.5L11 7" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M2 12h11" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span id="capture-full-label">Capture full page</span>
+    </button>
+
+    <button class="btn-secondary" id="capture-visible-btn">
+      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="3" width="12" height="9" rx="1.5" stroke="#a0a0bc" stroke-width="1.3"/>
+        <circle cx="6" cy="6.5" r="1" fill="#a0a0bc"/>
+        <path d="M3 10.5l3-3 2 2 3-3.5" stroke="#a0a0bc" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span id="capture-visible-label">Capture visible area</span>
+    </button>
+
+    <div class="progress hidden" id="progress">
+      <div class="bar"><div class="fill" id="progress-fill"></div></div>
+      <span class="progress-text" id="progress-text"></span>
+    </div>
+
+    <div id="status" class="status hidden"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

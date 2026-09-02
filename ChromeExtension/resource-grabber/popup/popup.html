@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="icon" aria-hidden="true">
+      <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="10" cy="10" r="7" stroke="white" stroke-width="1.5"/>
+        <path d="M10 7v4l2 2" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div>
+      <div class="title">Resource Grabber</div>
+      <div class="subtitle">Grab resources from all frames</div>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="regex">Regex mode</button>
+      <button class="mode-tab" data-mode="suffix">Suffix mode</button>
+    </div>
+
+    <div class="input-group" id="group-regex">
+      <label class="input-label">Regular expression</label>
+      <input type="text" id="input-regex" class="input-field"
+             placeholder='e\.g\. \.(png|jpg|mp4)$' spellcheck="false">
+      <div class="input-hint">Matches against full URLs</div>
+    </div>
+
+    <div class="input-group hidden" id="group-suffix">
+      <label class="input-label">File extensions</label>
+      <input type="text" id="input-suffix" class="input-field"
+             placeholder="mp4, webm, jpg, pdf" spellcheck="false">
+      <div class="input-hint">Comma-separated, dot optional</div>
+    </div>
+
+    <button class="btn-main" id="btn-grab">
+      <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+        <path d="M7.5 2v8M4 7l3.5 3.5L11 7" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M2 12h11" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      Grab resources
+    </button>
+
+    <div id="status" class="status hidden"></div>
+
+    <div id="results-wrap" class="results-wrap hidden">
+      <div class="results-header">
+        <span id="results-count" class="results-count"></span>
+        <div class="btn-group">
+          <button class="btn-action download" id="btn-download-all">Download all</button>
+          <button class="btn-action" id="btn-copy">Copy all</button>
+        </div>
+      </div>
+      <div class="results-list" id="results-list"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

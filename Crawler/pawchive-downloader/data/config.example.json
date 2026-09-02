@@ -1,0 +1,43 @@
+{
+  "data_dir": "data",
+  "cache_dir": "cache",
+  "logs_dir": "logs",
+  "download_dir": "downloads",
+  "api_base": "https://pawchive.pw/api/v1",
+  "file_base": "https://file.pawchive.pw",
+  "global_timer": {
+    "type": "daily",
+    "time": "01:00"
+  },
+  "global_filter": {},
+  "links_filter": {
+    "allowed_domains": ["drive.google.com", "mega.nz", "dropbox.com"],
+    "reviewed_artists": ["fanbox_12345"],
+    "reviewed_before": "2026-01-01"
+  },
+  "retry_delay": 5,
+  "request_timeout": 30,
+  "trust_updated_timestamp": false,
+  "page_workers": 4,
+  "notify": false,
+  "max_concurrent_artists": 3,
+  "max_concurrent_posts": 5,
+  "max_concurrent_files": 10,
+  "date_format": "%Y.%m.%d",
+  "artist_folder_template": "{group}/{alias}/{service}",
+  "post_folder_template": "[{published}][{id}] {title}",
+  "file_template": "{idx}",
+  "save_content": true,
+  "save_empty_posts": false,
+  "rename_images_only": true,
+  "image_extensions": [
+    ".jpe",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp"
+  ],
+  "max_retries": 0,
+  "download_max_retries": 5
+}

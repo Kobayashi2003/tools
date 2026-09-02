@@ -1,0 +1,5 @@
+.vscode/
+__pycache__/
+temp/
+cookies.json
+config.json

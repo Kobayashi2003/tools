@@ -1,0 +1,12 @@
+{
+  "mirror": "https://annas-archive.gl",
+  "output_dir": "downloads",
+  "pages": 2,
+  "language": "",
+  "rank": ["format", "size", "date"],
+  "format_priority": ["epub", "azw3", "mobi", "fb2", "djvu", "cbz", "cbr", "pdf"],
+  "backend": "auto",
+  "secret_key": "",
+  "workers": 3,
+  "proxy": ""
+}

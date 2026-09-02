@@ -1,0 +1,21 @@
+{
+  "guild_id": "1539508913102262284",
+  "channel_id": "1539512407053967401",
+  "channel_name": "book-sharing",
+
+  "history": "",
+  "fetch_limit": 0,
+
+  "tail": false,
+  "display_cap": 0,
+
+  "merge_window_minutes": 20,
+  "merge_continuations": true,
+  "category_min": 5,
+  "link_margin_minutes": 120,
+
+  "timeout": 30,
+  "retry": 4,
+  "page_size": 100,
+  "page_pause": 1.0
+}

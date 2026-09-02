@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="icon" aria-hidden="true">
+      <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 6h12M8 6V4.5A1.5 1.5 0 0 1 9.5 3h1A1.5 1.5 0 0 1 12 4.5V6" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M5.5 6l.7 9a1.5 1.5 0 0 0 1.5 1.4h4.6a1.5 1.5 0 0 0 1.5-1.4l.7-9" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div>
+      <div class="title">Element Zapper</div>
+      <div class="subtitle">Hold a key + click to delete any element</div>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="row">
+      <div>
+        <div class="row-label">Enable on pages</div>
+        <div class="row-hint">Turn click-to-delete on or off</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="toggle-enabled">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="section-label">Trigger key</div>
+    <div class="key-grid" id="key-grid">
+      <button class="key-btn" data-key="alt">Alt</button>
+      <button class="key-btn" data-key="ctrl">Ctrl</button>
+      <button class="key-btn" data-key="shift">Shift</button>
+      <button class="key-btn" data-key="meta">⌘ / Win</button>
+    </div>
+    <button class="record-btn" id="record-btn">Record a custom key…</button>
+    <div class="current">Current: <b id="current-key">Alt</b></div>
+
+    <div class="howto">
+      <div class="howto-title">How to use</div>
+      <ol>
+        <li>Hold <b id="key-name">Alt</b> and move the mouse — elements highlight in <b>red</b>.</li>
+        <li><b>Click</b> a highlighted element to delete it from the page.</li>
+        <li>Press <b>Ctrl / Cmd + Z</b> to undo the last deletion.</li>
+      </ol>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

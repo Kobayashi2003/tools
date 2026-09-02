@@ -1,0 +1,11 @@
+.__ez-highlight {
+  outline: 2px solid #ef4444 !important;
+  outline-offset: -2px !important;
+  background-color: rgba(239, 68, 68, 0.12) !important;
+  cursor: crosshair !important;
+}
+
+.__ez-armed,
+.__ez-armed * {
+  cursor: crosshair !important;
+}

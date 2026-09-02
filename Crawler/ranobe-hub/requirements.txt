@@ -1,0 +1,4 @@
+# Both sibling downloaders must be installable too:
+#   pip install -r ../annas-archive-downloader/requirements.txt
+#   pip install -r ../novelia-downloader/requirements.txt
+prompt_toolkit>=3.0.0
