@@ -9,7 +9,9 @@ from urllib.parse import quote
 import requests
 
 from ..common import backoff
+from ..common.limiter import QuotaExceeded, Throttle
 from ..common.logger import Logger
+from .policy import StatusPolicies
 
 
 class PermanentAPIError(Exception):
@@ -29,22 +31,68 @@ class API:
 
     Host bases come from config; Pawchive has changed domains before. Proxies
     come from the environment via the session's `trust_env`.
+
+    Every file transfer passes through one `Throttle`, so the concurrency, rate
+    and quota caps hold across the whole process rather than per thread pool.
     """
 
     PAGE_SIZE = 50
 
-    def __init__(self, logger: Logger, config):
+    def __init__(self, logger: Logger, config, throttle: Throttle = None):
         self.logger = logger
         self.config = config
         self.api_base = config.api_base.rstrip('/')
         self.file_base = config.file_base.rstrip('/')
-        self.session = requests.Session()
+        self.throttle = throttle or self._build_throttle(config)
+        self.policies = self._build_policies(config)
+        self.session = self._new_session()
         self.headers = {
             'User-Agent': config.user_agent,
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.5',
         }
         self._stop = threading.Event()
+
+    @staticmethod
+    def _build_throttle(config) -> Throttle:
+        return Throttle(
+            max_concurrent=getattr(config, 'max_concurrent_downloads', 0),
+            rate=getattr(config, 'max_download_rate', 0),
+            burst=getattr(config, 'download_burst', 0),
+            quota=getattr(config, 'daily_download_quota', 0),
+            # Under data/, not cache/: a spent budget must survive a cache wipe.
+            state_path=Path(getattr(config, 'data_dir', 'data')) / 'quota.json',
+            window_hours=getattr(config, 'quota_window_hours', 24.0),
+        )
+
+    @staticmethod
+    def _build_policies(config) -> StatusPolicies:
+        """The failure table, over the built-in rules the operator did not replace.
+
+        `not_found_max_retries` stays the knob for 404 so an existing config
+        keeps meaning what it meant; writing an explicit `404` rule takes over.
+        """
+        return StatusPolicies.parse(
+            getattr(config, 'status_policies', None),
+            fallback={'404': {'action': 'permanent',
+                              'attempts': getattr(config, 'not_found_max_retries', 3)}},
+        )
+
+    def _new_session(self) -> requests.Session:
+        """A session whose connection pool matches the concurrency cap.
+
+        Left at the default 10, a pool smaller than the number of live
+        transfers silently discards and reopens connections underneath them,
+        which reads to a server as far more churn than we are actually making.
+        """
+        session = requests.Session()
+        size = max(self.throttle.max_concurrent,
+                   int(getattr(self.config, 'page_workers', 4) or 4), 10)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=size,
+                                                pool_maxsize=size)
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+        return session
 
     # ==================== Lifecycle ====================
 
@@ -57,7 +105,7 @@ class API:
 
     def resume(self):
         self._stop.clear()
-        self.session = requests.Session()
+        self.session = self._new_session()
 
     def _check_stop(self):
         if self._stop.is_set():
@@ -102,44 +150,78 @@ class API:
     def _status_of(e: Exception):
         return getattr(getattr(e, 'response', None), 'status_code', None)
 
+    @staticmethod
+    def _kind_of(e: Exception) -> str:
+        """The policy key for a failure that carries no HTTP status."""
+        if isinstance(e, TransientAPIError):
+            return 'invalid'
+        if isinstance(e, requests.exceptions.Timeout):
+            return 'timeout'
+        if isinstance(e, requests.exceptions.ConnectionError):
+            return 'connection'
+        return 'network'
+
     def _retry(self, func, describe: str, max_attempts: int = None):
-        """Retry every failure -- connection, timeout, 4xx, 5xx alike.
+        """Retry until the failure's own policy says to stop.
+
+        What each failure *means* is a table, not an if-ladder here: see
+        `policy.py`. This function only supplies the two things the table cannot
+        know -- the caller's own bound, and how many times each rule has already
+        matched during this call.
 
         `max_attempts=0` retries forever (the default for API requests, since
-        losing a list response truncates a creator). File downloads pass a bound:
-        a give-up is recorded as a failed file, leaving the post undone for the
-        next run.
+        losing a list response truncates a creator). File downloads pass a
+        bound: a give-up is recorded as a failed file, leaving the post undone
+        for the next run. A rule with its own `attempts` overrides that bound
+        for its own status, which is how a host that wants a long wait on 429
+        gets one without loosening everything else.
 
-        A 404 is the one failure retrying cannot fix: a creator removed upstream
-        would otherwise stall an unbounded API retry forever, blocking every
-        creator behind it. It is retried a few times (a 404 can be a bad edge
-        node) and then raised as permanent.
+        Counting is per rule, so a 404 among other errors still has to be seen
+        `attempts` times before it is believed, and a 429 ladder is not advanced
+        by unrelated 500s.
+
+        `QuotaExceeded` is not in `retry_on` and so passes straight through: no
+        number of attempts refills a budget, and burning the backoff ladder on
+        one would only delay every other file behind it.
         """
-        attempts = int(self.config.max_retries if max_attempts is None else max_attempts) or 0
-        seen_404 = 0
+        bound = int(self.config.max_retries if max_attempts is None else max_attempts) or 0
+        seen: Dict[str, int] = {}
 
-        def attempt():
-            nonlocal seen_404
-            try:
-                return func()
-            except requests.exceptions.HTTPError as e:
-                if self._status_of(e) == 404:
-                    seen_404 += 1
-                    if seen_404 >= self.config.not_found_max_retries:
-                        raise PermanentAPIError(
-                            f"{describe}: 404 after {seen_404} attempts") from e
-                raise
+        def decide(e, _attempt):
+            """Seconds to wait, or None to give up. May raise its own verdict."""
+            rule = self.policies.match(self._status_of(e), self._kind_of(e))
+            count = seen[rule.key] = seen.get(rule.key, 0) + 1
+            limit = rule.limit() or bound
+
+            if limit >= 0 and limit and count >= limit:
+                if rule.action == 'permanent':
+                    raise PermanentAPIError(
+                        f"{describe}: {rule.describe()} after {count} attempts") from e
+                return None
+            return backoff.wait_for(
+                count,
+                rule.delay if rule.delay is not None else self.config.retry_delay,
+                rule.backoff if rule.backoff is not None
+                else getattr(self.config, 'retry_backoff', 2.0),
+                rule.cap if rule.cap is not None
+                else getattr(self.config, 'retry_delay_cap', 60),
+                rule.jitter if rule.jitter is not None
+                else getattr(self.config, 'retry_jitter', 0.0),
+            )
+
+        def on_retry(e, n, d):
+            rule = self.policies.match(self._status_of(e), self._kind_of(e))
+            self.logger.api_network_error(
+                op=describe, status=self._status_of(e), error=str(e),
+                policy=rule.describe(), attempt=n, retry_in=d, level='warning')
 
         try:
             return backoff.retry(
-                attempt,
+                func,
                 retry_on=(requests.exceptions.RequestException, TransientAPIError),
-                attempts=attempts,
-                delay=self.config.retry_delay,
+                decide=decide,
                 should_stop=self._stop.is_set,
-                on_retry=lambda e, n, d: self.logger.api_network_error(
-                    op=describe, status=self._status_of(e), error=str(e),
-                    attempt=n, retry_in=d, level='warning'),
+                on_retry=on_retry,
                 on_give_up=lambda e, n: self.logger.api_gave_up(
                     op=describe, error=str(e), attempts=n, level='error'),
             )
@@ -213,40 +295,54 @@ class API:
 
     def download_file(self, url: str, save_path: str, raise_on_error: bool = False,
                       on_progress=None) -> bool:
-        """Download to `save_path`, verified and atomically placed."""
+        """Download to `save_path`, verified and atomically placed.
+
+        Held inside one of the throttle's global transfer slots, so the caller's
+        thread pools cannot multiply into more live sockets than configured, and
+        every delivered chunk is charged against the rate and quota caps.
+        """
         temp_path = None
         try:
             self._check_stop()
+            # Checked before the request, not after: once a budget is spent, the
+            # cheapest possible failure is the one that used no bandwidth.
+            self.throttle.quota.check()
             path = Path(save_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             # Unique per call: concurrent downloads must never share a temp file.
             temp_path = path.parent / f".{path.name}.{uuid.uuid4().hex[:12]}.part"
 
-            resp = self.session.get(url, headers=self.headers, stream=True,
-                                    timeout=max(60, self.config.request_timeout))
-            resp.raise_for_status()
+            with self.throttle.slot():
+                self._check_stop()
+                resp = self.session.get(url, headers=self.headers, stream=True,
+                                        timeout=max(60, self.config.request_timeout))
+                resp.raise_for_status()
 
-            content_length = int(resp.headers.get('content-length', 0) or 0)
-            if not content_length:
-                try:
-                    content_length = self.content_length_of(url)
-                except Exception:
-                    content_length = 0
+                content_length = int(resp.headers.get('content-length', 0) or 0)
+                if not content_length:
+                    try:
+                        content_length = self.content_length_of(url)
+                    except Exception:
+                        content_length = 0
 
-            if content_length and path.exists() and path.stat().st_size == content_length:
-                resp.close()
-                return True
+                if content_length and path.exists() and path.stat().st_size == content_length:
+                    resp.close()
+                    return True
 
-            downloaded = 0
-            with open(temp_path, 'wb') as f:
-                for chunk in resp.iter_content(chunk_size=65536):
-                    if self._stop.is_set():
-                        raise InterruptedError("Download cancelled")
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if on_progress:
-                            on_progress(path.name, downloaded, content_length)
+                downloaded = 0
+                with open(temp_path, 'wb') as f:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if self._stop.is_set():
+                            raise InterruptedError("Download cancelled")
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            # Charged after the write: these bytes are already
+                            # off the wire, so they are spent either way.
+                            if not self.throttle.charge(len(chunk), self._stop.is_set):
+                                raise InterruptedError("Download cancelled")
+                            if on_progress:
+                                on_progress(path.name, downloaded, content_length)
 
             if content_length and downloaded != content_length:
                 # A short read must never be renamed into place as if complete.

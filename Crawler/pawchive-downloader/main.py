@@ -60,7 +60,11 @@ def main():
 
     ctx, scheduler, logger = initialize()
     scheduler.start()
-    logger.app_started(artists=len(ctx.storage.get_artists()))
+    # The caps are the first thing to check when a run looks slow or stalled,
+    # so they belong in the log next to the run that they shaped.
+    logger.app_started(artists=len(ctx.storage.get_artists()),
+                       limits=ctx.api.throttle.describe(),
+                       policies=ctx.api.policies.describe())
     print("Pawchive Downloader. Type 'help' for commands, 'exit' to quit.")
 
     try:

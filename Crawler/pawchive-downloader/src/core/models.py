@@ -84,8 +84,17 @@ class Config:
     file_base: str = "https://file.pawchive.pw"
 
     # Proxies come from the environment (HTTP_PROXY / ...), not from here.
-    retry_delay: int = 5
     request_timeout: int = 30
+
+    # Backoff shape, shared by every retry. The first wait is `retry_delay`,
+    # each next one multiplies by `retry_backoff` and stops growing at
+    # `retry_delay_cap`. `retry_jitter` (0..1) spreads each wait by that
+    # fraction: the workers fail together behind one shared cap, so identical
+    # backoff would march them all back in on the same second.
+    retry_delay: int = 5
+    retry_backoff: float = 2.0
+    retry_delay_cap: int = 60
+    retry_jitter: float = 0.2
 
     # Attempts per request; 0 = forever. API requests are unlimited (losing a
     # list response truncates a creator). Downloads are bounded, because
@@ -96,7 +105,22 @@ class Config:
     download_max_retries: int = 5
 
     # A 404 is permanent; retried only enough to rule out a bad edge node.
+    # This is the default `attempts` of the built-in 404 rule below, and is
+    # ignored once `status_policies` names 404 explicitly.
     not_found_max_retries: int = 3
+
+    # What each failure *means*, as a table rather than an if-ladder in the
+    # client -- see `core/policy.py`. Keys are a status ("404"), a class
+    # ("5xx"), or a non-HTTP kind (timeout / connection / network / invalid),
+    # resolved most-specific first and falling back to "default". Actions are
+    # `retry`, `fail` (give up now, the post stays undone for the next run) and
+    # `permanent` (declare it gone, so a removed creator cannot stall an
+    # unbounded retry). A rule may carry its own attempts/delay/backoff/cap/
+    # jitter, since the wait a host wants for 429 is not the one it wants for
+    # 500. Empty = built-in behaviour: 404 permanent, everything else retried.
+    #
+    #   {"429": {"action": "retry", "attempts": 10, "delay": 60, "backoff": 1}}
+    status_policies: Dict = field(default_factory=dict)
 
     # `updated` is a bulk-import batch timestamp and posts get inserted after
     # it, so trusting it can skip new posts. `page_workers` is speed only.
@@ -108,10 +132,28 @@ class Config:
         "Gecko/20100101 Firefox/135.0"
     )
 
-    # Total concurrency is artists x posts x files.
+    # The pool sizes below *multiply*: artists x posts x files is the number of
+    # transfers that can be in flight, and nobody chooses that product on
+    # purpose. `max_concurrent_downloads` is the cap the server actually sees --
+    # a global ceiling on simultaneous file transfers, held no matter how the
+    # three pools above it are sized. 0 disables it and restores the old
+    # multiply-it-out behaviour.
     max_concurrent_artists: int = 3
     max_concurrent_posts: int = 5
     max_concurrent_files: int = 10
+    max_concurrent_downloads: int = 4
+
+    # Traffic caps. Byte counts or human sizes ("8MB", "300GB"); 0 = no limit.
+    # `max_download_rate` is bytes/second summed over every transfer, and
+    # `download_burst` is how much may be drawn at once after an idle spell
+    # (defaults to one second of rate, so a resumed run does not open with the
+    # spike a server rate-limits on). `daily_download_quota` bounds a rolling
+    # `quota_window_hours` and is kept on disk in `data/quota.json` -- a counter
+    # that reset with the process would let a restart respend the same budget.
+    max_download_rate: str = "0"
+    download_burst: str = "0"
+    daily_download_quota: str = "0"
+    quota_window_hours: float = 24.0
 
     notify: bool = False
 

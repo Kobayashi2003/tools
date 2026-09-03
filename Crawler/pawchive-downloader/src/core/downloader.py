@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ..common.limiter import QuotaExceeded
 from ..common.logger import Logger
 from ..common.naming import unique_names
 from ..common.notifier import Notifier
@@ -52,6 +53,25 @@ class Downloader:
 
     def resume_requests(self):
         self.api.resume()
+
+    # ==================== Traffic budget ====================
+
+    def quota_available(self) -> bool:
+        """False once the rolling byte budget is spent, logged once per window.
+
+        A spent budget applies to every queued creator at the same instant, so
+        reporting it per file would bury the one line that explains the pause.
+        Nothing is marked failed here: the posts simply stay undone, and the
+        next run after the window rolls picks them up unchanged.
+        """
+        quota = self.api.throttle.quota
+        try:
+            quota.check()
+            return True
+        except QuotaExceeded as e:
+            if quota.mark_reported():
+                self.logger.downloader_quota_paused(error=str(e), level='error')
+            return False
 
     # ==================== Cache refresh ====================
 
@@ -270,6 +290,10 @@ class Downloader:
                     artist=artist.display_name(),
                     status='completed' if artist.completed else 'ignored')
                 return DownloadResult(artist.id, success=True)
+            # Checked before the sync too: pausing means making no requests at
+            # all, not making the cheap ones and failing the expensive ones.
+            if not self.quota_available():
+                return DownloadResult(artist.id, success=True)
 
             # `lost` refreshes with recovery, so any post the server has restored
             # rejoins the undone set here rather than needing a separate sync.
@@ -393,6 +417,12 @@ class Downloader:
                     url, str(save_dir / name), on_progress=self.notifier.on_download_progress)
                 self.logger.downloader_file_ok(file=name)
                 return (True, name)
+            except QuotaExceeded:
+                # Not this file's fault and not a per-file event: `quota_paused`
+                # was already logged once. It still counts as failed so the post
+                # stays undone and comes back after the window rolls.
+                self.quota_available()
+                return (False, name)
             except Exception as e:
                 self.logger.downloader_file_failed(file=name, error=str(e), level='warning')
                 return (False, name)
