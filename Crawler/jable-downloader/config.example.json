@@ -1,0 +1,18 @@
+{
+  "template": "huua-kaede",
+  "proxy": {
+    "clash_exe": "",
+    "clash_config": "",
+    "num_instances": 10,
+    "base_port": 7890
+  },
+  "last_input": {
+    "mode": "2",
+    "artist_url": "https://jable.tv/models/f88e49c4c1adb0fd1bae71ac122d6b82/",
+    "artist_folder": "D:/Download",
+    "artist_sort": "favorites",
+    "artist_template": "huua-kaede",
+    "artist_limit": "20",
+    "artist_no_confirm": "y"
+  }
+}
