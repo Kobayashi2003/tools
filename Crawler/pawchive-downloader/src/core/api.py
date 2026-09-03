@@ -63,6 +63,8 @@ class API:
             # Under data/, not cache/: a spent budget must survive a cache wipe.
             state_path=Path(getattr(config, 'data_dir', 'data')) / 'quota.json',
             window_hours=getattr(config, 'quota_window_hours', 24.0),
+            requests_per_second=getattr(config, 'max_file_requests_per_second', 0),
+            request_burst=getattr(config, 'file_request_burst', 0),
         )
 
     @staticmethod
@@ -288,6 +290,9 @@ class API:
 
     def content_length_of(self, url: str) -> int:
         self._check_stop()
+        # A HEAD is still a request to the file host, and counts as one.
+        if not self.throttle.request(self._stop.is_set):
+            raise InterruptedError("Request cancelled")
         resp = self.session.head(url, headers=self.headers, allow_redirects=True,
                                  timeout=self.config.request_timeout)
         resp.raise_for_status()
@@ -314,6 +319,10 @@ class API:
 
             with self.throttle.slot():
                 self._check_stop()
+                # Paced before the request leaves, not after: a request the cap
+                # never allowed costs the host nothing, which is the point.
+                if not self.throttle.request(self._stop.is_set):
+                    raise InterruptedError("Download cancelled")
                 resp = self.session.get(url, headers=self.headers, stream=True,
                                         timeout=max(60, self.config.request_timeout))
                 resp.raise_for_status()

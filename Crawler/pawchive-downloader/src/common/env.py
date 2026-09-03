@@ -29,7 +29,7 @@ OVERRIDABLE = (
     'max_concurrent_downloads',
     # Traffic caps (sizes: "8MB", "300GB"; 0 = unlimited).
     'max_download_rate', 'download_burst', 'daily_download_quota',
-    'quota_window_hours',
+    'quota_window_hours', 'max_file_requests_per_second', 'file_request_burst',
     # Retry attempts and backoff shape.
     'request_timeout', 'max_retries', 'download_max_retries',
     'not_found_max_retries', 'retry_delay', 'retry_backoff', 'retry_delay_cap',

@@ -133,6 +133,50 @@ class RateLimiter:
         return True
 
 
+class RequestLimiter:
+    """Requests-per-second token bucket. `rate <= 0` disables it.
+
+    Separate from `RateLimiter` because "no more than one request per second"
+    is not a statement about bandwidth. A thousand small files sit far under
+    any byte cap while hammering the request count, and it is the request count
+    a host counts when it decides you are being rude.
+
+    `burst` defaults to 1, i.e. strict spacing. A bigger bucket permits a clump
+    followed by a longer gap -- the same average, but not what a host asking
+    for one-per-second is picturing.
+    """
+
+    def __init__(self, rate=0, burst=0):
+        self.rate = max(0.0, float(rate or 0))
+        self.burst = max(1.0, float(burst or 0)) if self.rate else 0.0
+        self._tokens = self.burst
+        self._updated = time.monotonic()
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return self.rate > 0
+
+    def acquire(self, should_stop=None) -> bool:
+        """Block until one request may be sent. False if `should_stop` fired."""
+        if not self.enabled:
+            return True
+        while True:
+            if should_stop and should_stop():
+                return False
+            with self._lock:
+                now = time.monotonic()
+                self._tokens = min(self.burst,
+                                   self._tokens + (now - self._updated) * self.rate)
+                self._updated = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return True
+                wait = (1.0 - self._tokens) / self.rate
+            # Capped so a stop request is still noticed promptly.
+            time.sleep(min(max(wait, 0.005), 0.5))
+
+
 class ByteQuota:
     """A byte budget for a rolling window, surviving restarts.
 
@@ -253,11 +297,13 @@ class Throttle:
     """
 
     def __init__(self, max_concurrent=0, rate=0, burst=0, quota=0,
-                 state_path=None, window_hours: float = 24.0):
+                 state_path=None, window_hours: float = 24.0,
+                 requests_per_second=0, request_burst=0):
         self.max_concurrent = max(0, int(max_concurrent or 0))
         self._semaphore = (threading.BoundedSemaphore(self.max_concurrent)
                            if self.max_concurrent else None)
         self.rate = RateLimiter(rate, burst)
+        self.requests = RequestLimiter(requests_per_second, request_burst)
         self.quota = ByteQuota(quota, state_path, window_hours)
 
     @contextmanager
@@ -272,6 +318,15 @@ class Throttle:
         finally:
             self._semaphore.release()
 
+    def request(self, should_stop=None) -> bool:
+        """Wait for permission to make one file request. False if stopped.
+
+        Called before the request goes out, unlike `charge`, which accounts for
+        bytes already received: a request that was never allowed costs the host
+        nothing, and that is the whole point of a request cap.
+        """
+        return self.requests.acquire(should_stop)
+
     def charge(self, amount: int, should_stop=None) -> bool:
         """Account and pace `amount` delivered bytes. False if stopped.
 
@@ -284,8 +339,9 @@ class Throttle:
     def describe(self) -> str:
         rate = f"{format_size(self.rate.rate)}/s" if self.rate.enabled else 'unlimited'
         quota = format_size(self.quota.limit) if self.quota.enabled else 'unlimited'
+        reqs = f"{self.requests.rate:g}/s" if self.requests.enabled else 'unlimited'
         return (f"concurrency={self.max_concurrent or 'unlimited'}, "
-                f"rate={rate}, quota={quota}")
+                f"requests={reqs}, rate={rate}, quota={quota}")
 
 
 def jittered(delay: float, jitter: float) -> float:

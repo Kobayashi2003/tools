@@ -127,10 +127,13 @@ class Config:
     trust_updated_timestamp: bool = False
     page_workers: int = 4
 
-    user_agent: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) "
-        "Gecko/20100101 Firefox/135.0"
-    )
+    # Identifiable, and deliberately NOT a browser string. Pawchive's operator
+    # answers a browser-impersonating User-Agent with a flat 403 on any request
+    # that reaches the origin -- edge-cached files still serve, which is why the
+    # symptom looks like a partial or intermittent block rather than a rejected
+    # header. Appending a contact address is welcomed by the operator but not
+    # required. See gallery-dl issue 405.
+    user_agent: str = "pawchive-downloader/1.0"
 
     # The pool sizes below *multiply*: artists x posts x files is the number of
     # transfers that can be in flight, and nobody chooses that product on
@@ -154,6 +157,15 @@ class Config:
     download_burst: str = "0"
     daily_download_quota: str = "0"
     quota_window_hours: float = 24.0
+
+    # File requests per second, which is a different cap from either of the two
+    # above: a thousand small files sit far under any byte rate while hammering
+    # the request count, and the request count is what a host counts when it
+    # decides you are being rude. Pawchive's operator asks for at most 1/s.
+    # `file_request_burst` is the bucket; 1 means strict spacing rather than a
+    # clump followed by a gap. 0 disables the cap.
+    max_file_requests_per_second: float = 1.0
+    file_request_burst: float = 1.0
 
     notify: bool = False
 
