@@ -34,6 +34,8 @@ OVERRIDABLE = (
     'request_timeout', 'max_retries', 'download_max_retries',
     'not_found_max_retries', 'retry_delay', 'retry_backoff', 'retry_delay_cap',
     'retry_jitter',
+    # When a 404 is worth asking about again, across runs.
+    'not_found_retry_days', 'not_found_retry_backoff', 'not_found_retry_cap_days',
     # Per-status measures, one line: "404=permanent,attempts=3; 429=retry,delay=60".
     'status_policies',
 )

@@ -104,10 +104,22 @@ class Config:
     max_retries: int = 0
     download_max_retries: int = 5
 
-    # A 404 is permanent; retried only enough to rule out a bad edge node.
+    # Attempts on a 404 *within one run*, before it is judged absent for now.
     # This is the default `attempts` of the built-in 404 rule below, and is
     # ignored once `status_policies` names 404 explicitly.
     not_found_max_retries: int = 3
+
+    # ...and when to ask again in a later run. Pawchive materialises files onto
+    # its CDN lazily, and the logs show the gap closing over weeks: URLs that
+    # 404ed on six or seven separate days in July serve real bytes now. So a
+    # 404 is never final. Each miss pushes the next attempt out by
+    # `not_found_retry_days`, multiplied by `not_found_retry_backoff` each time
+    # and capped at `not_found_retry_cap_days` -- 1, 2, 4, 8... days, forever.
+    # The ledger lives in `data/not_found.json`; an entry is dropped the moment
+    # the file arrives. 0 disables the deferral and retries every run.
+    not_found_retry_days: float = 1.0
+    not_found_retry_backoff: float = 2.0
+    not_found_retry_cap_days: float = 30.0
 
     # What each failure *means*, as a table rather than an if-ladder in the
     # client -- see `core/policy.py`. Keys are a status ("404"), a class

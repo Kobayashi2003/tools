@@ -3,12 +3,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import requests
+
 from ..common.limiter import QuotaExceeded
 from ..common.logger import Logger
 from ..common.naming import unique_names
 from ..common.notifier import Notifier
 from .api import API, PermanentAPIError
 from .cache import Cache
+from .deferrals import Deferrals
 from .files import (distinct, entries_of, entries_of_parts, extract_files,
                     get_config_value, unusable_files)
 from .formatter import Formatter
@@ -20,15 +23,36 @@ class Downloader:
     """Drives the fetch -> cache -> download pipeline for artists."""
 
     def __init__(self, config: Config, logger: Logger, storage: Storage, cache: Cache,
-                 api: API, notifier: Optional[Notifier] = None):
+                 api: API, notifier: Optional[Notifier] = None,
+                 deferrals: Optional[Deferrals] = None):
         self.config = config
         self.logger = logger
         self.storage = storage
         self.cache = cache
         self.api = api
         self.notifier = notifier or Notifier(enabled=False)
+        self.deferrals = deferrals or Deferrals(
+            Path(config.data_dir) / 'not_found.json',
+            first_days=getattr(config, 'not_found_retry_days', 1.0),
+            backoff=getattr(config, 'not_found_retry_backoff', 2.0),
+            cap_days=getattr(config, 'not_found_retry_cap_days', 30.0),
+            logger=logger,
+        )
         self._cancel_lock = threading.Lock()
         self._cancelled: set = set()
+
+    @staticmethod
+    def _is_not_found(e: Exception) -> bool:
+        """Did this failure mean "the host does not have that file"?
+
+        Both spellings count: `PermanentAPIError` is what the default 404 rule
+        raises, and a bare 404 `HTTPError` is what a `403=fail`-style rule would
+        let through instead. The ledger should not depend on which was chosen.
+        """
+        if isinstance(e, PermanentAPIError):
+            return True
+        return (isinstance(e, requests.exceptions.HTTPError)
+                and getattr(getattr(e, 'response', None), 'status_code', None) == 404)
 
     # ==================== Cancellation ====================
     # A cancelled id stays in `_cancelled` until its own run clears it on exit,
@@ -367,8 +391,10 @@ class Downloader:
                 else:
                     failed += 1
 
+        skipped = self.deferrals.take_skipped()
         self.logger.downloader_completed(
-            artist=artist.display_name(), succeeded=downloaded, failed=failed)
+            artist=artist.display_name(), succeeded=downloaded, failed=failed,
+            **({'deferred': skipped} if skipped else {}))
         return DownloadResult(artist.id, success=(failed == 0),
                               posts_downloaded=downloaded, posts_failed=failed)
 
@@ -411,11 +437,20 @@ class Downloader:
             file, name = pair
             if self.is_cancelled(artist.id):
                 return (False, name)
+            path = file['path']
+            # A file the host answered 404 for recently is not asked about again
+            # until its deferral is up -- see `deferrals.py`. Counted, not logged:
+            # a run can skip thousands, and the count is reported once below.
+            if not self.deferrals.due(path):
+                return (False, name)
             try:
-                url = self.api.file_url(file['path'], file['name'])
+                url = self.api.file_url(path, file['name'])
                 self.api.download_file_until_success(
                     url, str(save_dir / name), on_progress=self.notifier.on_download_progress)
                 self.logger.downloader_file_ok(file=name)
+                if self.deferrals.clear(path):
+                    # Proof the 404 was lateness, not absence. Worth a line.
+                    self.logger.downloader_file_materialised(file=name)
                 return (True, name)
             except QuotaExceeded:
                 # Not this file's fault and not a per-file event: `quota_paused`
@@ -424,7 +459,13 @@ class Downloader:
                 self.quota_available()
                 return (False, name)
             except Exception as e:
-                self.logger.downloader_file_failed(file=name, error=str(e), level='warning')
+                if self._is_not_found(e):
+                    entry = self.deferrals.miss(path, name) or {}
+                    self.logger.downloader_file_absent(
+                        file=name, misses=entry.get('misses'),
+                        retry_in_days=entry.get('wait_days'), level='warning')
+                else:
+                    self.logger.downloader_file_failed(file=name, error=str(e), level='warning')
                 return (False, name)
 
         with ThreadPoolExecutor(max_workers=self.config.max_concurrent_files) as executor:

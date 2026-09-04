@@ -64,7 +64,8 @@ def main():
     # so they belong in the log next to the run that they shaped.
     logger.app_started(artists=len(ctx.storage.get_artists()),
                        limits=ctx.api.throttle.describe(),
-                       policies=ctx.api.policies.describe())
+                       policies=ctx.api.policies.describe(),
+                       not_found=ctx.downloader.deferrals.describe())
     print("Pawchive Downloader. Type 'help' for commands, 'exit' to quit.")
 
     try:
@@ -75,6 +76,8 @@ def main():
         print("Stopping... (Ctrl+C to force quit)")
         ctx.downloader.abort_requests()  # unblock in-flight HTTP and retry loops
         scheduler.stop()
+        # After the workers are done, so nothing is still writing to it.
+        ctx.downloader.deferrals.flush()
         logger.app_stopped()
         print("Bye.")
 
