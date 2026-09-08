@@ -8,8 +8,9 @@ import { setSaved } from "./detail.js";
 import * as feed from "./feed.js";
 import { filtering, savePrefs, state } from "./store.js";
 
-/* Filled in by the wiring: the bar offers actions this module cannot perform. */
-export const actions = { showEverything: () => {}, pickChannel: () => {} };
+/* Filled in by the wiring: the bar offers an action this module cannot
+ * perform itself. */
+export const actions = { showEverything: () => {} };
 
 /* ---------- the bar ---------- */
 
@@ -41,8 +42,9 @@ function paintChannels() {
 function counts() {
   const total = state.meta.display.in_scope ?? state.index.length;
   const shown = feed.countShown();
-  const bits = [`<b>${total.toLocaleString()}</b> shares`];
+  const bits = [`<b>${total.toLocaleString()}</b> recommendations`];
   if (shown !== total) bits.push(`<b>${shown.toLocaleString()}</b> shown`);
+  if (state.taken.size) bits.push(`${state.taken.size.toLocaleString()} fetched`);
   if (state.saved.size) bits.push(`${state.saved.size} bookmarked`);
   const cover = state.meta.coverage || {};
   if (cover.messages) {
@@ -77,7 +79,7 @@ export function paintHead() {
   if (state.meta.display.tail) {
     $("#note-text").innerHTML =
       "Showing only what has arrived since launch · " +
-      `<b>${(state.meta.display.held || 0).toLocaleString()}</b> older shares are cached`;
+      `<b>${(state.meta.display.held || 0).toLocaleString()}</b> older ones are cached`;
     $("#note-act").textContent = "Show everything";
     $("#note-act").onclick = () => actions.showEverything();
     show(note, true);
@@ -113,9 +115,12 @@ export function paintChips() {
 }
 
 export function resetFilters() {
-  Object.assign(state.filters, { q: "", kind: "", source: "", savedOnly: false });
+  Object.assign(state.filters, {
+    q: "", kind: "", source: "", savedOnly: false, missingOnly: false,
+  });
   $("#search").value = "";
   $("#saved-only").checked = false;
+  $("#missing-only").checked = false;
   savePrefs();
   paintChips();
   paintSource();
@@ -166,7 +171,7 @@ export function markRail() {
 
 function gotoMonth(key) {
   const row = feed.rowOfMonth(key);
-  if (row < 0) { toast("No shares from that month in this filter"); return; }
+  if (row < 0) { toast("Nothing from that month in this filter"); return; }
   feed.scrollToRow(row);
   markRail();
 }
@@ -184,14 +189,13 @@ export function paintMarks() {
   if (!state.bookmarks.length) {
     box.appendChild(el("div", {
       class: "sheet-empty",
-      text: "No bookmarks yet. Press b on a share, or Save on its card.",
+      text: "No bookmarks yet. Press b on a recommendation, or Save on its card.",
     }));
     return;
   }
   for (const mark of state.bookmarks) {
-    const bits = [mark.category, mark.author].filter(Boolean);
-    if (mark.n_files) bits.push(`${mark.n_files} file${mark.n_files > 1 ? "s" : ""}`);
-    if (mark.n_links) bits.push(`${mark.n_links} link${mark.n_links > 1 ? "s" : ""}`);
+    const bits = [mark.kind, mark.volumes].filter(Boolean);
+    if (state.taken.has(mark.job) || state.held.has(mark.job)) bits.push("fetched");
     box.appendChild(el("button", { class: "bm", onclick: () => gotoShare(mark.id) }, [
       el("span", { class: "when", text: mark.ts ? fmtDay(mark.ts) : "" }),
       el("span", { class: "what" }, [
@@ -213,7 +217,7 @@ export function showMarks(on) {
 
 export const marksOpen = () => !$("#marks").hidden;
 
-/* Jump to a bookmarked share. If a filter is hiding it, the filter loses --
+/* Jump to a bookmarked post. If a filter is hiding it, the filter loses --
  * "take me there" that quietly does nothing is worse than one that clears a
  * chip you can see. */
 export function gotoShare(id) {
@@ -223,7 +227,7 @@ export function gotoShare(id) {
     resetFilters();
     row = feed.rowOfPost(id);
   }
-  if (row < 0) { toast("That share is not in the archive"); return; }
+  if (row < 0) { toast("That one is not in the archive"); return; }
   feed.scrollToRow(row);
   feed.setHere(row, false);
   markRail();

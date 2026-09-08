@@ -14,7 +14,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 from .models import expiry_of
 

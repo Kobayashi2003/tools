@@ -1,7 +1,7 @@
 .env
 config.json
 cache/
-links_*.json
+downloads/
 state.json
 __pycache__/
 *.pyc
