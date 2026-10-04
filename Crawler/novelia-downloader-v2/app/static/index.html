@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Novelia Library</title>
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=12" />
+    <script src="/static/ui.js?v=9" defer></script>
+    <script src="/static/app.js?v=11" defer></script>
+  </head>
+  <body>
+    <aside class="rail" id="sidebar">
+      <div class="rail-head">
+        <a class="brand" href="/" aria-label="Novelia Library home">Novelia</a>
+        <button id="sidebar-toggle" class="icon-button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true" aria-controls="sidebar"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></svg></span></button>
+      </div>
+      <nav aria-label="Main">
+        <button class="nav active" data-view="library" aria-label="Library" title="Library" aria-current="page"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h6a2 2 0 0 1 2 2v15a4 4 0 0 0-4-2H4zM20 4h-6a2 2 0 0 0-2 2v15a4 4 0 0 1 4-2h4z"/></svg></span><span class="nav-label">Library</span></button>
+        <button class="nav" data-view="catalog" aria-label="Catalog" title="Catalog"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg></span><span class="nav-label">Catalog</span></button>
+        <button class="nav" data-view="tasks" aria-label="Tasks" title="Tasks">
+          <span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m7 9 1 1 2-2M12 9h5m-10 6 1 1 2-2m2 1h5"/></svg></span><span class="nav-label">Tasks</span><span id="active-count" class="badge" hidden></span>
+        </button>
+        <button class="nav" data-view="settings" aria-label="Settings" title="Settings"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg></span><span class="nav-label">Settings</span></button>
+      </nav>
+      <div class="rail-foot">
+        <a href="/docs" target="_blank" rel="noopener" title="API reference" aria-label="API reference"><span class="rail-api-label">API reference ↗</span><span class="rail-api-short" aria-hidden="true">API</span></a>
+      </div>
+    </aside>
+
+    <main>
+      <button id="now-running" class="now-running" data-view="tasks" hidden>
+        <span class="pulse" aria-hidden="true"></span><span id="now-running-text"></span>
+        <span class="meter"><span id="now-running-bar"></span></span>
+      </button>
+
+      <section id="library" class="view">
+        <header class="view-head">
+          <div>
+            <h1>Library</h1>
+            <p id="schedule-label" class="sub"></p>
+          </div>
+          <div class="head-actions">
+            <button data-action="incremental">Check for updates</button>
+            <button class="primary" data-action="open-crawl">New download</button>
+          </div>
+        </header>
+
+        <div class="shelf">
+          <dl class="shelf-stats">
+            <div><dt>Works</dt><dd id="stat-works">0</dd></div>
+            <div><dt>Volumes saved</dt><dd id="stat-files">0</dd></div>
+            <div><dt>Japanese editions</dt><dd id="stat-ja">0</dd></div>
+            <div><dt>On disk</dt><dd id="stat-size">0 MB</dd></div>
+          </dl>
+        </div>
+
+        <form id="library-filter" class="toolbar">
+          <input id="library-query" type="search" placeholder="Search title, author, or ID" aria-label="Search library" />
+          <select id="library-category" aria-label="Collection">
+            <option value="">All collections</option>
+          </select>
+          <select id="library-sort" aria-label="Sort by">
+            <option value="checked">Recently checked</option>
+            <option value="added">Recently added</option>
+            <option value="title">Title</option>
+            <option value="volumes">Most volumes</option>
+          </select>
+          <div class="view-switch" role="group" aria-label="Layout">
+            <button type="button" data-layout="grid" aria-label="Cover grid" title="Cover grid">▦</button>
+            <button type="button" data-layout="list" aria-label="List" title="List">☰</button>
+          </div>
+        </form>
+        <div class="chips" id="state-chips" role="radiogroup" aria-label="Filter by state">
+          <button role="radio" data-state="" aria-checked="true">All</button>
+          <button role="radio" data-state="saved">Saved</button>
+          <button role="radio" data-state="partial">Missing volumes</button>
+          <button role="radio" data-state="metadata">Metadata only</button>
+          <button role="radio" data-state="pending">Needs conversion</button>
+          <button role="radio" data-state="japanese">Has Japanese</button>
+          <button role="radio" data-state="unverified">Unverified</button>
+        </div>
+
+        <div id="library-list" class="content-region"></div>
+        <nav class="pager" aria-label="Library pages">
+          <span id="library-total"></span>
+          <div>
+            <button data-action="library-prev" aria-label="Previous page">‹</button>
+            <span id="library-page"></span>
+            <button data-action="library-next" aria-label="Next page">›</button>
+          </div>
+        </nav>
+        <p class="footnote">
+          <button class="link" data-action="convert-all">Convert every bilingual volume</button>
+          <button class="link" data-action="cleanup-library">Clean missing files</button>
+          <a href="/api/export.csv">Export catalog CSV</a>
+        </p>
+      </section>
+
+      <section id="catalog" class="view" hidden>
+        <header class="view-head">
+          <div>
+            <h1>Catalog</h1>
+            <p class="sub">The live library on n.novelia.cc. Select works to download them.</p>
+          </div>
+          <div class="head-actions">
+            <button class="primary" data-action="open-crawl">New download</button>
+          </div>
+        </header>
+        <form id="catalog-filter" class="toolbar">
+          <input id="catalog-query" type="search" placeholder="Search Novelia" aria-label="Search Novelia" />
+          <select id="catalog-category" aria-label="Category"></select>
+          <button type="submit">Search</button>
+        </form>
+        <p id="catalog-caption" class="caption"></p>
+        <div id="catalog-list" class="content-region"></div>
+        <nav class="pager" aria-label="Catalog pages">
+          <span id="catalog-total"></span>
+          <div>
+            <button data-action="catalog-prev" aria-label="Previous page">‹</button>
+            <label class="page-jump">Page <input id="catalog-page" type="number" min="1" value="1" /> <span id="catalog-pages"></span></label>
+            <button data-action="catalog-next" aria-label="Next page">›</button>
+          </div>
+        </nav>
+      </section>
+
+      <section id="tasks" class="view" hidden>
+        <header class="view-head">
+          <div>
+            <h1>Tasks</h1>
+            <p class="sub">One task runs at a time. Interrupted tasks resume from their last checkpoint.</p>
+          </div>
+          <div class="head-actions">
+            <button data-action="clear-tasks">Clear completed</button>
+            <button class="primary" data-action="open-crawl">New download</button>
+          </div>
+        </header>
+        <div class="chips" id="task-chips" role="radiogroup" aria-label="Filter tasks">
+          <button role="radio" data-task-filter="all" aria-checked="true">All</button>
+          <button role="radio" data-task-filter="active">Active</button>
+          <button role="radio" data-task-filter="attention">Needs attention</button>
+          <button role="radio" data-task-filter="done">Completed</button>
+        </div>
+        <div id="task-list" class="content-region"></div>
+      </section>
+
+      <section id="settings" class="view" hidden>
+        <header class="view-head">
+          <div>
+            <h1>Settings</h1>
+            <p class="sub">Appearance updates immediately. Queued tasks keep their original download settings.</p>
+          </div>
+        </header>
+        <section class="appearance-settings" aria-labelledby="appearance-title">
+          <header class="settings-group-head"><h2 id="appearance-title">Appearance</h2><p>Choose a colour theme.</p></header>
+          <div class="settings-group-body">
+            <div class="row">
+              <div><strong id="theme-label">Colour theme</strong><p>Applies immediately and is saved in this browser.</p></div>
+              <select id="theme-select" aria-labelledby="theme-label">
+                <option value="system">Follow system</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+          </div>
+        </section>
+        <form id="storage-form" class="storage-settings">
+          <header class="settings-group-head"><h2>Download directory</h2><p>Choose where EPUB files are saved.</p></header>
+          <div class="storage-fields">
+            <label for="download-directory">Absolute directory path</label>
+            <input id="download-directory" placeholder="D:\Books\Novelia" required />
+            <label class="check"><input id="migrate-files" type="checkbox" checked /> Migrate library files to this directory</label>
+            <p class="hint">Only files recorded in the library are migrated. Without migration, existing files stay accessible in their previous directories. Finish or cancel active tasks first.</p>
+            <button type="submit">Apply directory</button>
+            <p id="storage-result" role="status"></p>
+          </div>
+        </form>
+        <form id="settings-form" class="settings">
+          <section>
+            <header class="settings-group-head"><h2>Automatic updates</h2><p>Keep your library up to date.</p></header><div class="settings-group-body">
+            <div class="row">
+              <div><strong id="label-incremental_enabled">Sweep the light novel collection</strong><p>Checks every catalog page and volume, then downloads anything new or changed.</p></div>
+              <label class="switch"><input aria-labelledby="label-incremental_enabled" name="incremental_enabled" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong>Interval</strong><p id="schedule-detail"></p></div>
+              <label class="unit"><input name="interval_hours" type="number" min="0.25" max="8760" step="0.25" required aria-label="Sweep interval in hours" />hours</label>
+            </div>
+            </div>
+          </section>
+          <section>
+            <header class="settings-group-head"><h2>Japanese editions</h2><p>Choose how Japanese EPUBs are prepared.</p></header><div class="settings-group-body">
+            <div class="row">
+              <div><strong id="label-auto_convert">Convert after downloading</strong><p>Builds a Japanese-only EPUB next to each bilingual source.</p></div>
+              <label class="switch"><input aria-labelledby="label-auto_convert" name="auto_convert" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong id="label-vertical">Vertical reading</strong><p>Restores the publisher's vertical layout and right-to-left page order.</p></div>
+              <label class="switch"><input aria-labelledby="label-vertical" name="vertical" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong id="label-verify">Verify against the original</strong><p>Mismatches and missing references are saved as UNVERIFIED. Sources are always kept.</p></div>
+              <label class="switch"><input aria-labelledby="label-verify" name="verify" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            </div>
+          </section>
+          <section>
+            <header class="settings-group-head"><h2>Download source</h2><p>Set languages and translation priority.</p></header><div class="settings-group-body">
+            <div class="row">
+              <div><strong>Bilingual order</strong><p>Which language comes first in downloaded EPUBs.</p></div>
+              <select name="source_mode" aria-label="Bilingual order">
+                <option value="jp-zh">Japanese, then Chinese</option>
+                <option value="zh-jp">Chinese, then Japanese</option>
+              </select>
+            </div>
+            <div class="row">
+              <div><strong>Translations</strong><p>Tick the engines to use. Order sets priority. Changing this downloads affected volumes again.</p></div>
+              <ol id="engine-list" class="engines"></ol>
+            </div>
+            <div class="row">
+              <div><strong>Selection mode</strong><p>Priority uses the first available engine; parallel includes all of them.</p></div>
+              <select name="translations_mode" aria-label="Translation selection mode">
+                <option value="priority">Priority</option>
+                <option value="parallel">Parallel</option>
+              </select>
+            </div>
+            </div>
+          </section>
+          <section>
+            <header class="settings-group-head"><h2>Requests</h2><p>Control connection speed and retries.</p></header><div class="settings-group-body">
+            <div class="row">
+              <div><strong>Delay between requests</strong></div>
+              <label class="unit"><input name="request_delay" type="number" min="0.2" max="60" step="0.1" required aria-label="Delay between requests" />seconds</label>
+            </div>
+            <div class="row">
+              <div><strong>Read timeout</strong></div>
+              <label class="unit"><input name="timeout" type="number" min="5" max="600" required aria-label="Read timeout" />seconds</label>
+            </div>
+            <div class="row">
+              <div><strong>Retry attempts</strong></div>
+              <label class="unit"><input name="retries" type="number" min="1" max="6" required aria-label="Retry attempts" />tries</label>
+            </div>
+            <div class="row">
+              <div><strong>Works per catalog page</strong><p>Page ranges in download tasks are counted with this size.</p></div>
+              <label class="unit"><input name="page_size" type="number" min="1" max="100" required aria-label="Works per catalog page" />works</label>
+            </div>
+            </div>
+          </section>
+          <footer class="settings-foot">
+            <div><p id="settings-feedback" role="status">All changes saved</p><p id="storage-path"></p></div>
+            <div class="head-actions"><button id="discard-settings" type="button" disabled>Discard changes</button><button id="save-settings" class="primary" type="submit" disabled>Save settings</button></div>
+          </footer>
+        </form>
+      </section>
+    </main>
+
+    <div id="selection-bar" class="selection-bar" hidden>
+      <span id="selection-count"></span>
+      <button data-action="download-selected">Download</button>
+      <button data-action="convert-selected" id="convert-selected">Convert</button>
+      <button data-action="remove-selected" id="remove-selected">Remove</button>
+      <button class="ghost" data-action="clear-selection">Clear</button>
+    </div>
+
+    <dialog id="remove-dialog" aria-labelledby="remove-title">
+      <form id="remove-form" class="management-form">
+        <header class="dialog-head"><h2 id="remove-title">Remove from library</h2><button type="button" class="icon-button" data-close="remove-dialog" aria-label="Close">✕</button></header>
+        <p id="remove-description"></p>
+        <ul id="remove-items" class="removal-items"></ul>
+        <label class="check" id="delete-files-option"><input id="delete-local-files" type="checkbox" /> Also delete saved EPUB files, Japanese editions and references</label>
+        <p class="hint">Removed works can appear again in a later download or update sweep.</p>
+        <footer class="dialog-foot"><button type="button" data-close="remove-dialog">Cancel</button><button type="submit" class="danger">Remove</button></footer>
+      </form>
+    </dialog>
+    <dialog id="crawl-dialog" aria-labelledby="crawl-title">
+      <form id="crawl-form">
+        <header class="dialog-head">
+          <h2 id="crawl-title">New download</h2>
+          <button type="button" class="icon-button" data-close="crawl-dialog" aria-label="Close">✕</button>
+        </header>
+        <fieldset class="scopes">
+          <legend>What to download</legend>
+          <label><input type="radio" name="kind" value="range" checked /><span><strong>Catalog pages</strong>A page range of one category</span></label>
+          <label><input type="radio" name="kind" value="manual" /><span><strong>Specific works</strong>IDs or Novelia URLs</span></label>
+          <label><input type="radio" name="kind" value="incremental" /><span><strong>Update sweep</strong>New and changed light novels</span></label>
+          <label><input type="radio" name="kind" value="full" /><span><strong>Everything</strong>The whole light novel collection</span></label>
+        </fieldset>
+        <div id="range-fields" class="fields">
+          <label>Category<select name="category" id="crawl-category"></select></label>
+          <div class="pair">
+            <label>First page<input name="start_page" type="number" min="1" value="1" /></label>
+            <label>Last page<input name="end_page" type="number" min="1" value="1" /></label>
+          </div>
+          <label>Keyword<input name="query" placeholder="Optional" /></label>
+        </div>
+        <div id="manual-fields" class="fields" hidden>
+          <label>One work per line<textarea name="keys" rows="5" placeholder="wenku/688da4c4c923db0b7aa9943e&#10;https://n.novelia.cc/novel/alphapolis/159124863-713069479"></textarea></label>
+          <p class="hint">Library works in any category, or web novels from kakuyomu, syosetu, novelup, hameln, pixiv and alphapolis.</p>
+        </div>
+        <div id="volume-field" class="fields">
+          <label>Volumes<input name="volumes" placeholder="All, or e.g. 1,3,5-8" /></label>
+          <p class="hint">Counted in filename order, Japanese uploads before Chinese ones.</p>
+        </div>
+        <p id="full-hint" class="hint" hidden>Indexes every light novel and downloads volumes that are new or changed since the last download. Unchanged files are reused.</p>
+        <div class="fields checks">
+          <label class="check"><input name="download" type="checkbox" checked /> Download EPUB files <small>Untick to record metadata only</small></label>
+          <label class="check"><input name="force" type="checkbox" /> Download again even if unchanged</label>
+        </div>
+        <footer class="dialog-foot">
+          <button type="button" data-close="crawl-dialog">Cancel</button>
+          <button class="primary" type="submit">Start download</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="work-dialog" class="sheet" aria-labelledby="work-title">
+      <header class="dialog-head">
+        <h2 id="work-title">Work details</h2>
+        <button class="icon-button" data-close="work-dialog" aria-label="Close">✕</button>
+      </header>
+      <div id="work-detail"></div>
+    </dialog>
+
+    <dialog id="log-dialog" class="sheet" aria-labelledby="log-title">
+      <header class="dialog-head">
+        <div><h2 id="log-title">Task log</h2><p id="log-status" class="sub"></p></div>
+        <button class="icon-button" data-close="log-dialog" aria-label="Close">✕</button>
+      </header>
+      <div id="task-errors"></div>
+      <ol id="log-content" tabindex="0" aria-label="Task log"></ol>
+    </dialog>
+
+    <div id="toast" popover="manual" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

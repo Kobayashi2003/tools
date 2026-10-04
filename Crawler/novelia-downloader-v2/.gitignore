@@ -1,0 +1,9 @@
+.venv/
+data/
+downloads/
+__pycache__/
+.pytest_cache/
+*.pyc
+token.txt
+.env
+*.log
