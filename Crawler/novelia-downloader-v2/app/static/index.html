@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Novelia Library</title>
     <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=12" />
-    <script src="/static/ui.js?v=9" defer></script>
-    <script src="/static/app.js?v=11" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=13" />
+    <script src="/static/ui.js?v=10" defer></script>
+    <script src="/static/app.js?v=12" defer></script>
   </head>
   <body>
     <aside class="rail" id="sidebar">
@@ -128,7 +128,7 @@
         <header class="view-head">
           <div>
             <h1>Tasks</h1>
-            <p class="sub">One task runs at a time. Interrupted tasks resume from their last checkpoint.</p>
+            <p class="sub">One task runs at a time. Interrupted tasks resume from their last checkpoint; failed items can be retried without repeating finished ones.</p>
           </div>
           <div class="head-actions">
             <button data-action="clear-tasks">Clear completed</button>
@@ -148,7 +148,7 @@
         <header class="view-head">
           <div>
             <h1>Settings</h1>
-            <p class="sub">Appearance updates immediately. Queued tasks keep their original download settings.</p>
+            <p class="sub">Appearance updates immediately. Queued tasks keep their content settings; pacing and retry settings apply when a task starts or resumes.</p>
           </div>
         </header>
         <section class="appearance-settings" aria-labelledby="appearance-title">
@@ -224,25 +224,103 @@
                 <option value="parallel">Parallel</option>
               </select>
             </div>
+            <div class="row">
+              <div><strong id="label-download_chinese_uploads">Chinese-only uploads</strong><p>Also save volumes that were uploaded only in Chinese. They have no Japanese text to convert.</p></div>
+              <label class="switch"><input aria-labelledby="label-download_chinese_uploads" name="download_chinese_uploads" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong>Works per catalog page</strong><p>Page ranges in download tasks are counted with this size.</p></div>
+              <label class="unit"><input name="page_size" type="number" min="1" max="100" required aria-label="Works per catalog page" />works</label>
+            </div>
             </div>
           </section>
           <section>
-            <header class="settings-group-head"><h2>Requests</h2><p>Control connection speed and retries.</p></header><div class="settings-group-body">
+            <header class="settings-group-head"><h2>Pacing</h2><p>How quickly requests are sent. Applies to running tasks when they next start or resume.</p></header><div class="settings-group-body">
             <div class="row">
-              <div><strong>Delay between requests</strong></div>
+              <div><strong>Preset</strong><p>Fills the pacing and backoff fields below. Use Gentle for long sweeps or after being refused.</p></div>
+              <div class="segmented" role="group" aria-label="Pacing preset">
+                <button type="button" data-preset="gentle">Gentle</button><button type="button" data-preset="standard">Standard</button><button type="button" data-preset="fast">Fast</button>
+              </div>
+            </div>
+            <div class="row">
+              <div><strong>Delay between requests</strong><p>Minimum gap between any two requests, shared by every task and the catalog browser.</p></div>
               <label class="unit"><input name="request_delay" type="number" min="0.2" max="60" step="0.1" required aria-label="Delay between requests" />seconds</label>
+            </div>
+            <div class="row">
+              <div><strong>Random variation</strong><p>Varies each delay by up to this much so requests do not arrive on a fixed beat.</p></div>
+              <label class="unit"><input name="request_jitter" type="number" min="0" max="100" required aria-label="Random variation of the delay" />%</label>
+            </div>
+            <div class="row">
+              <div><strong id="label-adaptive_delay">Slow down when refused</strong><p>Each rate-limit response doubles the extra delay; it shrinks again after successful requests.</p></div>
+              <label class="switch"><input aria-labelledby="label-adaptive_delay" name="adaptive_delay" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong>Slowest delay</strong><p>Upper limit for the adaptive delay.</p></div>
+              <label class="unit"><input name="max_delay" type="number" min="1" max="600" step="0.5" required aria-label="Slowest delay" />seconds</label>
+            </div>
+            <div class="row">
+              <div><strong>Rest every</strong><p>Take a break after this many file downloads. 0 never rests.</p></div>
+              <label class="unit"><input name="rest_every" type="number" min="0" max="10000" required aria-label="Rest after this many downloads" />files</label>
+            </div>
+            <div class="row">
+              <div><strong>Rest length</strong></div>
+              <label class="unit"><input name="rest_seconds" type="number" min="1" max="3600" required aria-label="Rest length" />seconds</label>
+            </div>
+            <div class="row">
+              <div><strong>Connect timeout</strong></div>
+              <label class="unit"><input name="connect_timeout" type="number" min="3" max="120" required aria-label="Connect timeout" />seconds</label>
             </div>
             <div class="row">
               <div><strong>Read timeout</strong></div>
               <label class="unit"><input name="timeout" type="number" min="5" max="600" required aria-label="Read timeout" />seconds</label>
             </div>
+            </div>
+          </section>
+          <section>
+            <header class="settings-group-head"><h2>Failures and rate limits</h2><p>What happens when a request fails or the site starts refusing.</p></header><div class="settings-group-body">
             <div class="row">
-              <div><strong>Retry attempts</strong></div>
-              <label class="unit"><input name="retries" type="number" min="1" max="6" required aria-label="Retry attempts" />tries</label>
+              <div><strong>Attempts per request</strong><p>For network errors, server errors and interrupted transfers.</p></div>
+              <label class="unit"><input name="retries" type="number" min="1" max="10" required aria-label="Attempts per request" />tries</label>
             </div>
             <div class="row">
-              <div><strong>Works per catalog page</strong><p>Page ranges in download tasks are counted with this size.</p></div>
-              <label class="unit"><input name="page_size" type="number" min="1" max="100" required aria-label="Works per catalog page" />works</label>
+              <div><strong>First backoff</strong><p>Wait after the first failure or HTTP 429; doubles each time, with random variation. A longer Retry-After from the site always wins.</p></div>
+              <label class="unit"><input name="backoff_base" type="number" min="1" max="600" required aria-label="First backoff" />seconds</label>
+            </div>
+            <div class="row">
+              <div><strong>Longest backoff</strong></div>
+              <label class="unit"><input name="backoff_max" type="number" min="5" max="3600" required aria-label="Longest backoff" />seconds</label>
+            </div>
+            <div class="row">
+              <div><strong>Keep trying for</strong><p>How long one request keeps backing off while rate limited before the task pauses.</p></div>
+              <label class="unit"><input name="rate_limit_patience" type="number" min="0" max="240" step="0.5" required aria-label="Rate-limit patience" />minutes</label>
+            </div>
+            <div class="row">
+              <div><strong>Then pause the task for</strong><p>The task returns to the queue and resumes by itself. Other queued tasks may run meanwhile.</p></div>
+              <label class="unit"><input name="rate_limit_pause" type="number" min="1" max="1440" required aria-label="Pause length" />minutes</label>
+            </div>
+            <div class="row">
+              <div><strong>Pauses in a row</strong><p>Give up after this many pauses without any successful item. 0 stops at the first pause.</p></div>
+              <label class="unit"><input name="max_pauses" type="number" min="0" max="100" required aria-label="Maximum pauses in a row" />times</label>
+            </div>
+            <div class="row">
+              <div><strong>Automatic retry rounds</strong><p>At the end of a task, temporarily failed items are tried again. Permanent errors such as 404 or failed verification are left for you.</p></div>
+              <label class="unit"><input name="retry_rounds" type="number" min="0" max="10" required aria-label="Automatic retry rounds" />rounds</label>
+            </div>
+            <div class="row">
+              <div><strong>Wait before a round</strong><p>Multiplied by the round number: 1×, 2×, 3×…</p></div>
+              <label class="unit"><input name="retry_round_delay" type="number" min="0" max="3600" required aria-label="Wait before a retry round" />seconds</label>
+            </div>
+            </div>
+          </section>
+          <section>
+            <header class="settings-group-head"><h2>Active hours</h2><p>Limit downloads to a daily window, for example overnight.</p></header><div class="settings-group-body">
+            <div class="row">
+              <div><strong id="label-active_hours">Only download during these hours</strong><p>Outside the window, tasks wait in the queue and continue when it opens. Conversion is not limited. Times use this computer's clock.</p></div>
+              <label class="switch"><input aria-labelledby="label-active_hours" name="active_hours" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong>Window</strong><p>May cross midnight, e.g. 23:00 to 07:00.</p></div>
+              <div class="time-range"><input name="active_start" type="time" required aria-label="Window start" /><span aria-hidden="true">–</span><input name="active_end" type="time" required aria-label="Window end" /></div>
             </div>
             </div>
           </section>

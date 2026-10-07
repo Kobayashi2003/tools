@@ -26,7 +26,13 @@ const STATUSES = {
   cancelled: ["Cancelled", "warn"],
   running: ["Running", "live"],
   queued: ["Queued", "live"],
+  paused: ["Paused", "warn"],
   failed: ["Failed", "error"],
+};
+const PACING_PRESETS = {
+  gentle: { request_delay: 3, request_jitter: 40, adaptive_delay: true, max_delay: 60, rest_every: 20, rest_seconds: 180, backoff_base: 15, backoff_max: 900 },
+  standard: { request_delay: 1, request_jitter: 30, adaptive_delay: true, max_delay: 30, rest_every: 0, rest_seconds: 120, backoff_base: 5, backoff_max: 300 },
+  fast: { request_delay: 0.5, request_jitter: 20, adaptive_delay: true, max_delay: 15, rest_every: 0, rest_seconds: 60, backoff_base: 3, backoff_max: 120 },
 };
 const TASK_FILTERS = {
   all: () => true,
@@ -60,6 +66,14 @@ const clock = (value) => new Date(value).toLocaleTimeString(undefined, { hour: "
 const size = (bytes) =>
   bytes >= 1 << 30 ? `${(bytes / (1 << 30)).toFixed(1)} GB` : `${Math.round(bytes / (1 << 20)).toLocaleString()} MB`;
 const pct = (part, whole) => (whole ? Math.min(100, (part / whole) * 100) : 0);
+const secondsUntil = (value) => (value ? Math.max(0, Math.round((new Date(value) - Date.now()) / 1000)) : 0);
+const countdown = (value) => {
+  const s = secondsUntil(value);
+  return s >= 5400 ? `${(s / 3600).toFixed(1)} h` : s >= 90 ? `${Math.ceil(s / 60)} min` : `${s} s`;
+};
+// A queued task with resume_at was paused by a rate limit or active hours.
+const jobStatus = (j) => (j.status === "queued" && j.resume_at ? "paused" : j.status);
+const waiting = (j) => j.status === "running" && j.wait_until && secondsUntil(j.wait_until) > 0;
 const workUrl = (key) => `${SITE}/${key.startsWith("wenku/") ? key : "novel/" + key}`;
 
 async function api(url, options = {}) {
@@ -134,6 +148,14 @@ function updateSettingsFeedback() {
   $("#settings-feedback").textContent = settingsSaving ? "Saving changes…" : dirty ? "Unsaved changes" : "All changes saved";
   $("#save-settings").disabled = !dirty || settingsSaving;
   $("#discard-settings").disabled = !dirty || settingsSaving;
+  const form = $("#settings-form");
+  $$("[data-preset]").forEach((button) => {
+    const matches = Object.entries(PACING_PRESETS[button.dataset.preset]).every(([name, value]) => {
+      const input = form.elements.namedItem(name);
+      return input.type === "checkbox" ? input.checked === value : Number(input.value) === value;
+    });
+    button.setAttribute("aria-pressed", matches);
+  });
 }
 
 // The page CSP forbids inline style attributes, so widths are applied through the CSSOM.
@@ -329,33 +351,51 @@ function taskScope(j) {
   return [scope, ...extras.filter(Boolean)].join(", ");
 }
 
+function taskNote(j) {
+  if (jobStatus(j) === "paused") return `${j.wait_reason || "Paused."} Resumes ${when(j.resume_at)} (in ${countdown(j.resume_at)}).`;
+  if (waiting(j)) return `${j.wait_reason}: ${countdown(j.wait_until)} left.`;
+  return "";
+}
+
+function taskActions(j) {
+  const status = jobStatus(j);
+  const remove = `<button class="ghost" data-delete="${j.id}" title="Remove from the list" aria-label="Remove task ${j.id}">✕</button>`;
+  const cancel = `<button class="danger" data-cancel="${j.id}" ${j.cancel_requested ? "disabled" : ""}>${j.cancel_requested ? "Stopping…" : "Cancel"}</button>`;
+  if (status === "paused") return `<button data-resume="${j.id}">Start now</button>${cancel}`;
+  if (["queued", "running"].includes(status)) return cancel;
+  if (status === "completed_with_errors") return `<button data-retry="${j.id}">Retry ${j.failed} failed</button>${remove}`;
+  if (status !== "completed") return `<button data-resume="${j.id}">Resume</button>${remove}`;
+  return remove;
+}
+
 function taskCard(j) {
-  const [, tone] = STATUSES[j.status] || ["", ""];
+  const status = jobStatus(j);
+  const [, tone] = STATUSES[status] || ["", ""];
   const discovering = !j.listing_done && ["full", "range", "incremental"].includes(j.kind) && j.status === "running";
   const progress = discovering
     ? `Reading catalog page ${j.cursor}${j.page_count ? ` of ${j.page_count}` : ""}`
     : j.total ? `${j.done} of ${j.total} done${j.failed ? `, ${j.failed} failed` : ""}`
       : ["running", "queued"].includes(j.status) ? "Waiting to start" : "No items processed";
-  const action = ["queued", "running"].includes(j.status)
-    ? `<button class="danger" data-cancel="${j.id}" ${j.cancel_requested ? "disabled" : ""}>${j.cancel_requested ? "Stopping…" : "Cancel"}</button>`
-    : `${j.status !== "completed" ? `<button data-resume="${j.id}">Resume</button>` : ""}<button class="ghost" data-delete="${j.id}" title="Remove from the list" aria-label="Remove task ${j.id}">✕</button>`;
+  const note = taskNote(j);
   return `<article class="task" data-job-id="${j.id}" data-tone="${tone}">
     <div>
-      <h3><span class="id">#${j.id}</span>${esc(KINDS[j.kind])} ${pill(j.status)}${j.scheduled ? '<span class="pill">Scheduled</span>' : ""}</h3>
+      <h3><span class="id">#${j.id}</span>${esc(KINDS[j.kind])} ${pill(status)}${j.scheduled ? '<span class="pill">Scheduled</span>' : ""}</h3>
       <p class="meta">${esc(taskScope(j))}. Created ${esc(when(j.created_at))}${j.finished_at ? `, finished ${esc(when(j.finished_at))}` : ""}.</p>
-      ${j.error ? `<p class="error-text">${esc(j.error)}</p>` : ""}
+      ${note ? `<p class="note-text">${esc(note)}</p>` : j.error ? `<p class="error-text">${esc(j.error)}</p>` : ""}
     </div>
     <div class="task-progress">
       <span>${esc(progress)}</span>
       <span class="meter"><span data-w="${pct(j.done, j.total)}"></span><span class="m-fail" data-w="${pct(j.failed, j.total)}"></span></span>
       <span class="current">${j.current ? esc(j.current) : "&nbsp;"}</span>
     </div>
-    <div class="task-actions"><button data-log="${j.id}">Log</button>${action}</div>
+    <div class="task-actions"><button data-log="${j.id}">Log</button>${taskActions(j)}</div>
   </article>`;
 }
 
 function renderTasks() {
-  const signature = JSON.stringify([state.jobs, state.taskFilter]);
+  // Countdowns change without new data, so waiting tasks re-render every refresh.
+  const ticking = state.jobs.some((j) => jobStatus(j) === "paused" || waiting(j));
+  const signature = JSON.stringify([state.jobs, state.taskFilter, ticking && Date.now()]);
   if (state.taskSignature === signature) return;
   state.taskSignature = signature;
   const jobs = state.jobs.filter(TASK_FILTERS[state.taskFilter]);
@@ -387,6 +427,7 @@ async function openLog(id) {
   state.log = { id, after: 0 };
   $("#log-content").innerHTML = "";
   $("#task-errors").innerHTML = "";
+  delete $("#task-errors").dataset.signature;
   $("#log-title").textContent = `#${id} Task log`;
   $("#log-status").textContent = "Loading…";
   UI.openDialog($("#log-dialog"));
@@ -399,11 +440,8 @@ async function loadLog() {
   const j = await api(`/api/jobs/${id}?after=${state.log.after}`);
   if (state.log.id !== id || !$("#log-dialog").open) return;
   $("#log-title").textContent = `#${j.id} ${KINDS[j.kind]}`;
-  $("#log-status").innerHTML = `${pill(j.status)} ${esc(taskScope(j))}`;
-  $("#task-errors").innerHTML = j.items
-    .filter((i) => i.status === "failed")
-    .map((i) => `<p class="error-text"><strong>${esc(i.target)}</strong>: ${esc(i.error)}</p>`)
-    .join("");
+  $("#log-status").innerHTML = `${pill(jobStatus(j))} ${esc(taskScope(j))}`;
+  renderFailures(j);
   if (!j.logs.length) return;
   const area = $("#log-dialog");
   const nearBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
@@ -413,6 +451,43 @@ async function loadLog() {
   );
   state.log.after = j.logs[j.logs.length - 1].id;
   if (nearBottom) area.scrollTop = area.scrollHeight;
+}
+
+function failureRow(j, item, canRetry) {
+  const volumes = Object.entries(item.parts?.failed || {});
+  const done = item.parts?.done?.length || 0;
+  const tag = item.retryable
+    ? '<span class="pill warn" title="Network, server or rate-limit error">Temporary</span>'
+    : '<span class="pill error" title="Retrying is unlikely to help until the cause is fixed">Permanent</span>';
+  return `<li>
+    <div class="failure-main">
+      <strong>${esc(item.title || item.target)}</strong>
+      <span class="failure-tags">${tag}<span class="pill">${plural(item.attempts || 1, "attempt")}</span>${done ? `<span class="pill ok">${done} volume${done === 1 ? "" : "s"} saved</span>` : ""}</span>
+      ${canRetry ? `<button data-retry="${j.id}" data-target="${esc(item.target)}">Retry</button>` : ""}
+    </div>
+    ${volumes.length
+      ? `<ul class="failure-volumes">${volumes.map(([volume, error]) => `<li><span>${esc(volume)}</span> ${esc(error)}</li>`).join("")}</ul>`
+      : `<p class="error-text">${esc(item.error)}</p>`}
+  </li>`;
+}
+
+function renderFailures(j) {
+  const failed = j.items.filter((i) => i.status === "failed");
+  const panel = $("#task-errors");
+  const signature = JSON.stringify([j.status, failed]);
+  if (panel.dataset.signature === signature) return;
+  panel.dataset.signature = signature;
+  if (!failed.length) {
+    panel.innerHTML = "";
+    return;
+  }
+  const canRetry = !["queued", "running"].includes(j.status);
+  const temporary = failed.filter((i) => i.retryable).length;
+  panel.innerHTML = `<div class="failures-head">
+      <div><strong>${plural(failed.length, "failed item")}</strong><p class="hint">${temporary} temporary, ${failed.length - temporary} permanent. Retrying skips volumes that were already saved.</p></div>
+      ${canRetry ? `<button class="primary" data-retry="${j.id}">Retry all failed</button>` : ""}
+    </div>
+    <ul class="failures">${failed.map((i) => failureRow(j, i, canRetry)).join("")}</ul>`;
 }
 
 /* Work detail */
@@ -515,13 +590,20 @@ async function loadStatus() {
   badge.textContent = s.active_jobs;
   badge.hidden = !s.active_jobs;
 
-  const running = s.running;
-  UI.show($("#now-running"), Boolean(running));
+  const { running, paused } = s;
+  const banner = $("#now-running");
+  UI.show(banner, Boolean(running || paused));
+  banner.classList.toggle("is-waiting", Boolean((running && waiting(running)) || (!running && paused)));
   if (running) {
     const counts = running.total ? `${running.done + running.failed}/${running.total}` : `catalog page ${running.cursor}`;
-    $("#now-running-text").textContent = `#${running.id} ${KINDS[running.kind]}: ${counts}${running.current ? ` · ${running.current}` : ""}`;
+    const detail = waiting(running) ? `${running.wait_reason} (${countdown(running.wait_until)})` : running.current;
+    $("#now-running-text").textContent = `#${running.id} ${KINDS[running.kind]}: ${counts}${detail ? ` · ${detail}` : ""}`;
     $("#now-running-bar").dataset.w = pct(running.done + running.failed, running.total);
-    applyWidths($("#now-running"));
+    applyWidths(banner);
+  } else if (paused) {
+    $("#now-running-text").textContent = `#${paused.id} ${KINDS[paused.kind]} paused · resumes in ${countdown(paused.resume_at)} · ${paused.wait_reason || ""}`;
+    $("#now-running-bar").dataset.w = 0;
+    applyWidths(banner);
   }
 
   const schedule = s.incremental_enabled
@@ -736,7 +818,7 @@ document.addEventListener("click", async (event) => {
     if (!dialog.querySelector('[aria-busy="true"]')) await UI.closeDialog(dialog);
     return;
   }
-  const mutating = d.cancel || d.resume || d.delete || d.downloadWork || d.downloadVolume || d.convertWork || d.convertFile || ["incremental", "convert-all", "download-selected", "convert-selected", "clear-tasks", "cleanup-library"].includes(d.action);
+  const mutating = d.cancel || d.resume || d.retry || d.delete || d.downloadWork || d.downloadVolume || d.convertWork || d.convertFile || ["incremental", "convert-all", "download-selected", "convert-selected", "clear-tasks", "cleanup-library"].includes(d.action);
   if (mutating) UI.pending(button, true);
   try {
     if (d.view) await switchView(d.view);
@@ -768,6 +850,20 @@ document.addEventListener("click", async (event) => {
     else if (d.cancel || d.resume) {
       await api(`/api/jobs/${d.cancel || d.resume}/${d.cancel ? "cancel" : "resume"}`, { method: "POST" });
       await Promise.all([loadTasks(), loadStatus()]);
+    } else if (d.retry) {
+      const { retried } = await api(`/api/jobs/${d.retry}/retry`, {
+        method: "POST", body: JSON.stringify({ targets: d.target ? [d.target] : [] }),
+      });
+      toast(`Retrying ${plural(retried, "failed item")} in task #${d.retry}.`);
+      await Promise.all([loadTasks(), loadStatus(), loadLog()]);
+    } else if (d.preset) {
+      const form = $("#settings-form");
+      for (const [name, value] of Object.entries(PACING_PRESETS[d.preset])) {
+        const input = form.elements.namedItem(name);
+        if (input.type === "checkbox") input.checked = value;
+        else input.value = value;
+      }
+      updateSettingsFeedback();
     } else if (d.delete) {
       await api(`/api/jobs/${d.delete}`, { method: "DELETE" });
       await loadTasks();

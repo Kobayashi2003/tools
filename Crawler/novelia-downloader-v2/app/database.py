@@ -9,12 +9,36 @@ from pathlib import Path
 from .schema import Settings
 
 
+def iso(moment):
+    return moment.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
 def now():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return iso(datetime.now(timezone.utc))
 
 
 def dump(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+# Display title of a job item `i`; the `?` binds the job kind. Conversion targets are file IDs,
+# matched through the files primary key.
+ITEM_TITLE = "COALESCE(w.title, fw.title || ' · ' || f.volume_id, i.target)"
+ITEM_TITLE_JOINS = """LEFT JOIN works w ON w.key=i.target
+    LEFT JOIN files f ON ?='convert' AND f.id=CAST(i.target AS INTEGER)
+    LEFT JOIN works fw ON fw.key=f.work_key"""
+
+# Columns added after the first release; created on demand so existing databases keep working.
+ADDED_COLUMNS = {
+    "jobs": {"resume_at": "TEXT", "pauses": "INTEGER NOT NULL DEFAULT 0",
+             "wait_until": "TEXT", "wait_reason": "TEXT",
+             # Retry rounds already used, kept across automatic pauses.
+             "retry_round": "INTEGER NOT NULL DEFAULT 0",
+             # Set by "Start now": the user chose to run outside active hours.
+             "ignore_window": "INTEGER NOT NULL DEFAULT 0"},
+    "job_items": {"attempts": "INTEGER NOT NULL DEFAULT 0", "retryable": "INTEGER NOT NULL DEFAULT 0",
+                  "parts": "TEXT"},
+}
 
 
 class Database:
@@ -60,6 +84,11 @@ class Database:
                 CREATE INDEX IF NOT EXISTS item_status_idx ON job_items(job_id, status);
                 CREATE INDEX IF NOT EXISTS file_work_idx ON files(work_key);
             """)
+            for table, columns in ADDED_COLUMNS.items():
+                present = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+                for name, kind in columns.items():
+                    if name not in present:
+                        db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
 
     @contextmanager
     def connect(self):
@@ -110,11 +139,8 @@ class Database:
         where, args = ("WHERE j.status=?", (status, limit)) if status else ("", (limit,))
         return self.rows(f"""SELECT j.*, COUNT(i.target) AS total,
             COALESCE(SUM(i.status='done'),0) AS done, COALESCE(SUM(i.status='failed'),0) AS failed,
-            (SELECT COALESCE(w.title, fw.title || ' · ' || f.volume_id, r.target) FROM job_items r
-                LEFT JOIN works w ON w.key=r.target
-                LEFT JOIN files f ON j.kind='convert' AND CAST(f.id AS TEXT)=r.target
-                LEFT JOIN works fw ON fw.key=f.work_key
-                WHERE r.job_id=j.id AND r.status='running' LIMIT 1) AS current
+            (SELECT {ITEM_TITLE} FROM job_items i {ITEM_TITLE_JOINS.replace("?", "j.kind")}
+                WHERE i.job_id=j.id AND i.status='running' LIMIT 1) AS current
             FROM jobs j LEFT JOIN job_items i ON i.job_id=j.id {where}
             GROUP BY j.id ORDER BY j.id DESC LIMIT ?""", args)
 
@@ -135,6 +161,16 @@ class Database:
 
     def job(self, job_id):
         return self.row("SELECT * FROM jobs WHERE id=?", (job_id,))
+
+    def open_items(self, job_id, kind, limit=500):
+        """Running and failed items with a display title (work title, or work · volume for conversions)."""
+        items = self.rows(f"""SELECT i.target,i.status,i.error,i.attempts,i.retryable,i.parts,
+            {ITEM_TITLE} AS title FROM job_items i {ITEM_TITLE_JOINS}
+            WHERE i.job_id=? AND i.status IN ('running','failed') ORDER BY i.rowid LIMIT ?""",
+            (kind, job_id, limit))
+        for item in items:
+            item["parts"] = json.loads(item["parts"] or "{}")
+        return items
 
     def log(self, job_id, message, level="info"):
         self.execute("INSERT INTO logs(job_id,created_at,level,message) VALUES (?,?,?,?)",
@@ -172,17 +208,75 @@ class Database:
             (key, volume, mode, fingerprint, str(path), size, sha256, str(reference) if reference else None,
              "downloaded", now()))
 
+    def next_job(self):
+        """The oldest queued task that is not paused until later."""
+        return self.row("SELECT * FROM jobs WHERE status='queued' AND (resume_at IS NULL OR resume_at<=?) "
+                        "ORDER BY id LIMIT 1", (now(),))
+
+    def set_wait(self, job_id, until, reason):
+        self.execute("UPDATE jobs SET wait_until=?,wait_reason=? WHERE id=?",
+                     (iso(until) if until else None, reason, job_id))
+
+    def defer(self, job_id, until, reason, pauses):
+        self.execute("UPDATE jobs SET status='queued',resume_at=?,wait_reason=?,wait_until=NULL,pauses=? WHERE id=?",
+                     (iso(until), reason, pauses, job_id))
+
+    def parts(self, job_id, target):
+        row = self.row("SELECT parts FROM job_items WHERE job_id=? AND target=?", (job_id, target))
+        parts = json.loads(row["parts"]) if row and row["parts"] else {}
+        return {"done": parts.get("done", []), "failed": parts.get("failed", {})}
+
+    def mark_part(self, job_id, target, volume, error=None):
+        """Record one volume's outcome so retries skip volumes that already succeeded."""
+        parts = self.parts(job_id, target)
+        parts["failed"].pop(volume, None)
+        if error is None:
+            parts["done"] = [*dict.fromkeys([*parts["done"], volume])]
+        else:
+            parts["failed"][volume] = error
+        self.execute("UPDATE job_items SET parts=? WHERE job_id=? AND target=?", (dump(parts), job_id, target))
+
+    def _requeue(self, db, job_id, ignore_window=0):
+        """Queue a task again at the user's request, with fresh pause and retry-round budgets."""
+        db.execute("UPDATE jobs SET status='queued',cancel_requested=0,error=NULL,finished_at=NULL,resume_at=NULL,"
+                   "wait_until=NULL,wait_reason=NULL,pauses=0,retry_round=0,ignore_window=? WHERE id=?",
+                   (ignore_window, job_id))
+
     def resume(self, job_id):
+        """Continue a stopped task, or start a paused one now (even outside active hours)."""
+        with self.connect() as db:
+            row = db.execute("SELECT status,resume_at FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            if row["status"] == "queued" and row["resume_at"]:
+                self._requeue(db, job_id, ignore_window=1)
+                return
+            if row["status"] in ("running", "queued", "completed"):
+                raise ValueError("Only cancelled, interrupted, failed, or paused tasks can be resumed.")
+            db.execute("UPDATE job_items SET status='pending',error=NULL WHERE job_id=? AND status!='done'", (job_id,))
+            self._requeue(db, job_id)
+
+    def retry(self, job_id, targets=()):
+        """Queue failed items (all, or only `targets`) again; completed items are untouched."""
         with self.connect() as db:
             row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not row:
                 raise KeyError(job_id)
-            if row["status"] in ("running", "queued", "completed"):
-                raise ValueError("Only cancelled, interrupted, or failed tasks can be resumed.")
-            db.execute("UPDATE job_items SET status='pending',error=NULL WHERE job_id=? AND status!='done'", (job_id,))
-            db.execute("UPDATE jobs SET status='queued',cancel_requested=0,error=NULL,finished_at=NULL WHERE id=?", (job_id,))
+            if row["status"] in ("running", "queued"):
+                raise ValueError("Wait for the task to stop before retrying its failed items.")
+            sql = "UPDATE job_items SET status='pending',error=NULL WHERE job_id=? AND status='failed'"
+            args = [job_id]
+            if targets:
+                sql += f" AND target IN ({','.join('?' * len(targets))})"
+                args.extend(targets)
+            count = db.execute(sql, args).rowcount
+            if not count:
+                raise ValueError("No failed items to retry.")
+            self._requeue(db, job_id)
+            return count
 
     def recover(self):
         with self.connect() as db:
-            db.execute("UPDATE jobs SET status='interrupted',error='Server stopped before completion' WHERE status='running'")
+            db.execute("UPDATE jobs SET status='interrupted',error='Server stopped before completion',"
+                       "wait_until=NULL,wait_reason=NULL WHERE status='running'")
             db.execute("UPDATE job_items SET status='pending' WHERE status='running'")

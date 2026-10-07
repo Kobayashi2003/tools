@@ -9,8 +9,8 @@ Japanese-only EPUBs from the bilingual downloads.
 Requires Python 3.11+.
 
 ```powershell
-.\start.ps1              # creates .venv, installs dependencies, serves http://127.0.0.1:8765
-.\start.ps1 -Port 8766
+.\start.ps1              # creates .venv, installs dependencies, serves http://127.0.0.1:18030
+.\start.ps1 -Port 18032
 .\stop.ps1               # stops a server started in the background
 ```
 
@@ -27,7 +27,10 @@ Tasks interrupted by a restart can be resumed from **Tasks**.
 - **New download**: catalog page range, specific works (IDs or URLs, one per line), an update
   sweep, or the whole light novel collection. Page and volume ranges are one-based and
   inclusive (`1,3,5-8`). Volumes are counted in filename order, Japanese uploads first.
-- **Settings**: automatic sweeps, conversion, translation engines and their priority, pacing.
+- **Tasks**: progress, logs and controls. *Resume* continues a stopped task; *Retry failed*
+  (on the card, or per item in the log) re-queues only failed items; *Start now* ends a pause.
+- **Settings**: automatic sweeps, conversion, translation engines and their priority, pacing
+  presets, backoff and retry policy, active hours, and whether to save Chinese-only uploads.
 
 Accepted work references:
 
@@ -49,8 +52,26 @@ Uploads replaced without changing their ID or counters can't be detected; use
 **Download again even if unchanged** for those.
 
 Catalog checkpoints and per-item progress live in SQLite, so resuming never skips a page or
-repeats a finished work. Access refusals (401/403) stop a task; 429, 5xx and network errors are
-retried with backoff.
+repeats a finished work. Each work also records which of its volumes succeeded, so retrying a
+partly failed work fetches only the missing volumes, even with **Download again** ticked.
+
+## Failures, retries and rate limits
+
+| Situation | What happens |
+| --- | --- |
+| Network error, 5xx, 408, interrupted transfer | Retried up to *Attempts per request* with exponential backoff and jitter |
+| 429 / 503 | All requests in the process cool down together (honouring `Retry-After`, seconds or date); the delay between requests grows and shrinks back after successes |
+| Still refused after *Keep trying for* | The task returns to the queue paused, resumes by itself after *Then pause the task for*, and gives up after *Pauses in a row* pauses without progress |
+| Catalog page fails temporarily | The sweep pauses on that page instead of failing |
+| Item failed temporarily | Tried again in up to *Automatic retry rounds* at the end of the task, after 1×, 2×, 3×… *Wait before a round* |
+| 404, invalid EPUB, verification mismatch | Marked permanent; not retried automatically. Use *Retry* when the cause is fixed |
+| 401 / 403 | Stops the task; check the token or network |
+
+Pacing and retry settings apply to a task whenever it starts or resumes; content settings
+(translations, order, page size) stay as they were when the task was created. *Rest every* takes
+a break after a number of downloads, and *Active hours* limits downloads to a daily window
+(server local time; conversion is not limited). The catalog browser shares the same pacing and
+answers with "try again in N s" instead of waiting through a long cooldown.
 
 ## Japanese conversion
 
@@ -100,7 +121,7 @@ stored or returned by the API.
 .\.venv\Scripts\python.exe main.py doctor   # checks access to the live catalog
 ```
 
-API docs: http://127.0.0.1:8765/docs. The frontend in `app/static` is plain HTML/CSS/JS with
+API docs: http://127.0.0.1:18030/docs. The frontend in `app/static` is plain HTML/CSS/JS with
 no build step.
 
 Upstream endpoints used: `GET /api/wenku?page&pageSize&query&level` (zero-based page;

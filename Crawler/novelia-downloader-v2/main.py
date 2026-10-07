@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description="Novelia Downloader v2")
     commands = parser.add_subparsers(dest="command")
     serve = commands.add_parser("serve", help="Start the local Web manager (default)")
-    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--port", type=int, default=18030)
     commands.add_parser("doctor", help="Check access to the light novel catalog without downloading books")
     convert = commands.add_parser("convert-local", help="Convert a local directory of bilingual EPUBs")
     convert.add_argument("directory", type=Path)
@@ -27,12 +27,12 @@ def main():
     if args.command in (None, "serve"):
         import uvicorn
         from app.server import create_app
-        uvicorn.run(create_app(), host="127.0.0.1", port=getattr(args, "port", 8765), workers=1)
+        uvicorn.run(create_app(), host="127.0.0.1", port=getattr(args, "port", 18030), workers=1)
         return 0
     if args.command == "doctor":
         from app.client import Client
         from app.schema import Settings
-        client = Client(Settings(page_size=24))
+        client = Client(Settings(page_size=24), interactive=True)
         try:
             payload = client.listing(1, 1)
             print(f"OK: {len(payload['items'])} light novels on page 1; {payload['pageNumber']} pages.")

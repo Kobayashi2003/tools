@@ -4,7 +4,7 @@ import zipfile
 
 import pytest
 
-from app.client import Cancelled, fingerprint
+from app.client import Cancelled, TransientError, fingerprint
 from app.database import Database
 from app.worker import Worker
 
@@ -39,9 +39,12 @@ class Upstream:
         self.fail_volume = None
         self.fail_reference = False
         self.cancel_volume = None
+        self.fail_times = {}  # volume -> number of transient failures before success
+        self.raise_on = {}  # volume -> exception raised on every attempt
+        self.waits = []
         self.clients = []
 
-    def client(self, config, check):
+    def client(self, config, check, on_wait=None):
         upstream = self
 
         class FakeClient:
@@ -66,11 +69,19 @@ class Upstream:
                 if volume == upstream.cancel_volume:
                     raise Cancelled("Test interruption")
                 if volume == upstream.fail_volume or (original and upstream.fail_reference):
-                    raise RuntimeError("Temporary download error")
+                    raise TransientError("Temporary download error")
+                if volume in upstream.raise_on:
+                    raise upstream.raise_on[volume]
+                if upstream.fail_times.get(volume):
+                    upstream.fail_times[volume] -= 1
+                    raise TransientError("Temporary download error")
                 upstream.downloads.append((key, volume, original))
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(upstream.original if original else upstream.raw, destination)
                 return destination.stat().st_size, fingerprint(destination.read_bytes().hex())
+
+            def wait(self, seconds, reason):
+                upstream.waits.append((seconds, reason))
 
             def close(self):
                 self.closed = True

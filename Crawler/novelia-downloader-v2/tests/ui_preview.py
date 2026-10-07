@@ -1,6 +1,8 @@
 """Isolated UI fixtures: python -m tests.ui_preview. No upstream downloads."""
 
+import json
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
@@ -36,9 +38,17 @@ def main():
                        (status, "Example error" if status == "failed" else None, job_id))
             db.execute("UPDATE job_items SET status=? WHERE job_id=?", ("done" if status == "completed" else "failed", job_id))
             db.log(job_id, "UI fixture log")
+            if status == "completed_with_errors":
+                db.execute("UPDATE job_items SET retryable=1,attempts=3,error=?,parts=? WHERE job_id=?",
+                           ("1 of 2 volume(s) failed. Volume 2.epub: HTTP 503 after 3 attempts",
+                            json.dumps({"done": ["Volume 1.epub"],
+                                        "failed": {"Volume 2.epub": "HTTP 503 after 3 attempts"}}), job_id))
+        paused = db.create_job(JobRequest(kind="incremental"))
+        db.defer(paused, datetime.now(timezone.utc) + timedelta(minutes=25),
+                 "Novelia kept refusing requests for 10 min; pausing the task for 30 min.", 1)
 
         class CatalogClient:
-            def __init__(self, config):
+            def __init__(self, config, **_):
                 pass
 
             def listing(self, page, category, query):
@@ -48,7 +58,7 @@ def main():
                 pass
 
         server.Client = CatalogClient
-        uvicorn.run(app, host="127.0.0.1", port=8766)
+        uvicorn.run(app, host="127.0.0.1", port=18031)
 
 
 if __name__ == "__main__":

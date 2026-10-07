@@ -5,13 +5,42 @@ import logging
 import re
 import threading
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
-from .client import Cancelled, Client, component, fingerprint, validate_epub
+from .client import Cancelled, Client, Deferred, TransientError, component, fingerprint, validate_epub
 from .converter import convert_epub, verify_against_jp
-from .database import now
-from .schema import LEVELS, JobRequest, Settings, normalize_key, parse_range
+from .database import iso, now
+from .schema import LEVELS, PACING_FIELDS, JobRequest, Settings, normalize_key, parse_range
+
+
+class VolumeFailures(Exception):
+    """Some volumes of a work failed; the others are recorded as done."""
+
+    def __init__(self, failures, total):
+        self.failures = failures
+        self.retryable = all(is_retryable(e) for e in failures.values())
+        volume, first = next(iter(failures.items()))
+        super().__init__(f"{len(failures)} of {total} volume(s) failed. {volume}: {first}")
+
+
+def is_retryable(exc):
+    return exc.retryable if isinstance(exc, VolumeFailures) else isinstance(exc, TransientError)
+
+
+def window_opens(config, moment=None):
+    """None inside active hours; otherwise when the next window starts (local server time)."""
+    if not config.active_hours:
+        return None
+    moment = (moment or datetime.now()).astimezone()
+    start, end = time.fromisoformat(config.active_start), time.fromisoformat(config.active_end)
+    clock = moment.time().replace(tzinfo=None)
+    inside = start <= clock < end if start < end else (clock >= start or clock < end)
+    if inside:
+        return None
+    # Build from naive local wall-clock times so each day gets its own UTC offset across DST changes.
+    opens = datetime.combine(moment.date(), start).astimezone()
+    return opens if opens > moment else datetime.combine(moment.date() + timedelta(days=1), start).astimezone()
 
 
 def natural_key(value):
@@ -64,7 +93,7 @@ class Worker:
         while not self.stop.is_set():
             try:
                 self.schedule()
-                job = self.db.row("SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1")
+                job = self.db.next_job()
                 if job:
                     self.run_job(job["id"])
                     continue
@@ -84,38 +113,33 @@ class Worker:
         with self.maintenance_lock:
             self._run_job(job_id)
 
+    def job_config(self, job):
+        """The task's settings snapshot, with pacing taken from the current settings."""
+        config = Settings.model_validate_json(job["config"])
+        current = self.db.settings()
+        return config.model_copy(update={name: getattr(current, name) for name in PACING_FIELDS})
+
+    def check_window(self, job_id, request, config):
+        if request.kind == "convert" or self.db.job(job_id)["ignore_window"]:
+            return
+        if opens := window_opens(config):
+            raise Deferred(f"Outside active hours; waiting until {opens:%H:%M}.", opens, counts=False)
+
     def _run_job(self, job_id):
         job = self.db.job(job_id)
         request = JobRequest.model_validate_json(job["request"])
-        config = Settings.model_validate_json(job["config"])
-        self.db.execute("UPDATE jobs SET status='running',started_at=COALESCE(started_at,?),error=NULL WHERE id=?",
-                        (now(), job_id))
+        config = self.job_config(job)
+        self.db.execute("UPDATE jobs SET status='running',started_at=COALESCE(started_at,?),error=NULL,"
+                        "resume_at=NULL,wait_until=NULL,wait_reason=NULL WHERE id=?", (now(), job_id))
         self.db.log(job_id, "Task started; existing completed items are preserved.")
-        client = self.client_factory(config, lambda: self.check(job_id))
+        client = self.client_factory(config, lambda: self.check(job_id),
+                                     lambda until, reason: self.db.set_wait(job_id, until, reason))
         try:
             self.check(job_id)
+            self.check_window(job_id, request, config)
             self.discover(job_id, request, config, client)
-            for item in self.db.rows("SELECT * FROM job_items WHERE job_id=? AND status='pending' ORDER BY rowid", (job_id,)):
-                self.check(job_id)
-                target = item["target"]
-                self.db.execute("UPDATE job_items SET status='running' WHERE job_id=? AND target=?", (job_id, target))
-                try:
-                    if request.kind == "convert":
-                        self.convert_file(job_id, int(target), config, client, request.force)
-                    else:
-                        self.process_work(job_id, target, request, config, client)
-                    self.check(job_id)
-                    self.db.execute("UPDATE job_items SET status='done',error=NULL WHERE job_id=? AND target=?", (job_id, target))
-                except Cancelled:
-                    self.db.execute("UPDATE job_items SET status='pending' WHERE job_id=? AND target=?", (job_id, target))
-                    raise
-                except Exception as exc:
-                    message = str(exc)
-                    self.db.execute("UPDATE job_items SET status='failed',error=? WHERE job_id=? AND target=?",
-                                    (message, job_id, target))
-                    self.db.log(job_id, f"{target}: {message}", "error")
-                    if isinstance(exc, PermissionError):
-                        raise
+            self.process_pending(job_id, request, config, client)
+            self.retry_rounds(job_id, request, config, client)
             self.check(job_id)
             failed = self.db.row("SELECT COUNT(*) AS n FROM job_items WHERE job_id=? AND status='failed'", (job_id,))["n"]
             status = "completed_with_errors" if failed else "completed"
@@ -123,6 +147,16 @@ class Worker:
             self.db.log(job_id, f"Task finished with {failed} failed item(s).")
             if request.kind == "incremental" and not failed:
                 self.db.set_setting("last_incremental_at", now())
+        except Deferred as exc:
+            pauses = self.db.job(job_id)["pauses"] + exc.counts
+            if exc.counts and pauses > config.max_pauses:
+                message = f"{exc} Gave up after {config.max_pauses} automatic pause(s); resume the task later."
+                self.db.execute("UPDATE jobs SET status='failed',finished_at=?,error=? WHERE id=?",
+                                (now(), message, job_id))
+                self.db.log(job_id, message, "error")
+            else:
+                self.db.defer(job_id, exc.until, str(exc), pauses)
+                self.db.log(job_id, f"{exc} Resumes automatically at {iso(exc.until)}.", "warning")
         except Cancelled as exc:
             status = "interrupted" if self.stop.is_set() else "cancelled"
             self.db.execute("UPDATE jobs SET status=?,finished_at=?,error=? WHERE id=?", (status, now(), str(exc), job_id))
@@ -132,6 +166,50 @@ class Worker:
             self.db.log(job_id, str(exc), "error")
         finally:
             client.close()
+
+    def process_pending(self, job_id, request, config, client):
+        for item in self.db.rows("SELECT target FROM job_items WHERE job_id=? AND status='pending' ORDER BY rowid",
+                                 (job_id,)):
+            self.check(job_id)
+            self.check_window(job_id, request, config)
+            target = item["target"]
+            self.db.execute("UPDATE job_items SET status='running',attempts=attempts+1 WHERE job_id=? AND target=?",
+                            (job_id, target))
+            try:
+                if request.kind == "convert":
+                    self.convert_file(job_id, int(target), config, client, request.force)
+                else:
+                    self.process_work(job_id, target, request, config, client)
+                self.check(job_id)
+                self.db.execute("UPDATE job_items SET status='done',error=NULL,retryable=0 WHERE job_id=? AND target=?",
+                                (job_id, target))
+                self.db.execute("UPDATE jobs SET pauses=0 WHERE id=? AND pauses>0", (job_id,))
+            except (Cancelled, Deferred):
+                self.db.execute("UPDATE job_items SET status='pending' WHERE job_id=? AND target=?", (job_id, target))
+                raise
+            except Exception as exc:
+                self.db.execute("UPDATE job_items SET status='failed',error=?,retryable=? WHERE job_id=? AND target=?",
+                                (str(exc), int(is_retryable(exc)), job_id, target))
+                self.db.log(job_id, f"{target}: {exc}", "error")
+                if isinstance(exc, PermissionError):
+                    raise
+
+    def retry_rounds(self, job_id, request, config, client):
+        """Give temporarily failed items more chances after a growing cooldown.
+        Rounds used are stored, so an automatic pause does not restart the count."""
+        for round_number in range(self.db.job(job_id)["retry_round"] + 1, config.retry_rounds + 1):
+            count = self.db.row("SELECT COUNT(*) AS n FROM job_items WHERE job_id=? AND status='failed' AND retryable=1",
+                                (job_id,))["n"]
+            if not count:
+                return
+            delay = config.retry_round_delay * round_number
+            self.db.log(job_id, f"Retry round {round_number}/{config.retry_rounds}: "
+                                f"{count} temporarily failed item(s) in {delay:g} s.")
+            client.wait(delay, f"Retry round {round_number} of {config.retry_rounds} starts soon")
+            self.db.execute("UPDATE jobs SET retry_round=? WHERE id=?", (round_number, job_id))
+            self.db.execute("UPDATE job_items SET status='pending' WHERE job_id=? AND status='failed' AND retryable=1",
+                            (job_id,))
+            self.process_pending(job_id, request, config, client)
 
     def discover(self, job_id, request, config, client):
         job = self.db.job(job_id)
@@ -158,7 +236,13 @@ class Worker:
             page = job["cursor"]
             while True:
                 self.check(job_id)
-                result = client.listing(page, request.category, request.query)
+                try:
+                    result = client.listing(page, request.category, request.query)
+                except TransientError as exc:
+                    # The checkpoint stays on this page; pause instead of failing the whole sweep.
+                    delay = max(60.0, config.retry_round_delay)
+                    raise Deferred(f"Catalog page {page} failed ({exc}); retrying in {delay:g} s.",
+                                   datetime.now(timezone.utc) + timedelta(seconds=delay)) from exc
                 page_count = result["pageNumber"]
                 items = result["items"]
                 targets = [normalize_key("wenku/" + item["id"]) for item in items]
@@ -187,19 +271,28 @@ class Worker:
             raise ValueError("Volume range matched no available files.")
         if not volumes:
             self.db.log(job_id, f"{key}: no uploaded volumes available.", "warning")
-        failures = []
+        done = set(self.db.parts(job_id, key)["done"])
+        failures = {}
         for index in picked:
             self.check(job_id)
             volume, chinese_only = volumes[index - 1]
+            volume_id = volume["volumeId"]
+            if volume_id in done:
+                continue  # finished by an earlier attempt of this task; never fetched twice, even when forced
+            if chinese_only and not config.download_chinese_uploads:
+                continue
             try:
                 self.process_volume(job_id, key, data, volume, chinese_only, request, config, client)
-            except (Cancelled, PermissionError):
+            except (Cancelled, Deferred, PermissionError):
                 raise
             except Exception as exc:
-                failures.append(str(exc))
-                self.db.log(job_id, f"{volume['volumeId']}: {exc}", "error")
+                failures[volume_id] = exc
+                self.db.mark_part(job_id, key, volume_id, str(exc))
+                self.db.log(job_id, f"{volume_id}: {exc}", "error")
+            else:
+                self.db.mark_part(job_id, key, volume_id)
         if failures:
-            raise RuntimeError(f"{len(failures)} volume(s) failed. First error: {failures[0]}")
+            raise VolumeFailures(failures, len(picked))
 
     def process_volume(self, job_id, key, data, volume, chinese_only, request, config, client):
         volume_id = volume["volumeId"]
@@ -246,16 +339,16 @@ class Worker:
         has_reference = bool(record["reference_path"] and Path(record["reference_path"]).is_file())
         if has_reference:
             reference = Path(record["reference_path"])
-        reference_error = ""
+        reference_error, reference_transient = "", False
         if (config.verify or (config.vertical and work["kind"] == "wenku")) and not has_reference:
             try:
                 client.source(work["key"], record["volume_id"], reference, original=True)
                 has_reference = True
                 self.db.execute("UPDATE files SET reference_path=? WHERE id=?", (str(reference), file_id))
-            except (Cancelled, PermissionError):
+            except (Cancelled, Deferred, PermissionError):
                 raise
             except Exception as exc:
-                reference_error = str(exc)
+                reference_error, reference_transient = str(exc), is_retryable(exc)
                 self.db.log(job_id, f"Reference unavailable: {reference_error}", "warning")
         output = source.with_name(source.stem + " [ja].epub")
         report = convert_epub(source, output, vertical=config.vertical,
@@ -284,4 +377,5 @@ class Worker:
                          json.dumps({**asdict(report), "verification_detail": detail}), now(), file_id))
         self.db.log(job_id, f"Converted file {file_id}: {report.describe()}; {detail}", "info" if passed else "warning")
         if not passed:
-            raise ValueError(detail)
+            # A reference that failed to download may succeed later; a real mismatch will not.
+            raise (TransientError if reference_transient else ValueError)(detail)

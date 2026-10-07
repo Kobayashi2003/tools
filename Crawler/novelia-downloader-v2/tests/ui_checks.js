@@ -84,10 +84,10 @@ async () => {
   $('[name="kind"][value="manual"]').click();
   $('[name="keys"]').value = "wenku/000000000000000000000001";
   $("#crawl-form").requestSubmit();
-  await delay(500);
+  await delay(900);
   assert(!$("#crawl-dialog").open, "download form closes after queueing");
   assert(state.view === "tasks", "queueing navigates to tasks");
-  const queued = state.jobs.find(job => job.status === "queued");
+  const queued = state.jobs.find(job => job.status === "queued" && !job.resume_at);
   assert(Boolean(queued), "download task is queued in the isolated server");
   await api(`/api/jobs/${queued.id}/cancel`, { method: "POST" });
 

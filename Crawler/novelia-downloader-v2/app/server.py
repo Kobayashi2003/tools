@@ -11,14 +11,14 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .client import Client
+from .client import Client, Deferred
 from .database import Database, now
-from .schema import CATEGORIES, JobRequest, Settings
-from .worker import Worker, ordered_volumes
+from .schema import CATEGORIES, JobRequest, RetryRequest, Settings
 from .storage import Storage
-from pydantic import BaseModel, Field
+from .worker import Worker, ordered_volumes
 
 PROJECT = Path(__file__).resolve().parent.parent
 FILE_STATS = """(SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key) AS file_count,
@@ -166,8 +166,10 @@ def create_app(data_root=None, download_root=None, start_worker=True):
     def status():
         settings = db.settings()
         running = db.jobs(1, "running")
-        return {**db.stats(), "running": running[0] if running else None,
-                "capabilities": ["library_remove", "library_cleanup", "storage_migration"],
+        paused = db.row("SELECT id,kind,resume_at,wait_reason FROM jobs WHERE status='queued' "
+                        "AND resume_at IS NOT NULL ORDER BY resume_at LIMIT 1")
+        return {**db.stats(), "running": running[0] if running else None, "paused": paused,
+                "capabilities": ["library_remove", "library_cleanup", "storage_migration", "job_retry"],
                 "incremental_enabled": settings.incremental_enabled, "interval_hours": settings.interval_hours,
                 "last_incremental_at": db.setting("last_incremental_at"),
                 "next_incremental_at": db.setting("next_incremental_at"),
@@ -180,6 +182,10 @@ def create_app(data_root=None, download_root=None, start_worker=True):
 
     @app.put("/api/settings")
     def save_settings(settings: Settings):
+        # Checked here rather than on the model so older saved settings still load.
+        if settings.adaptive_delay and settings.max_delay <= settings.request_delay:
+            raise HTTPException(422, "The slowest delay must be longer than the delay between requests, "
+                                     "or turn off slowing down when refused.")
         old = db.settings()
         db.set_setting("config", settings.model_dump())
         if old.interval_hours != settings.interval_hours or old.incremental_enabled != settings.incremental_enabled:
@@ -190,9 +196,11 @@ def create_app(data_root=None, download_root=None, start_worker=True):
     @app.get("/api/catalog")
     def catalog(page: int = Query(1, ge=1, le=100000), category: int = Query(1, ge=0, le=6),
                 query: str = Query("", max_length=300)):
-        client = Client(db.settings())
+        client = Client(db.settings(), interactive=True)
         try:
             result = client.listing(page, category, query)
+        except Deferred as exc:
+            raise HTTPException(429, str(exc)) from exc
         except Exception as exc:
             raise HTTPException(502, str(exc)) from exc
         finally:
@@ -232,6 +240,7 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         for row in items:
             row["authors"] = json.loads(row["authors"])
         return {"items": items, "total": total, "page": page, "page_size": page_size}
+
     @app.get("/api/works/{key:path}")
     def detail(key: str):
         work = db.row("SELECT * FROM works WHERE key=?", (key,))
@@ -271,7 +280,7 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             raise HTTPException(404, "Task not found.")
         job["request"], job["config"] = json.loads(job["request"]), json.loads(job["config"])
         job["logs"] = db.rows("SELECT * FROM logs WHERE job_id=? AND id>? ORDER BY id LIMIT 500", (job_id, after))
-        job["items"] = db.rows("SELECT target,status,error FROM job_items WHERE job_id=? AND status IN ('running','failed') LIMIT 100", (job_id,))
+        job["items"] = db.open_items(job_id, job["kind"])
         return job
 
     @app.delete("/api/jobs/{job_id}")
@@ -310,6 +319,18 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             raise HTTPException(409, str(exc)) from exc
         worker.wake.set()
         return {"ok": True}
+
+    @app.post("/api/jobs/{job_id}/retry")
+    def retry(job_id: int, request: RetryRequest | None = None):
+        try:
+            count = db.retry(job_id, request.targets if request else [])
+        except KeyError:
+            raise HTTPException(404, "Task not found.") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        db.log(job_id, f"Retrying {count} failed item(s).")
+        worker.wake.set()
+        return {"retried": count}
 
     @app.get("/api/files/{file_id}/{variant}")
     def artifact(file_id: int, variant: str):
