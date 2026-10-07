@@ -182,9 +182,16 @@ class Logger:
 # ---- clash proxy pool ----
 
 class ClashPool:
-    """Round-robin pool of local Clash proxy instances for multi-IP downloads."""
+    """Round-robin pool of local Clash proxy instances for multi-IP downloads.
 
-    def __init__(self, clash_exe, clash_config, num_instances=5, base_port=7890,
+    Instance i takes three consecutive ports from base_port: base_port + 3i for
+    HTTP, +1 for SOCKS and +2 for its controller, so the whole pool occupies
+    base_port .. base_port + 3n - 1 and nothing outside it.
+    """
+
+    PORTS_PER_INSTANCE = 3
+
+    def __init__(self, clash_exe, clash_config, num_instances=5, base_port=18000,
                  skip_keywords=None):
         self.processes = []
         self._proxies = []
@@ -213,14 +220,20 @@ class ClashPool:
         tmp = Path("temp/clash_instances")
         tmp.mkdir(parents=True, exist_ok=True)
 
+        # Listeners the source config declares beyond the three set below would
+        # be copied into every instance, all of them binding the same port as
+        # each other and as the Clash the config came from.
+        for key in ("mixed-port", "redir-port", "tproxy-port"):
+            base.pop(key, None)
+
         for i in range(count):
-            port = base_port + i * 10
+            port = base_port + i * self.PORTS_PER_INSTANCE
             node = nodes[i]
             inst_cfg = {
                 **base,
                 "port": port,
                 "socks-port": port + 1,
-                "external-controller": f"127.0.0.1:{9090 + i}",
+                "external-controller": f"127.0.0.1:{port + 2}",
                 "proxies": [node],
                 "proxy-groups": [{"name": "PROXY", "type": "select", "proxies": [node["name"]]}],
                 "rules": ["MATCH,PROXY"],
@@ -277,7 +290,7 @@ def load_proxy_pool(config):
         clash_exe=pcfg["clash_exe"],
         clash_config=pcfg["clash_config"],
         num_instances=pcfg.get("num_instances", 5),
-        base_port=pcfg.get("base_port", 7890),
+        base_port=pcfg.get("base_port", 18000),
         skip_keywords=pcfg.get("skip_keywords"),
     )
 

@@ -8,7 +8,7 @@ Downloads HLS/m3u8 videos (with cover images) from [Jable.tv](https://jable.tv) 
 pip install -r requirements.txt
 ```
 
-`ffmpeg` must be on `PATH`. Chrome + a matching driver are required (Selenium). Proxy settings live in `config.json` (optional).
+`ffmpeg` must be on `PATH`. Chrome + a matching driver are required (Selenium). Proxy settings live in `config.json` (optional): each Clash instance takes three consecutive ports from `base_port` (HTTP, SOCKS, controller), so `num_instances: 10` occupies 18000-18029.
 
 ## Usage
 

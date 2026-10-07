@@ -469,13 +469,14 @@ class Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def serve(channels, grabber, port: int, attempts: int = 20):
+def serve(channels, grabber, port: int, attempts: int = 10):
     """Start the server. Returns (server, port) running on its own thread.
 
     A port can be taken, and on Windows it can also be *reserved* -- Hyper-V and
     friends claim ranges of a hundred ports at a time, and binding inside one
     fails with a permission error rather than an address-in-use. Either way the
-    answer is the next port up, not a stack trace.
+    answer is the next port up, not a stack trace -- within the ten from the
+    configured one, so a fallback never lands on a port another app owns.
     """
     Handler.channels = channels
     Handler.grabber = grabber

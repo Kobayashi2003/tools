@@ -4,7 +4,7 @@
     "clash_exe": "",
     "clash_config": "",
     "num_instances": 10,
-    "base_port": 7890
+    "base_port": 18000
   },
   "last_input": {
     "mode": "2",

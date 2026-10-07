@@ -54,8 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--channel_id", help="Channel to read (default: #book-recommendations)")
     parser.add_argument("--guild_id", help="Server the channel is in")
     parser.add_argument("--port", type=int,
-                        help="Local port (default: 8430; the next free one is "
-                             "used if it is taken or reserved)")
+                        help="Local port (default: 18040; if it is taken or reserved, "
+                             "the next free one of the ten from it)")
     parser.add_argument("--proxy", help="HTTP(S) proxy URL")
     parser.add_argument("--config", metavar="FILE", help="Config file (default: config.json)")
     parser.add_argument("--out", metavar="DIR",

@@ -123,7 +123,7 @@ and should never land on whichever channel the config happened to name.
 | `--cap` | Cap the posts sent to the page (`0` = all of them) | `0` |
 | `--channel_id` / `--guild_id` | Which channel to open on | #book-recommendations |
 | `--offline` | Serve the cache without talking to Discord | off |
-| `--port` / `--proxy` / `--config` | | `8430` / — / `config.json` |
+| `--port` / `--proxy` / `--config` | | `18040` / — / `config.json` |
 | `--doctor` | Test the token step by step, gateway included | off |
 | `--print` / `--no-open` | List the newest on the console / no browser | off |
 
@@ -189,10 +189,10 @@ one connection that had never been told about the tunnel being the one the butto
 
 `--doctor` and a fresh run reporting different things usually means an older instance is still
 listening. Windows lets a second process bind a port that a first is already serving, so before this
-was refused you could have three servers on `127.0.0.1:8430` and no way to tell which one the
-browser was talking to. A second run now steps to the next free port and says so in its startup
-line; if the page is behaving as though a fix never landed, check that line, and check for a stale
-`python main.py` from earlier.
+was refused you could have three servers on `127.0.0.1:18040` and no way to tell which one the
+browser was talking to. A second run now steps to the next free port, among the ten from the configured
+one, and says so in its startup line; if the page is behaving as though a fix never landed, check that
+line, and check for a stale `python main.py` from earlier.
 
 ## How it fits together
 

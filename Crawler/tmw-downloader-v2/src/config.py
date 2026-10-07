@@ -115,7 +115,7 @@ class Config:
 
     # local
     token: str = ""
-    port: int = 8430
+    port: int = 18040
     cache_dir: str = "cache"
     state_file: str = "state.json"
     download_dir: str = "downloads"
