@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="header">
+    <div class="icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+        <path d="M9.4 9.4 20.6 14l-5 1.6-1.6 5z"/>
+        <path d="M7.2 2.6l.7 2.6M13.6 4.4l-1.8 1.8M2.6 7.2l2.6.7M4.4 13.6l1.8-1.8"/>
+      </svg>
+    </div>
+    <div class="grow">
+      <div class="title">X Quick Actions</div>
+      <div class="subtitle">Download &amp; like media with gestures</div>
+    </div>
+    <label class="switch" title="Enable on X">
+      <input type="checkbox" data-key="enabled">
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <main class="body">
+    <section class="card">
+      <div class="card-head">
+        <svg viewBox="0 0 24 24"><path d="M9 3v3M4.5 5.5l2 2M3 10h3M12 9l8 3.5-3.4 1.4L14.9 18z"/></svg>
+        <div>
+          <h2>Double-click media</h2>
+          <p>Single clicks still open it, ~0.3 s later</p>
+        </div>
+      </div>
+      <div class="seg seg-4" data-setting="dblclickAction">
+        <button data-value="none">Off</button>
+        <button data-value="download">Download</button>
+        <button data-value="like" title="Like the post (never un-likes)">Like</button>
+        <button data-value="both" title="Download and like">Both</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/></svg>
+        <div>
+          <h2>Key + click media</h2>
+          <p>Hold the key — media under the cursor is outlined</p>
+        </div>
+      </div>
+      <div class="seg seg-4" data-setting="modClickAction">
+        <button data-value="none">Off</button>
+        <button data-value="download">Download</button>
+        <button data-value="like" title="Like the post (never un-likes)">Like</button>
+        <button data-value="both" title="Download and like">Both</button>
+      </div>
+      <div class="field" data-needs="modClickAction">
+        <span class="field-label">Key</span>
+        <div class="seg seg-4 compact" data-setting="modifier">
+          <button data-value="alt">Alt</button>
+          <button data-value="ctrl">Ctrl</button>
+          <button data-value="shift">Shift</button>
+          <button data-value="meta">⌘ / Win</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <svg viewBox="0 0 24 24"><path d="M12 15V3m0 12-5-5m5 5 5-5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        <div class="grow">
+          <h2>Action-bar button</h2>
+          <p>Downloads every media item in the post</p>
+        </div>
+        <label class="switch"><input type="checkbox" data-key="showButton"><span class="slider"></span></label>
+      </div>
+      <div data-needs="showButton">
+        <div class="row">
+          <span>Also like the post</span>
+          <label class="switch small"><input type="checkbox" data-key="buttonLike"><span class="slider"></span></label>
+        </div>
+        <div class="field">
+          <span class="field-label">If it quotes a post with media</span>
+          <div class="seg seg-3 compact" data-setting="quoteMode">
+            <button data-value="ask">Ask</button>
+            <button data-value="own">This post</button>
+            <button data-value="both" title="Download and like">Both</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <div>
+          <h2>Saving</h2>
+          <p>Applies to double-click and key + click</p>
+        </div>
+      </div>
+      <div class="seg" data-setting="scope">
+        <button data-value="single">Clicked item</button>
+        <button data-value="all">Whole post</button>
+      </div>
+      <div class="field">
+        <span class="field-label">Filename <span class="dim">· / makes subfolders</span></span>
+        <input class="text" id="template" spellcheck="false">
+        <div class="tags">
+          <span class="tag" title="Display name">{user-name}</span>
+          <span class="tag" title="@handle">{user-id}</span>
+          <span class="tag" title="Post id">{status-id}</span>
+          <span class="tag" title="Posted at, UTC (YYYYMMDD-hhmmss)">{date-time}</span>
+          <span class="tag" title="Posted at, local time">{date-time-local}</span>
+          <span class="tag" title="photo / video / gif">{file-type}</span>
+          <span class="tag" title="Original file name on X">{file-name}</span>
+        </div>
+        <div class="preview"><span id="preview"></span> <a href="#" id="template-reset">Reset</a></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <div class="grow">
+          <h2>History</h2>
+          <p>Downloaded posts get a green button · <b id="history-count">0</b> saved</p>
+        </div>
+        <label class="switch"><input type="checkbox" data-key="saveHistory"><span class="slider"></span></label>
+      </div>
+      <div class="seg seg-3 compact">
+        <button id="history-export">Export</button>
+        <button id="history-import">Import</button>
+        <button id="history-clear" class="danger">Clear</button>
+      </div>
+      <input type="file" id="history-file" accept=".txt,text/plain" hidden>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

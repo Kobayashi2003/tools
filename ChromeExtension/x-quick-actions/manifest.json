@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "X Media Downloader",
-  "version": "1.1",
-  "description": "Download original-quality images / videos / GIFs from X (Twitter) by double-clicking, modifier + click, or a toolbar button. Optionally like the post at the same time.",
+  "name": "X Quick Actions",
+  "version": "2.0",
+  "description": "Gestures for media on X (Twitter): double-click or modifier + click to download originals, like the post, or both.",
   "permissions": ["downloads", "storage"],
   "host_permissions": ["https://abs.twimg.com/*"],
   "background": {

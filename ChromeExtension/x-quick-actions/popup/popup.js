@@ -1,24 +1,23 @@
 const DEFAULTS = {
   enabled: true,
-  dblclick: true,
-  modifierClick: true,
+  dblclickAction: 'download',
+  modClickAction: 'download',
   modifier: 'alt',
   showButton: true,
-  autoLike: false,
+  buttonLike: false,
   scope: 'single',
   quoteMode: 'ask',
   template: 'twitter_{user-name}(@{user-id})_{date-time}_{status-id}_{file-type}',
   saveHistory: true,
 };
 
-const toggles   = document.querySelectorAll('input[type="checkbox"][data-key]');
-const modBtns   = document.querySelectorAll('.key-btn');
-const scopeBtns = document.querySelectorAll('.seg-btn[data-scope]');
-const quoteBtns = document.querySelectorAll('.seg-btn[data-quote]');
-const template  = document.getElementById('template');
-const preview   = document.getElementById('preview');
-const count     = document.getElementById('history-count');
-const clearBtn  = document.getElementById('history-clear');
+const cfg = { ...DEFAULTS };
+const toggles  = document.querySelectorAll('input[type="checkbox"][data-key]');
+const segs     = document.querySelectorAll('.seg[data-setting]');
+const template = document.getElementById('template');
+const preview  = document.getElementById('preview');
+const count    = document.getElementById('history-count');
+const clearBtn = document.getElementById('history-clear');
 
 const SAMPLE = {
   'user-name': 'jack', 'user-id': 'jack', 'status-id': '20',
@@ -26,48 +25,41 @@ const SAMPLE = {
   'file-type': 'photo', 'file-name': 'GaBcD123xyz',
 };
 
-function paintPreview() {
-  const name = template.value.replace(/\{([\w-]+)\}/g, (m, k) => (k in SAMPLE ? SAMPLE[k] : m));
-  preview.textContent = '→ ' + name + '.jpg';
+function save(key, value) {
+  cfg[key] = value;
+  chrome.storage.sync.set({ [key]: value });
+  paint();
 }
 
-function paint(cfg) {
+function paintPreview() {
+  preview.textContent = template.value.replace(/\{([\w-]+)\}/g, (m, k) => (k in SAMPLE ? SAMPLE[k] : m)) + '.jpg';
+}
+
+// Controls that only matter when another setting is on are dimmed otherwise.
+function paint() {
   toggles.forEach((t) => (t.checked = cfg[t.dataset.key]));
-  modBtns.forEach((b) => b.classList.toggle('active', b.dataset.mod === cfg.modifier));
-  scopeBtns.forEach((b) => b.classList.toggle('active', b.dataset.scope === cfg.scope));
-  quoteBtns.forEach((b) => b.classList.toggle('active', b.dataset.quote === cfg.quoteMode));
-  template.value = cfg.template;
-  paintPreview();
+  segs.forEach((seg) => {
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.value === cfg[seg.dataset.setting]));
+  });
+  document.querySelectorAll('[data-needs]').forEach((el) => {
+    const v = cfg[el.dataset.needs];
+    el.classList.toggle('inactive', v === false || v === 'none');
+  });
   document.body.classList.toggle('disabled', !cfg.enabled);
 }
 
-chrome.storage.sync.get(DEFAULTS, paint);
-
-toggles.forEach((t) => {
-  t.addEventListener('change', () => {
-    chrome.storage.sync.set({ [t.dataset.key]: t.checked });
-    if (t.dataset.key === 'enabled') document.body.classList.toggle('disabled', !t.checked);
-  });
+chrome.storage.sync.get(DEFAULTS, (stored) => {
+  Object.assign(cfg, stored);
+  template.value = cfg.template;
+  paintPreview();
+  paint();
 });
 
-modBtns.forEach((btn) => {
-  btn.addEventListener('click', () => {
-    chrome.storage.sync.set({ modifier: btn.dataset.mod });
-    modBtns.forEach((b) => b.classList.toggle('active', b === btn));
-  });
-});
+toggles.forEach((t) => t.addEventListener('change', () => save(t.dataset.key, t.checked)));
 
-scopeBtns.forEach((btn) => {
-  btn.addEventListener('click', () => {
-    chrome.storage.sync.set({ scope: btn.dataset.scope });
-    scopeBtns.forEach((b) => b.classList.toggle('active', b === btn));
-  });
-});
-
-quoteBtns.forEach((btn) => {
-  btn.addEventListener('click', () => {
-    chrome.storage.sync.set({ quoteMode: btn.dataset.quote });
-    quoteBtns.forEach((b) => b.classList.toggle('active', b === btn));
+segs.forEach((seg) => {
+  seg.querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', () => save(seg.dataset.setting, b.dataset.value));
   });
 });
 
@@ -77,9 +69,7 @@ let saveTimer;
 template.addEventListener('input', () => {
   paintPreview();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    chrome.storage.sync.set({ template: template.value.trim() || DEFAULTS.template });
-  }, 300);
+  saveTimer = setTimeout(() => save('template', template.value.trim() || DEFAULTS.template), 300);
 });
 
 document.querySelectorAll('.tag').forEach((tag) => {
@@ -109,23 +99,37 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.history) paintCount(changes.history.newValue || []);
 });
 
-// One post URL per line, oldest first.
+// One post URL per line, oldest first — the same format Import reads.
 document.getElementById('history-export').addEventListener('click', () => {
   chrome.storage.local.get({ history: [] }, ({ history }) => {
     const text = history.map((id) => `https://x.com/i/status/${id}`).join('\n') + '\n';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-    a.download = `x-media-history-${history.length}.txt`;
+    a.download = `x-quick-actions-history-${history.length}.txt`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
+});
+
+// Accepts post URLs or bare ids, one per line; merged into the current list.
+const fileInput = document.getElementById('history-file');
+document.getElementById('history-import').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files[0];
+  fileInput.value = '';
+  if (!file) return;
+  const ids = (await file.text())
+    .split(/\r?\n/)
+    .map((line) => (line.match(/\/status\/(\d+)/) || line.match(/^\s*(\d+)\s*$/) || [])[1])
+    .filter(Boolean);
+  if (ids.length) chrome.runtime.sendMessage({ action: 'addHistory', ids });
 });
 
 // Two-step confirm instead of a dialog, which would close the popup.
 let clearArmed = null;
 clearBtn.addEventListener('click', () => {
   if (!clearArmed) {
-    clearBtn.textContent = 'Click again to clear';
+    clearBtn.textContent = 'Confirm';
     clearArmed = setTimeout(() => {
       clearArmed = null;
       clearBtn.textContent = 'Clear';

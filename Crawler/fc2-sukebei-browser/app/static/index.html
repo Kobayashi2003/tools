@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>FC2 Sukebei Browser</title>
+  <link rel="icon" href="static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="static/icon.svg" alt="" width="22" height="22">
+      <span>FC2 <b>Sukebei</b></span>
+    </div>
+
+    <div class="crawl">
+      <button id="job-update" class="btn primary" type="button" data-i18n-title="updateHint">
+        <span aria-hidden="true">⟳</span> <span data-i18n="update">Update</span>
+      </button>
+      <button id="job-older" class="btn" type="button" data-i18n-title="olderHint">
+        <span aria-hidden="true">↓</span> <span data-i18n="older">Older</span>
+      </button>
+      <form id="search-form" class="search" autocomplete="off">
+        <input id="search-query" type="search" data-i18n-placeholder="searchPlaceholder" aria-label="Sukebei query">
+      </form>
+      <button id="job-cancel" class="btn" type="button" hidden data-i18n="cancel">Cancel</button>
+    </div>
+
+    <button id="status-pill" class="status-pill" type="button" aria-expanded="false">
+      <span class="dot"></span><span id="status-text">…</span>
+    </button>
+    <button id="lang-toggle" class="btn ghost lang" type="button" title="Language / 言語">日本語</button>
+  </header>
+
+  <section id="status-panel" class="status-panel" hidden>
+    <div class="status-head">
+      <div id="status-stats" class="status-stats"></div>
+      <button id="retry-failed" class="btn small" type="button" data-i18n="retryFailed">Retry failed</button>
+    </div>
+    <div id="ruler" class="ruler"></div>
+    <dl id="coverage" class="coverage"></dl>
+    <div class="status-actions">
+      <button id="history-reset" class="btn small" type="button" data-i18n="historyReset" data-i18n-title="historyResetHint">Re-check history</button>
+      <label class="check" data-i18n-title="checkFilesHint">
+        <input id="crawl-files" type="checkbox">
+        <span data-i18n="checkFiles">Check files</span>
+      </label>
+    </div>
+    <ol id="status-log" class="status-log"></ol>
+  </section>
+
+  <nav class="toolbar">
+    <input id="filter-q" type="search" data-i18n-placeholder="filterPlaceholder" aria-label="Filter">
+    <div class="segmented" id="filter-view" role="tablist">
+      <button type="button" data-view="all" class="active" data-i18n="viewAll">All</button>
+      <button type="button" data-view="unseen" data-i18n="viewUnseen">Unseen</button>
+      <button type="button" data-view="starred" data-i18n="viewStarred">Starred</button>
+      <button type="button" data-view="hidden" data-i18n="viewHidden">Hidden</button>
+    </div>
+    <select id="filter-sort" aria-label="Sort">
+      <option value="uploaded" data-i18n="sortUploaded">Recently uploaded</option>
+      <option value="seeders" data-i18n="sortSeeders">Most seeders</option>
+      <option value="released" data-i18n="sortReleased">Release date</option>
+      <option value="rating" data-i18n="sortRating">Rating</option>
+      <option value="size" data-i18n="sortSize">Largest</option>
+      <option value="id" data-i18n="sortId">FC2 id</option>
+      <option value="added" data-i18n="sortAdded">Recently added</option>
+    </select>
+    <label class="seed-filter" data-i18n-title="minSeedersHint">
+      <span>▲</span><input id="filter-seeders" type="number" min="0" value="0" aria-label="Minimum seeders">
+    </label>
+    <label class="check">
+      <input id="filter-media" type="checkbox">
+      <span data-i18n="withPreviews">With previews</span>
+    </label>
+    <span id="result-count" class="result-count"></span>
+    <label class="size-control" data-i18n-title="cardSize">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>
+      <input id="card-size" type="range" min="160" max="380" step="10" value="232" aria-label="Card size">
+    </label>
+  </nav>
+
+  <main>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty" hidden></div>
+    <div id="library-end" class="library-end" hidden></div>
+    <div id="sentinel" class="sentinel"></div>
+  </main>
+
+  <div id="detail" class="detail" hidden>
+    <div class="detail-backdrop" data-close></div>
+    <button class="nav prev" type="button" data-step="-1" aria-label="Previous">‹</button>
+    <article class="detail-panel" role="dialog" aria-modal="true" tabindex="-1"></article>
+    <button class="nav next" type="button" data-step="1" aria-label="Next">›</button>
+  </div>
+
+  <div id="lightbox" class="lightbox" hidden>
+    <img alt="">
+    <button class="lb-nav prev" type="button" data-step="-1" aria-label="Previous">‹</button>
+    <button class="lb-nav next" type="button" data-step="1" aria-label="Next">›</button>
+    <span class="lb-count"></span>
+    <button class="lb-close" type="button" aria-label="Close">×</button>
+  </div>
+
+  <div id="marks-nav" class="marks-nav" hidden>
+    <div id="mark-list" class="mark-list" hidden></div>
+    <button id="mark-prev" class="btn" type="button" data-i18n-title="markPrev" aria-label="Previous mark">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+    </button>
+    <button id="mark-count" class="btn mark-count" type="button" aria-expanded="false" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16l-5-3.6L7 20z"/></svg>
+      <span class="mark-count-text"></span>
+    </button>
+    <button id="mark-next" class="btn" type="button" data-i18n-title="markNext" aria-label="Next mark">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    </button>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="static/app.js"></script>
+</body>
+</html>

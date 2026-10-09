@@ -1,13 +1,14 @@
-// Service worker: performs downloads for the content script and, when X
-// rotates its GraphQL query ids, rediscovers them from the web client bundle.
+// Service worker: performs downloads for the content script, owns the
+// download history and, when X rotates its GraphQL query ids, rediscovers them
+// from the web client bundle.
 
 const DEFAULTS = {
   enabled: true,
-  dblclick: true,
-  modifierClick: true,
+  dblclickAction: 'download',
+  modClickAction: 'download',
   modifier: 'alt',
   showButton: true,
-  autoLike: false,
+  buttonLike: false,
   scope: 'single',
   quoteMode: 'ask',
   template: 'twitter_{user-name}(@{user-id})_{date-time}_{status-id}_{file-type}',
@@ -19,8 +20,6 @@ const WANTED_OPS = ['TweetResultByRestId', 'FavoriteTweet'];
 // Seed default settings on install so the popup and content scripts agree.
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.sync.get(DEFAULTS, (cfg) => {
-    // 1.0 shipped a different default whose tokens no longer exist.
-    if (cfg.template === 'X/{user-id}_{date}_{status-id}_{index}') cfg.template = DEFAULTS.template;
     chrome.storage.sync.set(cfg);
   });
 });

@@ -1,27 +1,31 @@
-# X Media Downloader
+# X Quick Actions
 
-Chrome (MV3) extension for X / Twitter: double-click or modifier + click a
-photo, video or GIF to save it in original quality, optionally liking the post
-too. Based on [ChinaGodMan's Twitter Media Downloader](https://github.com/ChinaGodMan/UserScripts/tree/main/twitter-media-downloader)
-userscript, with new triggers.
+Chrome (MV3) extension for X / Twitter: gestures on photos, videos and GIFs
+that download the original, like the post, or both. Grew out of
+[ChinaGodMan's Twitter Media Downloader](https://github.com/ChinaGodMan/UserScripts/tree/main/twitter-media-downloader)
+userscript.
 
-## Usage
+## Triggers
 
-| Trigger | Downloads |
+Each is set in the popup to **Off / Download / Like / Both**:
+
+| Trigger | Default |
 | --- | --- |
-| Double-click media | The clicked item (or the whole post — set in popup) |
-| Hold **Alt** (or Ctrl / Shift / Win) + click | Same, instantly; hovered media is outlined |
-| Download button in the post's action bar | Every media item in the post |
+| Double-click media | Download |
+| Hold **Alt** (or Ctrl / Shift / Win) + click media | Download — hovered media is outlined (pink when it will only like) |
+
+Plus a **download button** in each post's action bar that saves every media
+item in the post, optionally liking it too.
 
 - With double-click on, a single click on media opens it ~0.3 s later.
+- Likes go to the post that owns the media (the quoted post for quoted media)
+  and are never undone.
+- Gestures save the clicked item or the whole post (popup → Saving).
 - If a post and the post it quotes both have media, the button asks which to
-  save — this post, the quoted one, or both (keys `1`–`3`, `Esc` cancels). The
-  popup can make it always pick this post or both. This is the only way to
-  reach quoted media that X shows as just a `pic.x.com` link.
-- **Like when downloading** clicks the post's real ♥ button (falls back to the
-  API) and never un-likes.
-- **History** remembers downloaded posts (their button turns green); export it
-  as a list of post URLs or clear it from the popup.
+  save (keys `1`–`3`, `Esc` cancels), or always takes this post / both. It is
+  the only way to reach quoted media that X shows as just a `pic.x.com` link.
+- **History** remembers downloaded posts (their button turns green). Export
+  writes one post URL per line; Import merges such a file back in.
 
 ## Filenames
 

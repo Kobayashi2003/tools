@@ -1,13 +1,13 @@
-// X Media Downloader — content script.
+// X Quick Actions — content script.
 //
-// Triggers (each can be toggled in the popup):
+// Triggers, each mapped in the popup to an action (download / like / both):
 //   * Double-click a photo / video / GIF in a post. A single click still
 //     works as usual — it is held for DBL_MS and then replayed.
-//   * Hold the modifier key (Alt by default) and click — downloads instantly.
+//   * Hold the modifier key (Alt by default) and click — acts instantly.
 //     While the key is held, the media under the cursor is outlined.
 //   * A download button in each post's action bar — downloads every media
-//     item in the post.
-// Optionally the post is liked at the same time (never un-liked).
+//     item in the post, optionally liking it too.
+// Likes are never undone: an already liked post stays liked.
 //
 // Media URLs come from X's GraphQL TweetResultByRestId endpoint (original
 // photos, highest-bitrate MP4). If that fails, photos fall back to the URL in
@@ -16,11 +16,11 @@
 (() => {
   const DEFAULTS = {
     enabled: true,
-    dblclick: true,
-    modifierClick: true,
+    dblclickAction: 'download', // 'none' | 'download' | 'like' | 'both'
+    modClickAction: 'download', // same choices, for modifier + click
     modifier: 'alt',
     showButton: true,
-    autoLike: false,
+    buttonLike: false, // the action-bar button also likes the post
     scope: 'single', // what a gesture downloads: 'single' media or 'all' in the post
     quoteMode: 'ask', // button on a post whose quoted post has media too: 'ask' | 'own' | 'both'
     template: 'twitter_{user-name}(@{user-id})_{date-time}_{status-id}_{file-type}',
@@ -535,12 +535,13 @@
     };
   }
 
-  function flash(el) {
+  function flash(el, kind) {
     if (!el) return;
-    el.classList.remove('xmd-flash');
+    const cls = kind === 'like' ? 'xmd-flash-like' : 'xmd-flash';
+    el.classList.remove(cls);
     void el.offsetWidth; // restart the animation
-    el.classList.add('xmd-flash');
-    setTimeout(() => el.classList.remove('xmd-flash'), 600);
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), 600);
   }
 
   const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
@@ -612,6 +613,8 @@
   }
 
   // Download, record history, optionally like, and report in the toast.
+  const LIKE_MSG = { liked: '♥ liked', already: '♥ already liked', failed: 'like failed' };
+
   async function deliver(t, items, { historyIds, likeId, box }) {
     const res = await chrome.runtime.sendMessage({ action: 'download', items });
     if (!res?.count) throw new Error(res?.errors?.[0] || 'download failed');
@@ -620,19 +623,41 @@
 
     let msg = `↓ ${plural(res.count, 'file')}`;
     if (res.errors.length) msg += ` · ${res.errors.length} failed`;
-    if (cfg.autoLike) {
-      const liked = await likePost(likeId);
-      msg += { liked: ' · ♥ liked', already: ' · ♥ already liked', failed: ' · like failed' }[liked];
-    }
+    if (likeId) msg += ' · ' + LIKE_MSG[await likePost(likeId)];
     t.finish(msg, res.errors.length ? 'error' : 'ok');
   }
 
-  // Gestures: the clicked media item (or every item of the post owning it).
-  async function run(target, scope, x, y) {
-    const t = toast(x, y, 'Fetching media…', target.box);
+  // The post a media item belongs to. Photo links already name it; media in
+  // a quoted post has no link, so match it against the API response.
+  async function ownerOf(target) {
+    if (target.link || !target.key) return target.statusId;
     try {
-      const { items, ownerId } = await resolve(target, scope);
-      await deliver(t, items, { historyIds: [ownerId, target.statusId], likeId: ownerId, box: target.box });
+      const all = collectMedia(await fetchTweet(target.statusId));
+      const hit = all.find((e) => keyOf(e.media.media_url_https) === target.key);
+      if (hit) return hit.tweet.rest_id || hit.tweet.legacy.id_str;
+    } catch {
+      /* fall back to the surrounding post */
+    }
+    return target.statusId;
+  }
+
+  // Gestures: like the post owning the media, and/or download the clicked
+  // item (or every item of that post, per `scope`).
+  async function act(target, action, x, y) {
+    const t = toast(x, y, action === 'like' ? 'Liking…' : 'Fetching media…', target.box);
+    try {
+      if (action === 'like') {
+        const result = await likePost(await ownerOf(target));
+        if (result !== 'failed') flash(target.box, 'like');
+        t.finish(LIKE_MSG[result], result === 'failed' ? 'error' : 'ok');
+        return;
+      }
+      const { items, ownerId } = await resolve(target, cfg.scope);
+      await deliver(t, items, {
+        historyIds: [ownerId, target.statusId],
+        likeId: action === 'both' ? ownerId : null,
+        box: target.box,
+      });
     } catch (err) {
       t.finish('✗ ' + err.message, 'error');
     }
@@ -674,7 +699,7 @@
         .filter(Boolean);
       if (!items.length) throw new Error('no downloadable media');
       const ids = picked.map((g) => g.tweet.rest_id || g.tweet.legacy.id_str);
-      await deliver(t, items, { historyIds: [statusId, ...ids], likeId: ids[0], box: null });
+      await deliver(t, items, { historyIds: [statusId, ...ids], likeId: cfg.buttonLike ? ids[0] : null, box: null });
     } catch (err) {
       t.finish('✗ ' + err.message, 'error');
     } finally {
@@ -687,6 +712,8 @@
   function modifierActive(e) {
     return e[MODIFIER_PROP[cfg.modifier] || 'altKey'] === true;
   }
+
+  const viaModifier = (e) => cfg.modClickAction !== 'none' && modifierActive(e);
 
   function swallow(e) {
     e.preventDefault();
@@ -725,21 +752,21 @@
     'click',
     (e) => {
       if (replaying || !cfg.enabled || e.button !== 0) return;
-      const viaModifier = cfg.modifierClick && modifierActive(e);
-      if (!viaModifier && !cfg.dblclick) return;
+      const modified = viaModifier(e);
+      if (!modified && cfg.dblclickAction === 'none') return;
       const target = mediaAt(e);
       if (!target) return;
       swallow(e);
 
-      if (viaModifier) {
+      if (modified) {
         pending && (clearTimeout(pending.timer), (pending = null));
-        run(target, cfg.scope, e.clientX, e.clientY);
+        act(target, cfg.modClickAction, e.clientX, e.clientY);
         return;
       }
       if (pending && pending.box === target.box) {
         clearTimeout(pending.timer);
         pending = null;
-        run(target, cfg.scope, e.clientX, e.clientY);
+        act(target, cfg.dblclickAction, e.clientX, e.clientY);
         return;
       }
       flushPending(); // a different media item — let the earlier click through
@@ -753,9 +780,8 @@
     'mousedown',
     (e) => {
       if (!cfg.enabled || e.button !== 0) return;
-      const viaModifier = cfg.modifierClick && modifierActive(e);
-      const dbl = cfg.dblclick && e.detail > 1;
-      if ((viaModifier || dbl) && mediaAt(e)) e.preventDefault();
+      const dbl = cfg.dblclickAction !== 'none' && e.detail > 1;
+      if ((viaModifier(e) || dbl) && mediaAt(e)) e.preventDefault();
     },
     true
   );
@@ -763,24 +789,27 @@
   window.addEventListener(
     'dblclick',
     (e) => {
-      if (cfg.enabled && cfg.dblclick && mediaAt(e)) swallow(e);
+      if (cfg.enabled && cfg.dblclickAction !== 'none' && mediaAt(e)) swallow(e);
     },
     true
   );
 
-  // Outline the media under the cursor while the modifier is held.
+  // Outline the media under the cursor while the modifier is held — pink when
+  // the click will only like, blue when it downloads.
   let hovered = null;
   function setHover(el) {
-    if (hovered === el) return;
-    if (hovered) hovered.classList.remove('xmd-hover');
+    if (hovered && hovered !== el) hovered.classList.remove('xmd-hover', 'xmd-hover-like');
     hovered = el;
-    if (el) el.classList.add('xmd-hover');
+    if (el) {
+      el.classList.add('xmd-hover');
+      el.classList.toggle('xmd-hover-like', cfg.modClickAction === 'like');
+    }
   }
 
   window.addEventListener(
     'mousemove',
     (e) => {
-      if (!cfg.enabled || !cfg.modifierClick || !modifierActive(e)) return setHover(null);
+      if (!cfg.enabled || !viaModifier(e)) return setHover(null);
       setHover(mediaAt(e)?.box || null);
     },
     true
