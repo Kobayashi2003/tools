@@ -74,15 +74,19 @@ const fullDate = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '');
 
 async function api(path, options = {}) {
   const init = { ...options };
-  if (init.method === 'POST') {
-    // The server only accepts JSON POSTs (a plain form from another site cannot send one).
+  if (['POST', 'PUT', 'PATCH'].includes(init.method)) {
     init.body = JSON.stringify(init.body ?? {});
-    init.headers = { 'Content-Type': 'application/json' };
+    init.headers = { ...init.headers, 'Content-Type': 'application/json' };
   }
   const res = await fetch(path, init);
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
-    try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
+    try {
+      const message = (await res.json()).detail;
+      if (typeof message === 'string') detail = message;
+      else if (Array.isArray(message)) detail = message.map((item) => item.msg || JSON.stringify(item)).join('; ') || detail;
+      else if (message) detail = JSON.stringify(message);
+    } catch { /* not json */ }
     const err = new Error(detail);
     err.status = res.status;
     throw err;
@@ -852,7 +856,7 @@ function renderRuler(c) {
 }
 
 async function startJob(kind, extra = {}, quiet = false) {
-  const body = { kind, check_files: $('#crawl-files').checked, ...extra };
+  const body = { kind, source: $('#crawl-source').value, check_files: $('#crawl-files').checked, ...extra };
   store.set('crawl', { check_files: body.check_files });
   try {
     await api('api/jobs', { method: 'POST', body });
@@ -1114,6 +1118,30 @@ function syncFilterControls() {
 // --- wiring ----------------------------------------------------------------------------------
 
 function wire() {
+  const sourceSelect = $('#crawl-source');
+  let savedSource = sourceSelect.value;
+  sourceSelect.disabled = true;
+  const sourceControl = enhanceSelect(sourceSelect);
+  api('api/source').then(({ source }) => {
+    savedSource = source;
+    sourceSelect.value = source;
+    sourceSelect.disabled = false;
+    sourceControl.sync();
+  }).catch((err) => toast(`${t('error')}: ${err.message}`, 'error'));
+  sourceSelect.addEventListener('change', async () => {
+    sourceSelect.disabled = true;
+    sourceControl.sync();
+    try {
+      await api('api/source', { method: 'PUT', body: { source: sourceSelect.value } });
+      savedSource = sourceSelect.value;
+    } catch (err) {
+      toast(`${t('error')}: ${err.message}`, 'error');
+      sourceSelect.value = savedSource;
+    } finally {
+      sourceSelect.disabled = false;
+      sourceControl.sync();
+    }
+  });
   $('#job-update').addEventListener('click', () => startJob('update'));
   $('#job-older').addEventListener('click', () => startJob('older', { blocks: 5 }));
   $('#search-form').addEventListener('submit', (e) => {

@@ -10,7 +10,6 @@ token is classified by shape rather than by position.
 """
 
 import re
-from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
@@ -18,24 +17,24 @@ from bs4 import BeautifulSoup
 from .models import Record
 from .session import get
 
-_SIZE_RE = re.compile(r'^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)$', re.I)
-_YEAR_RE = re.compile(r'^(1[5-9]\d\d|20\d\d)$')
-_LANG_RE = re.compile(r'\[[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)?\]')
-_EXT_RE = re.compile(r'^[A-Za-z][A-Za-z0-9]{1,5}$')
-_MD5_RE = re.compile(r'/md5/([a-f0-9]{32})')
-_UNITS = {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3, "TB": 1024 ** 4}
+_SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)$", re.I)
+_YEAR_RE = re.compile(r"^(1[5-9]\d\d|20\d\d)$")
+_LANG_RE = re.compile(r"\[[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)?\]")
+_EXT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{1,5}$")
+_MD5_RE = re.compile(r"/md5/([a-f0-9]{32})")
+_UNITS = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
 
 # Anna's Archive hides the "partial matches" block inside an HTML comment and
 # unwraps it in JS. Unwrap it ourselves so those hits are searchable too.
-_COMMENT_RE = re.compile(r'<!--(.*?)-->', re.S)
+_COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
 
 
-def search(session, config, query: str) -> Tuple[List[Record], int]:
+def search(session, config, query: str) -> tuple[list[Record], int]:
     """Fetch `config.pages` pages of results. Returns (records, partial_dropped).
 
     Partial matches are excluded unless `config.partial` is set — they are the
     hits the site itself ruled out under the active filters."""
-    records: List[Record] = []
+    records: list[Record] = []
     seen = set()
     dropped_seen = set()
     for page in range(1, max(1, config.pages) + 1):
@@ -83,7 +82,7 @@ def build_url(config, query: str, page: int = 1) -> str:
     return f"{config.mirror.rstrip('/')}/search?{urlencode(params)}"
 
 
-def parse_results(html: str) -> List[Record]:
+def parse_results(html: str) -> list[Record]:
     """Every hit on the page, each tagged `partial` or not.
 
     A search page holds the real results in the first list, then — behind a
@@ -93,10 +92,11 @@ def parse_results(html: str) -> List[Record]:
     caller decides.
     """
     html = _COMMENT_RE.sub(
-        lambda m: m.group(1) if "js-aarecord-list-outer" in m.group(1) else "", html)
+        lambda m: m.group(1) if "js-aarecord-list-outer" in m.group(1) else "", html
+    )
     soup = BeautifulSoup(html, "html.parser")
 
-    records: List[Record] = []
+    records: list[Record] = []
     for index, outer in enumerate(soup.select(".js-aarecord-list-outer")):
         for block in outer.find_all("div", recursive=False):
             record = _parse_block(block)
@@ -106,7 +106,7 @@ def parse_results(html: str) -> List[Record]:
     return records
 
 
-def _parse_block(block) -> Optional[Record]:
+def _parse_block(block) -> Record | None:
     link = block.select_one('a.js-vim-focus[href^="/md5/"]')
     if link is None:
         return None
@@ -141,13 +141,13 @@ def _find_meta_line(block) -> str:
     best = ""
     for div in block.find_all("div"):
         text = _direct_text(div)
-        if "·" in text and re.search(r'\d+(\.\d+)?\s*[KMGT]?B\b', text):
+        if "·" in text and re.search(r"\d+(\.\d+)?\s*[KMGT]?B\b", text):
             if not best or len(text) < len(best):
                 best = text
     return best
 
 
-_SOURCE_BODY_RE = re.compile(r'[a-z0-9_.]+(?:/[a-z0-9_.]+)*')
+_SOURCE_BODY_RE = re.compile(r"[a-z0-9_.]+(?:/[a-z0-9_.]+)*")
 
 
 def _is_sources(token: str, have_extension: bool = False) -> bool:
@@ -197,19 +197,26 @@ def _apply_meta(record: Record, meta: str) -> None:
 
 # ---- detail page ----
 
-_DATE_RE = re.compile(r'date open sourced\s*(\d{4}-\d{2}-\d{2})', re.I)
-_EXTERNAL_HOSTS = ("libgen.li", "libgen.is", "libgen.rs", "libgen.st", "libgen.pw",
-                   "library.lol", "z-library")
+_DATE_RE = re.compile(r"date open sourced\s*(\d{4}-\d{2}-\d{2})", re.I)
+_EXTERNAL_HOSTS = (
+    "libgen.li",
+    "libgen.is",
+    "libgen.rs",
+    "libgen.st",
+    "libgen.pw",
+    "library.lol",
+    "z-library",
+)
 
 
-def fetch_detail(session, config, md5: str) -> Dict:
+def fetch_detail(session, config, md5: str) -> dict:
     """Read one /md5/ page for its open-source date and external mirror links."""
     response = get(session, f"{config.mirror.rstrip('/')}/md5/{md5}", config)
     if response is None or response.status_code != 200:
         return {}
     html = response.text
-    text = re.sub(r'<[^>]+>', ' ', re.sub(r'<script.*?</script>', ' ', html, flags=re.S))
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"<[^>]+>", " ", re.sub(r"<script.*?</script>", " ", html, flags=re.S))
+    text = re.sub(r"\s+", " ", text)
     date_match = _DATE_RE.search(text)
 
     mirrors = []

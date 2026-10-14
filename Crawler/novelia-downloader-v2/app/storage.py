@@ -3,7 +3,6 @@ import shutil
 import tempfile
 from pathlib import Path
 
-
 PATH_COLUMNS = ("raw_path", "ja_path", "reference_path")
 
 
@@ -16,7 +15,9 @@ class Storage:
 
     def safe_path(self, value):
         path = Path(value).resolve()
-        if not any(path.is_relative_to(root.resolve()) and path != root.resolve() for root in self.roots()):
+        if not any(
+            path.is_relative_to(root.resolve()) and path != root.resolve() for root in self.roots()
+        ):
             raise ValueError("A recorded file is outside the managed download directories.")
         return path
 
@@ -26,7 +27,11 @@ class Storage:
             return {"removed": 0}
         marks = ",".join("?" for _ in keys)
         records = self.db.rows(f"SELECT * FROM files WHERE work_key IN ({marks})", keys)
-        paths = {self.safe_path(row[col]) for row in records for col in PATH_COLUMNS if row[col]} if delete_files else set()
+        paths = (
+            {self.safe_path(row[col]) for row in records for col in PATH_COLUMNS if row[col]}
+            if delete_files
+            else set()
+        )
         for path in paths:
             if path.is_file():
                 path.unlink(missing_ok=True)
@@ -39,8 +44,11 @@ class Storage:
         keys = []
         for work in self.db.rows("SELECT key,title FROM works ORDER BY title"):
             records = self.db.rows("SELECT * FROM files WHERE work_key=?", (work["key"],))
-            if records and not any(row[col] and Path(row[col]).is_file()
-                                   for row in records for col in ("raw_path", "ja_path")):
+            if records and not any(
+                row[col] and Path(row[col]).is_file()
+                for row in records
+                for col in ("raw_path", "ja_path")
+            ):
                 keys.append(work)
         return keys
 
@@ -52,9 +60,14 @@ class Storage:
         old = self.worker.root
         if target == old:
             return {"download_root": str(old), "migrated": 0, "warnings": []}
-        if any(target != r.resolve() and (target.is_relative_to(r.resolve()) or r.resolve().is_relative_to(target))
-               for r in self.roots()):
-            raise ValueError("Choose a directory separate from the current and previous download directories.")
+        if any(
+            target != r.resolve()
+            and (target.is_relative_to(r.resolve()) or r.resolve().is_relative_to(target))
+            for r in self.roots()
+        ):
+            raise ValueError(
+                "Choose a directory separate from the current and previous download directories."
+            )
         if target == self.db.path.parent or self.db.path.is_relative_to(target):
             raise ValueError("The download directory cannot contain the database directory.")
         rows = self.db.rows("SELECT * FROM files")
@@ -72,7 +85,9 @@ class Storage:
                     if dest == source:
                         continue
                     if dest.exists() or (dest in plans.values() and plans.get(source) != dest):
-                        raise ValueError(f"Destination already contains a conflicting file: {dest.name}")
+                        raise ValueError(
+                            f"Destination already contains a conflicting file: {dest.name}"
+                        )
                     plans[source] = dest
         target.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryFile(dir=target) as probe:
@@ -89,12 +104,19 @@ class Storage:
                 for row in rows:
                     for col in PATH_COLUMNS:
                         if row[col] and Path(row[col]).resolve() in plans:
-                            conn.execute(f"UPDATE files SET {col}=? WHERE id=?",
-                                         (str(plans[Path(row[col]).resolve()]), row["id"]))
+                            conn.execute(
+                                f"UPDATE files SET {col}=? WHERE id=?",
+                                (str(plans[Path(row[col]).resolve()]), row["id"]),
+                            )
                 roots = list(dict.fromkeys(str(r) for r in self.roots() if r.resolve() != target))
-                for key, val in (("download_root", str(target)), ("previous_download_roots", roots)):
-                    conn.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                                 (key, json.dumps(val)))
+                for key, val in (
+                    ("download_root", str(target)),
+                    ("previous_download_roots", roots),
+                ):
+                    conn.execute(
+                        "INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (key, json.dumps(val)),
+                    )
         except Exception:
             for dest in copied:
                 dest.unlink(missing_ok=True)

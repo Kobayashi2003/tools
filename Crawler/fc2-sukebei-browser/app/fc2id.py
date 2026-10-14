@@ -37,11 +37,13 @@ _EMPTY_BRACKETS = re.compile(r"\[\s*\]|\(\s*\)|【\s*】")
 def strip_code(text):
     """Remove the FC2 code (and the separators around it) from a title or torrent name.
 
-        "FC2-PPV-123456 Title"            -> "Title"
-        "+++ FC2-PPV-4982106 【反省価格】…" -> "【反省価格】…"
+    "FC2-PPV-123456 Title"            -> "Title"
+    "+++ FC2-PPV-4982106 【反省価格】…" -> "【反省価格】…"
     """
     text = (text or "").strip()
     match = FC2_RE.search(text)
     if match:
-        text = f"{text[:match.start()].rstrip(_EDGE_JUNK)} {text[match.end():].lstrip(_EDGE_JUNK)}"
+        text = (
+            f"{text[: match.start()].rstrip(_EDGE_JUNK)} {text[match.end() :].lstrip(_EDGE_JUNK)}"
+        )
     return _EMPTY_BRACKETS.sub("", text).strip(_EDGE_JUNK)

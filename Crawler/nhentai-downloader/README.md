@@ -1,14 +1,11 @@
 # nhentai-downloader
 
-Downloads sequentially numbered gallery images from [nhentai](https://nhentai.net) / [imhentai](https://imhentai.xxx) with async concurrency, batching and rate limiting.
+Downloads sequentially numbered gallery images from [nhentai](https://nhentai.net) and
+[imhentai](https://imhentai.xxx), in rate-limited batches.
 
-## Install
+## Run
 
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
+Requires Python 3.14; dependencies are in `pyproject.toml`.
 
 ```bash
 python main.py <base_url> --end <last_page> [options]
@@ -21,16 +18,8 @@ python main.py <base_url> --end <last_page> [options]
 | `-s, --start` | First page number | `1` |
 | `-o, --output` | Output directory | `downloads` |
 | `-e, --ext` | Image extension (`jpg`, `webp`, `png`, …) | `jpg` |
-| `--cookies` | Path to a `cookies.json` file (browser-export list or simple dict) | — |
+| `--cookies` | `cookies.json` (browser export list or plain map) | — |
 | `--concurrency` | Max concurrent downloads | `5` |
 | `--delay` | Delay between downloads in a batch (s) | `1` |
 | `--batch-size` | Images per batch | `5` |
 | `--batch-delay` | Delay between batches (s) | `1` |
-
-### Example
-
-```bash
-python main.py "https://m2.imhentai.xxx/008/yak45fbtvn/" -e jpg -n 403 -o "COMIC BAVEL 2017-01"
-```
-
-Importable: `from main import download_range`.

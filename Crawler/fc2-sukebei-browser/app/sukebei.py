@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 from .fc2id import extract_id
 
 BASE = "https://sukebei.nyaa.si"
+SOURCES = {"nyaa": BASE, "nyaa_cn": "https://sukebei.cn.nyaa.net"}
 PAGE_SIZE = 75
 MAX_RESULTS = 1000
 SORTS = ("id", "seeders", "leechers", "downloads", "size", "comments")
@@ -28,8 +29,25 @@ FLAGS = {"success": "trusted", "danger": "remake"}
 
 # Extensions that have no business inside a video torrent; usually adware or worse.
 RISKY_EXTENSIONS = {
-    ".exe", ".scr", ".bat", ".cmd", ".com", ".msi", ".lnk", ".vbs", ".vbe", ".js", ".jse",
-    ".jar", ".ps1", ".apk", ".hta", ".pif", ".wsf", ".dll", ".reg",
+    ".exe",
+    ".scr",
+    ".bat",
+    ".cmd",
+    ".com",
+    ".msi",
+    ".lnk",
+    ".vbs",
+    ".vbe",
+    ".js",
+    ".jse",
+    ".jar",
+    ".ps1",
+    ".apk",
+    ".hta",
+    ".pif",
+    ".wsf",
+    ".dll",
+    ".reg",
 }
 
 _ROW = re.compile(r'<tr class="(\w*)">(.*?)</tr>', re.S)
@@ -42,7 +60,7 @@ _BTIH = re.compile(r"urn:btih:([0-9a-zA-Z]+)")
 _TOTAL = re.compile(r"out of ([\d,]+) results")
 _NEXT = re.compile(r'<li class="next"><a href=')
 _SIZE = re.compile(r"([\d.]+)\s*(Bytes|B|KiB|MiB|GiB|TiB)", re.I)
-_UNITS = {"b": 1, "bytes": 1, "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4}
+_UNITS = {"b": 1, "bytes": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
 
 _DESCRIPTION = re.compile(r'id="torrent-description">(.*?)</div>', re.S)
 _FILE_LIST = re.compile(r'class="torrent-file-list[^"]*">(.*?)</div>', re.S)
@@ -79,16 +97,21 @@ class Listing:
     has_next: bool
 
 
-def search_url(query, page=1, sort="id", order="desc", category="0_0", filter_="0"):
-    params = {"f": filter_, "c": category, "q": query, "s": sort if sort in SORTS else "id",
-              "o": "asc" if order == "asc" else "desc"}
+def search_url(query, page=1, sort="id", order="desc", category="0_0", filter_="0", source="nyaa"):
+    params = {
+        "f": filter_,
+        "c": category,
+        "q": query,
+        "s": sort if sort in SORTS else "id",
+        "o": "asc" if order == "asc" else "desc",
+    }
     if page > 1:
         params["p"] = page
-    return f"{BASE}/?{urlencode(params)}"
+    return f"{SOURCES[source]}/?{urlencode(params)}"
 
 
-def view_url(view_id):
-    return f"{BASE}/view/{view_id}"
+def view_url(view_id, source="nyaa"):
+    return f"{SOURCES[source]}/view/{view_id}"
 
 
 def torrent_url(view_id):
@@ -118,7 +141,7 @@ def parse_row(row_class, body):
     infohash = _BTIH.search(magnet_uri)
     name = html.unescape(view.group(2)).strip()
     category = _CATEGORY.search(body)
-    cells = _CELL.findall(body)               # size, date, seeders, leechers, completed
+    cells = _CELL.findall(body)  # size, date, seeders, leechers, completed
     if len(cells) < 5:
         return None
     timestamp = _TIMESTAMP.search(cells[1][0])
@@ -170,7 +193,9 @@ def parse_view(page_html):
                     folders.pop()
             elif file_name:
                 path = "/".join(folders + [html.unescape(file_name).strip()])
-                files.append({"path": path, "size": html.unescape(file_size), "risky": is_risky(path)})
+                files.append(
+                    {"path": path, "size": html.unescape(file_size), "risky": is_risky(path)}
+                )
             else:
                 folders.append(html.unescape(folder).strip())
     return {

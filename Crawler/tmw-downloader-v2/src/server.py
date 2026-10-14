@@ -14,11 +14,16 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from urllib.parse import parse_qs, urlparse
 
 from .config import parse_history
 from .job import FetchJob
 from .state import ChannelState, read_channel_names
+
+if TYPE_CHECKING:
+    from .feed import Channels
+    from .grab import Grabber
 
 WEB_ROOT = Path(__file__).parent / "web"
 
@@ -41,12 +46,18 @@ def _scope(query: str) -> dict:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "tmw-recommendations/2.0"
-    channels = None        # every channel this run has opened
-    grabber = None         # pressing buttons and fetching what they give
-    channel_list = None    # the guild's channels, fetched once
-    jobs = {}              # channel id -> the crawl running behind its page
-    names = None           # channel id -> name, as far as anything knows
-    asked_names = set()    # ids Discord has already been asked about, once
+    channels: Channels
+    """Every channel this run has opened."""
+    grabber: Grabber
+    """Presses buttons and fetches what they give."""
+    channel_list: list[dict] | None = None
+    """The guild's channels, fetched once."""
+    jobs = {}
+    """Channel id -> the crawl running behind its page."""
+    names: dict[str, str] | None = None
+    """Channel id -> name, as far as anything knows."""
+    asked_names = set()
+    """Ids Discord has already been asked about, once."""
 
     # This guards the maps above and nothing else. Each Feed serialises its own
     # work, so a crawl of one channel no longer holds the whole server still.
@@ -74,7 +85,7 @@ class Handler(BaseHTTPRequestHandler):
         name = (name or "").strip()
         if not name or name == cid or self._known_names().get(cid) == name:
             return
-        Handler.names[cid] = name
+        self._known_names()[cid] = name
         # Written where the switcher can find it next time, offline included.
         ChannelState(self.feed.config.state_path, cid).note_name(name)
 
@@ -132,16 +143,20 @@ class Handler(BaseHTTPRequestHandler):
         listed = list(Handler.channel_list or [])
         if not listed:
             # Offline, or the guild would not say: offer what is on disk.
-            listed = [{"id": cid, "name": self._name_of(cid) or cid, "position": 0}
-                      for cid in sorted(cached | {self.feed.config.channel_id})]
+            listed = [
+                {"id": cid, "name": self._name_of(cid) or cid, "position": 0}
+                for cid in sorted(cached | {self.feed.config.channel_id})
+            ]
 
         def rank(entry):
-            return (0 if entry["id"] in cached else 1,
-                    0 if "recommendation" in entry["name"] else 1,
-                    entry.get("position", 0), entry["name"])
+            return (
+                0 if entry["id"] in cached else 1,
+                0 if "recommendation" in entry["name"] else 1,
+                entry.get("position", 0),
+                entry["name"],
+            )
 
-        return [dict(entry, cached=entry["id"] in cached)
-                for entry in sorted(listed, key=rank)]
+        return [dict(entry, cached=entry["id"] in cached) for entry in sorted(listed, key=rank)]
 
     def _index(self, feed, scope: dict) -> dict:
         """The index, plus the switcher's channel list and what is on disk."""
@@ -159,18 +174,17 @@ class Handler(BaseHTTPRequestHandler):
         is not ticked gets ticked here, which makes the mark self-healing rather
         than something to be re-earned by downloading the book twice.
         """
-        ledger = self.grabber.ledger if self.grabber else None
+        ledger = self.grabber.ledger
         if ledger is None:
             return {}
         out, missing = {}, []
         for post in posts:
             entry = ledger.get(post.get("job"))
             if entry:
-                out[post["job"]] = {"dir": entry.get("dir", ""),
-                                    "n": len(entry.get("files") or [])}
+                out[post["job"]] = {"dir": entry.get("dir", ""), "n": len(entry.get("files") or [])}
                 if feed is not None and post["job"] not in feed.state.taken:
                     missing.append(post["job"])
-        if missing:
+        if feed is not None and missing:
             feed.state.take(missing, True)
         return out
 
@@ -201,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- helpers ----------------------------------------------------------
 
-    def log_message(self, fmt, *args):
+    def log_message(self, format, *args):
         pass  # The console belongs to the sync progress, not to every asset.
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
@@ -218,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(body)
-        except (ConnectionError, TimeoutError):
+        except ConnectionError, TimeoutError:
             # The tab was closed, reloaded, or navigated away mid-response --
             # which is ordinary, and happens most often to `/api/reach`, whose
             # answer is a slow one the page is quite willing to abandon. The
@@ -229,8 +243,11 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _json(self, data, status: int = 200) -> None:
-        self._send(status, json.dumps(data, ensure_ascii=False).encode("utf-8"),
-                   "application/json; charset=utf-8")
+        self._send(
+            status,
+            json.dumps(data, ensure_ascii=False).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -238,15 +255,17 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         try:
             return json.loads(self.rfile.read(length).decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except json.JSONDecodeError, UnicodeDecodeError:
             return {}
 
     def _same_origin(self) -> bool:
         origin = self.headers.get("Origin")
         if not origin:
             return True  # Same-origin fetches and plain navigations send none.
-        return origin.rstrip("/") in (f"http://127.0.0.1:{self.server.server_port}",
-                                      f"http://localhost:{self.server.server_port}")
+        return origin.rstrip("/") in (
+            f"http://127.0.0.1:{cast(ThreadingHTTPServer, self.server).server_port}",
+            f"http://localhost:{cast(ThreadingHTTPServer, self.server).server_port}",
+        )
 
     def _file(self, name: str) -> None:
         path = (WEB_ROOT / name).resolve()
@@ -266,7 +285,7 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/", "/index.html"):
             self._file("index.html")
         elif route.startswith("/static/"):
-            self._file(route[len("/static/"):])
+            self._file(route[len("/static/") :])
         elif route == "/api/feed":
             asked = (parse_qs(parts.query).get("channel") or [""])[0]
             self._json(self._index(self.feed_for(asked), _scope(parts.query)))
@@ -311,7 +330,7 @@ class Handler(BaseHTTPRequestHandler):
             direction = "older" if body.get("dir") == "older" else "newer"
             try:
                 count = int(body.get("count") or 0)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 count = 0
             try:
                 grew = feed.reach(direction, count)
@@ -321,20 +340,23 @@ class Handler(BaseHTTPRequestHandler):
             payload = feed.payload(**scope)
             fresh = feed.since(
                 oldest=str(body.get("oldest") or "") if direction == "older" else "",
-                newest=str(body.get("newest") or "") if direction == "newer" else "")
-            self._json({
-                "dir": direction,
-                "done": grew.get("done", 0),
-                "added": grew.get("added", 0),
-                "posts": fresh,
-                "held": self._held(fresh, feed),
-                "coverage": payload["coverage"],
-                "categories": payload["categories"],
-                "display": payload["display"],
-            })
+                newest=str(body.get("newest") or "") if direction == "newer" else "",
+            )
+            self._json(
+                {
+                    "dir": direction,
+                    "done": grew.get("done", 0),
+                    "added": grew.get("added", 0),
+                    "posts": fresh,
+                    "held": self._held(fresh, feed),
+                    "coverage": payload["coverage"],
+                    "categories": payload["categories"],
+                    "display": payload["display"],
+                }
+            )
 
         elif route == "/api/bookmark":
-            feed.state.bookmark(body.get("id"), bool(body.get("on", True)))
+            feed.state.bookmark(str(body.get("id") or ""), bool(body.get("on", True)))
             self._json({"bookmarks": feed.bookmarks()})
 
         elif route == "/api/detail":
@@ -352,8 +374,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
                 return
-            self._json({"added": added, "posts": feed.payload(**scope)["posts"]
-                        if added else []})
+            self._json({"added": added, "posts": feed.payload(**scope)["posts"] if added else []})
 
         # -- pressing the button ------------------------------------------
 
@@ -369,8 +390,9 @@ class Handler(BaseHTTPRequestHandler):
 
         elif route == "/api/grab":
             try:
-                task = self.grabber.grab(feed, str(body.get("id") or ""),
-                                         force=bool(body.get("force")))
+                task = self.grabber.grab(
+                    feed, str(body.get("id") or ""), force=bool(body.get("force"))
+                )
             except Exception as exc:
                 self._json({"error": str(exc)}, 502)
                 return
@@ -407,7 +429,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "say how much to read: a count, 7d/3m/1y, or all"}, 400)
                 return
             try:
-                parse_history(spec)          # complain about the ask itself first
+                parse_history(spec)  # complain about the ask itself first
             except ValueError as exc:
                 self._json({"error": str(exc)}, 400)
                 return
@@ -435,7 +457,7 @@ def _reveal(where: str) -> None:
     if not path.exists():
         raise FileNotFoundError(f"{where} is not there any more")
     if sys.platform.startswith("win"):
-        os.startfile(str(path))            # noqa: S606 -- a folder, not a command
+        os.startfile(str(path))  # noqa: S606 -- a folder, not a command
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])
     else:
@@ -483,7 +505,7 @@ def serve(channels, grabber, port: int, attempts: int = 10):
     for offset in range(attempts):
         try:
             httpd = Server(("127.0.0.1", port + offset), Handler)
-        except (OSError, PermissionError):
+        except OSError, PermissionError:
             continue
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()

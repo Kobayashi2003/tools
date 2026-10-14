@@ -4,13 +4,25 @@ import re
 
 # Windows-forbidden characters mapped to look-alikes, plus invisibles.
 _REPLACEMENTS = {
-    '/': '／', '\\': '＼', ':': '：', '*': '＊', '?': '？',
-    '"': '＂', '<': '＜', '>': '＞', '|': '｜',
-    '\t': ' ', '\r': ' ', '\n': ' ',
-    '​': '', '‌': '', '‍': '', '﻿': '',
+    "/": "／",
+    "\\": "＼",
+    ":": "：",
+    "*": "＊",
+    "?": "？",
+    '"': "＂",
+    "<": "＜",
+    ">": "＞",
+    "|": "｜",
+    "\t": " ",
+    "\r": " ",
+    "\n": " ",
+    "​": "",
+    "‌": "",
+    "‍": "",
+    "﻿": "",
 }
-_CONTROL = re.compile(r'[\x00-\x1F\x7F]')
-_SPACES = re.compile(r' +')
+_CONTROL = re.compile(r"[\x00-\x1F\x7F]")
+_SPACES = re.compile(r" +")
 
 # Windows refuses a longer component outright (WinError 123).
 MAX_COMPONENT = 120
@@ -20,12 +32,12 @@ def sanitize(text: str, limit: int = MAX_COMPONENT) -> str:
     """Make one path component safe. Never empty."""
     if not text:
         return "unknown"
-    text = _CONTROL.sub('', text)
+    text = _CONTROL.sub("", text)
     for char, repl in _REPLACEMENTS.items():
         text = text.replace(char, repl)
-    text = _SPACES.sub(' ', text).strip(' .')
+    text = _SPACES.sub(" ", text).strip(" .")
     if len(text) > limit:
-        text = text[:limit].strip(' .')
+        text = text[:limit].strip(" .")
     return text or "unknown"
 
 
@@ -33,11 +45,11 @@ def volume_prefix(volume) -> str:
     """`7` -> `007`, `7.5` -> `007.5`, `1-3` -> `001-003`, None -> ''."""
     if volume is None:
         return ""
-    parts = re.split(r'([^0-9.]+)', str(volume))
+    parts = re.split(r"([^0-9.]+)", str(volume))
     out = []
     for part in parts:
-        if re.fullmatch(r'\d+(\.\d+)?', part or ''):
-            whole, _, frac = part.partition('.')
+        if re.fullmatch(r"\d+(\.\d+)?", part or ""):
+            whole, _, frac = part.partition(".")
             out.append(f"{int(whole):03d}" + (f".{frac}" if frac else ""))
         else:
             out.append(part or "")
@@ -50,7 +62,7 @@ def build_filename(record, volume=None) -> str:
     prefix = volume_prefix(volume if volume is not None else record.volume)
     if prefix:
         stem = f"{prefix} {stem}"
-    ext = re.sub(r'[^A-Za-z0-9]', '', record.extension or '') or 'bin'
+    ext = re.sub(r"[^A-Za-z0-9]", "", record.extension or "") or "bin"
     return f"{sanitize(stem)}.{ext.lower()}"
 
 
@@ -68,7 +80,7 @@ def disambiguate(name: str, taken, discriminator: str) -> str:
     # Only split off something that actually looks like an extension. Titles
     # carry dots of their own (「作品 vol.二」), and tearing one apart would put
     # the tag in the middle of the name.
-    if not dot or not re.fullmatch(r'[A-Za-z0-9]{1,5}', ext):
+    if not dot or not re.fullmatch(r"[A-Za-z0-9]{1,5}", ext):
         stem, dot, ext = name, "", ""
 
     def build(width: int) -> str:

@@ -3,23 +3,29 @@
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .schema import Settings
 
 
 def iso(moment):
-    return moment.astimezone(timezone.utc).isoformat(timespec="seconds")
+    return moment.astimezone(UTC).isoformat(timespec="seconds")
 
 
 def now():
-    return iso(datetime.now(timezone.utc))
+    return iso(datetime.now(UTC))
 
 
 def dump(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
+
+# File modes. Bilingual files are converted; originals are kept as uploaded.
+BILINGUAL_MODES = ("jp-zh", "zh-jp")
+ORIGINAL_ZH = "zh-original"  # a volume uploaded only in Chinese
+ORIGINAL_JP = "jp-original"  # a Japanese upload whose bilingual file Novelia could not build
+BILINGUAL_SQL = "mode IN ('jp-zh','zh-jp')"
 
 # Display title of a job item `i`; the `?` binds the job kind. Conversion targets are file IDs,
 # matched through the files primary key.
@@ -30,14 +36,21 @@ ITEM_TITLE_JOINS = """LEFT JOIN works w ON w.key=i.target
 
 # Columns added after the first release; created on demand so existing databases keep working.
 ADDED_COLUMNS = {
-    "jobs": {"resume_at": "TEXT", "pauses": "INTEGER NOT NULL DEFAULT 0",
-             "wait_until": "TEXT", "wait_reason": "TEXT",
-             # Retry rounds already used, kept across automatic pauses.
-             "retry_round": "INTEGER NOT NULL DEFAULT 0",
-             # Set by "Start now": the user chose to run outside active hours.
-             "ignore_window": "INTEGER NOT NULL DEFAULT 0"},
-    "job_items": {"attempts": "INTEGER NOT NULL DEFAULT 0", "retryable": "INTEGER NOT NULL DEFAULT 0",
-                  "parts": "TEXT"},
+    "jobs": {
+        "resume_at": "TEXT",
+        "pauses": "INTEGER NOT NULL DEFAULT 0",
+        "wait_until": "TEXT",
+        "wait_reason": "TEXT",
+        # Retry rounds already used, kept across automatic pauses.
+        "retry_round": "INTEGER NOT NULL DEFAULT 0",
+        # Set by "Start now": the user chose to run outside active hours.
+        "ignore_window": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "job_items": {
+        "attempts": "INTEGER NOT NULL DEFAULT 0",
+        "retryable": "INTEGER NOT NULL DEFAULT 0",
+        "parts": "TEXT",
+    },
 }
 
 
@@ -118,8 +131,10 @@ class Database:
         return json.loads(row["value"]) if row else default
 
     def set_setting(self, key, value):
-        self.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                     (key, dump(value)))
+        self.execute(
+            "INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, dump(value)),
+        )
 
     def settings(self):
         return Settings.model_validate(self.setting("config", {}))
@@ -127,34 +142,56 @@ class Database:
     def create_job(self, request, scheduled=False):
         config = self.settings().model_dump()
         with self.connect() as db:
-            if scheduled and db.execute("SELECT id FROM jobs WHERE kind IN ('full','incremental') "
-                                        "AND status IN ('queued','running','interrupted')").fetchone():
+            if (
+                scheduled
+                and db.execute(
+                    "SELECT id FROM jobs WHERE kind IN ('full','incremental') "
+                    "AND status IN ('queued','running','interrupted')"
+                ).fetchone()
+            ):
                 return None
             return db.execute(
                 "INSERT INTO jobs(kind,status,request,config,cursor,created_at,scheduled) VALUES (?,?,?,?,?,?,?)",
-                (request.kind, "queued", dump(request.model_dump()), dump(config), request.start_page,
-                 now(), int(scheduled))).lastrowid
+                (
+                    request.kind,
+                    "queued",
+                    dump(request.model_dump()),
+                    dump(config),
+                    request.start_page,
+                    now(),
+                    int(scheduled),
+                ),
+            ).lastrowid
 
     def jobs(self, limit=60, status=None):
         where, args = ("WHERE j.status=?", (status, limit)) if status else ("", (limit,))
-        return self.rows(f"""SELECT j.*, COUNT(i.target) AS total,
+        return self.rows(
+            f"""SELECT j.*, COUNT(i.target) AS total,
             COALESCE(SUM(i.status='done'),0) AS done, COALESCE(SUM(i.status='failed'),0) AS failed,
             (SELECT {ITEM_TITLE} FROM job_items i {ITEM_TITLE_JOINS.replace("?", "j.kind")}
                 WHERE i.job_id=j.id AND i.status='running' LIMIT 1) AS current
             FROM jobs j LEFT JOIN job_items i ON i.job_id=j.id {where}
-            GROUP BY j.id ORDER BY j.id DESC LIMIT ?""", args)
+            GROUP BY j.id ORDER BY j.id DESC LIMIT ?""",
+            args,
+        )
 
     def stats(self):
-        return self.row("""SELECT (SELECT COUNT(*) FROM works) AS works,
+        return self.rows("""SELECT (SELECT COUNT(*) FROM works) AS works,
             (SELECT COUNT(*) FROM files) AS files,
             (SELECT COUNT(*) FROM files WHERE ja_path IS NOT NULL) AS converted,
             (SELECT COUNT(*) FROM files WHERE verification='unverified') AS unverified,
             (SELECT COALESCE(SUM(size),0) FROM files) AS bytes,
-            (SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')) AS active_jobs""")
+            (SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')) AS active_jobs""")[0]
 
     def delete_jobs(self, where, args=()):
         with self.connect() as db:
-            ids = [r["id"] for r in db.execute(f"SELECT id FROM jobs WHERE status NOT IN ('queued','running') AND {where}", args)]
+            ids = [
+                r["id"]
+                for r in db.execute(
+                    f"SELECT id FROM jobs WHERE status NOT IN ('queued','running') AND {where}",
+                    args,
+                )
+            ]
             for table, column in (("logs", "job_id"), ("job_items", "job_id"), ("jobs", "id")):
                 db.executemany(f"DELETE FROM {table} WHERE {column}=?", [(i,) for i in ids])
         return len(ids)
@@ -162,64 +199,145 @@ class Database:
     def job(self, job_id):
         return self.row("SELECT * FROM jobs WHERE id=?", (job_id,))
 
+    def logs(
+        self, job_id: int, after: int = 0, before: int = 0, problems: bool = False, limit: int = 300
+    ) -> tuple[list[dict], bool]:
+        """Log lines in id order, and whether older lines exist before the first one returned."""
+        where = "job_id=?" + (" AND level IN ('warning','error')" if problems else "")
+        if after:
+            rows = self.rows(
+                f"SELECT * FROM logs WHERE {where} AND id>? ORDER BY id LIMIT ?",
+                (job_id, after, limit),
+            )
+            return rows, False
+        bound = " AND id<?" if before else ""
+        args = (job_id, before, limit) if before else (job_id, limit)
+        rows = self.rows(f"SELECT * FROM logs WHERE {where}{bound} ORDER BY id DESC LIMIT ?", args)[
+            ::-1
+        ]
+        earlier = bool(
+            rows
+            and self.row(
+                f"SELECT 1 FROM logs WHERE {where} AND id<? LIMIT 1", (job_id, rows[0]["id"])
+            )
+        )
+        return rows, earlier
+
     def open_items(self, job_id, kind, limit=500):
         """Running and failed items with a display title (work title, or work · volume for conversions)."""
-        items = self.rows(f"""SELECT i.target,i.status,i.error,i.attempts,i.retryable,i.parts,
+        items = self.rows(
+            f"""SELECT i.target,i.status,i.error,i.attempts,i.retryable,i.parts,
             {ITEM_TITLE} AS title FROM job_items i {ITEM_TITLE_JOINS}
             WHERE i.job_id=? AND i.status IN ('running','failed') ORDER BY i.rowid LIMIT ?""",
-            (kind, job_id, limit))
+            (kind, job_id, limit),
+        )
         for item in items:
             item["parts"] = json.loads(item["parts"] or "{}")
         return items
 
     def log(self, job_id, message, level="info"):
-        self.execute("INSERT INTO logs(job_id,created_at,level,message) VALUES (?,?,?,?)",
-                     (job_id, now(), level, message[:4000]))
+        self.execute(
+            "INSERT INTO logs(job_id,created_at,level,message) VALUES (?,?,?,?)",
+            (job_id, now(), level, message[:4000]),
+        )
 
     def add_targets(self, job_id, targets, next_page=None, page_count=None):
         # One transaction for targets and checkpoint, so a failed page is never skipped.
         with self.connect() as db:
-            db.executemany("INSERT OR IGNORE INTO job_items(job_id,target) VALUES (?,?)",
-                           [(job_id, t) for t in targets])
+            db.executemany(
+                "INSERT OR IGNORE INTO job_items(job_id,target) VALUES (?,?)",
+                [(job_id, t) for t in targets],
+            )
             if next_page is not None:
-                db.execute("UPDATE jobs SET cursor=?,page_count=? WHERE id=?", (next_page, page_count, job_id))
+                db.execute(
+                    "UPDATE jobs SET cursor=?,page_count=? WHERE id=?",
+                    (next_page, page_count, job_id),
+                )
 
     def save_work(self, key, data, category=None):
         kind = "wenku" if key.startswith("wenku/") else "web"
         title = data.get("title", "") if kind == "wenku" else data.get("titleJp", "")
-        authors = [a.get("name", "") if isinstance(a, dict) else str(a) for a in data.get("authors", [])]
-        volumes = len(data.get("volumeJp", [])) + len(data.get("volumeZh", [])) if kind == "wenku" else sum(
-            bool(c.get("chapterId")) for c in data.get("toc", []))
-        self.execute("""INSERT INTO works VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        authors = [
+            a.get("name", "") if isinstance(a, dict) else str(a) for a in data.get("authors", [])
+        ]
+        volumes = (
+            len(data.get("volumeJp", [])) + len(data.get("volumeZh", []))
+            if kind == "wenku"
+            else sum(bool(c.get("chapterId")) for c in data.get("toc", []))
+        )
+        self.execute(
+            """INSERT INTO works VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(key) DO UPDATE SET category=COALESCE(excluded.category,works.category),
             title=excluded.title,title_zh=excluded.title_zh,cover=excluded.cover,
             authors=excluded.authors,publisher=excluded.publisher,metadata=excluded.metadata,
             volume_count=excluded.volume_count,checked_at=excluded.checked_at""",
-            (key, kind, category, title or key, data.get("titleZh", ""), data.get("cover", ""),
-             dump(authors), data.get("publisher", ""), dump(data), volumes, now(), now()))
+            (
+                key,
+                kind,
+                category,
+                title or key,
+                data.get("titleZh", ""),
+                data.get("cover", ""),
+                dump(authors),
+                data.get("publisher", ""),
+                dump(data),
+                volumes,
+                now(),
+                now(),
+            ),
+        )
 
     def save_file(self, key, volume, mode, fingerprint, path, size, sha256, reference=None):
-        self.execute("""INSERT INTO files(work_key,volume_id,mode,fingerprint,raw_path,size,sha256,
+        self.execute(
+            """INSERT INTO files(work_key,volume_id,mode,fingerprint,raw_path,size,sha256,
             reference_path,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(work_key,volume_id,mode) DO UPDATE SET fingerprint=excluded.fingerprint,
             raw_path=excluded.raw_path,size=excluded.size,sha256=excluded.sha256,
             reference_path=excluded.reference_path,ja_path=NULL,verification=NULL,report=NULL,
             status='downloaded',updated_at=excluded.updated_at""",
-            (key, volume, mode, fingerprint, str(path), size, sha256, str(reference) if reference else None,
-             "downloaded", now()))
+            (
+                key,
+                volume,
+                mode,
+                fingerprint,
+                str(path),
+                size,
+                sha256,
+                str(reference) if reference else None,
+                "downloaded",
+                now(),
+            ),
+        )
+
+    def save_original(self, key, volume, fingerprint, path, size, sha256):
+        """Record a Japanese original saved because the bilingual file could not be built.
+        It is its own Japanese edition, so there is nothing to convert."""
+        self.save_file(key, volume, ORIGINAL_JP, fingerprint, path, size, sha256)
+        self.execute(
+            "UPDATE files SET ja_path=raw_path,status='original',verification='original' "
+            "WHERE work_key=? AND volume_id=? AND mode=?",
+            (key, volume, ORIGINAL_JP),
+        )
 
     def next_job(self):
         """The oldest queued task that is not paused until later."""
-        return self.row("SELECT * FROM jobs WHERE status='queued' AND (resume_at IS NULL OR resume_at<=?) "
-                        "ORDER BY id LIMIT 1", (now(),))
+        return self.row(
+            "SELECT * FROM jobs WHERE status='queued' AND (resume_at IS NULL OR resume_at<=?) "
+            "ORDER BY id LIMIT 1",
+            (now(),),
+        )
 
     def set_wait(self, job_id, until, reason):
-        self.execute("UPDATE jobs SET wait_until=?,wait_reason=? WHERE id=?",
-                     (iso(until) if until else None, reason, job_id))
+        self.execute(
+            "UPDATE jobs SET wait_until=?,wait_reason=? WHERE id=?",
+            (iso(until) if until else None, reason, job_id),
+        )
 
     def defer(self, job_id, until, reason, pauses):
-        self.execute("UPDATE jobs SET status='queued',resume_at=?,wait_reason=?,wait_until=NULL,pauses=? WHERE id=?",
-                     (iso(until), reason, pauses, job_id))
+        self.execute(
+            "UPDATE jobs SET status='queued',resume_at=?,wait_reason=?,wait_until=NULL,pauses=? WHERE id=?",
+            (iso(until), reason, pauses, job_id),
+        )
 
     def parts(self, job_id, target):
         row = self.row("SELECT parts FROM job_items WHERE job_id=? AND target=?", (job_id, target))
@@ -234,13 +352,18 @@ class Database:
             parts["done"] = [*dict.fromkeys([*parts["done"], volume])]
         else:
             parts["failed"][volume] = error
-        self.execute("UPDATE job_items SET parts=? WHERE job_id=? AND target=?", (dump(parts), job_id, target))
+        self.execute(
+            "UPDATE job_items SET parts=? WHERE job_id=? AND target=?",
+            (dump(parts), job_id, target),
+        )
 
     def _requeue(self, db, job_id, ignore_window=0):
         """Queue a task again at the user's request, with fresh pause and retry-round budgets."""
-        db.execute("UPDATE jobs SET status='queued',cancel_requested=0,error=NULL,finished_at=NULL,resume_at=NULL,"
-                   "wait_until=NULL,wait_reason=NULL,pauses=0,retry_round=0,ignore_window=? WHERE id=?",
-                   (ignore_window, job_id))
+        db.execute(
+            "UPDATE jobs SET status='queued',cancel_requested=0,error=NULL,finished_at=NULL,resume_at=NULL,"
+            "wait_until=NULL,wait_reason=NULL,pauses=0,retry_round=0,ignore_window=? WHERE id=?",
+            (ignore_window, job_id),
+        )
 
     def resume(self, job_id):
         """Continue a stopped task, or start a paused one now (even outside active hours)."""
@@ -252,31 +375,40 @@ class Database:
                 self._requeue(db, job_id, ignore_window=1)
                 return
             if row["status"] in ("running", "queued", "completed"):
-                raise ValueError("Only cancelled, interrupted, failed, or paused tasks can be resumed.")
-            db.execute("UPDATE job_items SET status='pending',error=NULL WHERE job_id=? AND status!='done'", (job_id,))
+                raise ValueError(
+                    "Only cancelled, interrupted, failed, or paused tasks can be resumed."
+                )
+            db.execute(
+                "UPDATE job_items SET status='pending',error=NULL WHERE job_id=? AND status!='done'",
+                (job_id,),
+            )
             self._requeue(db, job_id)
 
-    def retry(self, job_id, targets=()):
-        """Queue failed items (all, or only `targets`) again; completed items are untouched."""
+    def retry(self, job_id, targets=(), only_retryable=False):
+        """Make failed items (all, only `targets`, or only temporary ones) pending again.
+        A stopped task is queued; a queued or running one picks them up next."""
         with self.connect() as db:
             row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not row:
                 raise KeyError(job_id)
-            if row["status"] in ("running", "queued"):
-                raise ValueError("Wait for the task to stop before retrying its failed items.")
             sql = "UPDATE job_items SET status='pending',error=NULL WHERE job_id=? AND status='failed'"
             args = [job_id]
+            if only_retryable:
+                sql += " AND retryable=1"
             if targets:
                 sql += f" AND target IN ({','.join('?' * len(targets))})"
                 args.extend(targets)
             count = db.execute(sql, args).rowcount
             if not count:
                 raise ValueError("No failed items to retry.")
-            self._requeue(db, job_id)
+            if row["status"] not in ("running", "queued"):
+                self._requeue(db, job_id)
             return count
 
     def recover(self):
         with self.connect() as db:
-            db.execute("UPDATE jobs SET status='interrupted',error='Server stopped before completion',"
-                       "wait_until=NULL,wait_reason=NULL WHERE status='running'")
+            db.execute(
+                "UPDATE jobs SET status='interrupted',error='Server stopped before completion',"
+                "wait_until=NULL,wait_reason=NULL WHERE status='running'"
+            )
             db.execute("UPDATE job_items SET status='pending' WHERE status='running'")

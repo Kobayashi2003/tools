@@ -19,7 +19,7 @@ const WANTED_OPS = ['TweetResultByRestId', 'FavoriteTweet'];
 
 // Seed default settings on install so the popup and content scripts agree.
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.get(DEFAULTS, (cfg) => {
+  chrome.storage.sync.get(DEFAULTS, cfg => {
     chrome.storage.sync.set(cfg);
   });
 });
@@ -38,7 +38,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.action === 'clearHistory') {
-    queueHistory(() => chrome.storage.local.set({ history: [] })).then(() => sendResponse({ ok: true }));
+    queueHistory(() => chrome.storage.local.set({ history: [] })).then(() =>
+      sendResponse({ ok: true }),
+    );
     return true;
   }
 });
@@ -59,7 +61,8 @@ function addHistory(ids) {
     const set = new Set(history);
     const before = set.size;
     for (const id of ids) if (/^\d+$/.test(id)) set.add(id);
-    if (set.size !== before) await chrome.storage.local.set({ history: [...set].slice(-HISTORY_MAX) });
+    if (set.size !== before)
+      await chrome.storage.local.set({ history: [...set].slice(-HISTORY_MAX) });
   });
 }
 
@@ -90,11 +93,11 @@ async function discoverOps(urls) {
     const { opsCache = {} } = await chrome.storage.local.get('opsCache');
     for (const url of urls) {
       if (!opsCache[url]) {
-        const text = await fetch(url).then((r) => r.text());
+        const text = await fetch(url).then(r => r.text());
         opsCache[url] = parseOps(text);
       }
       Object.assign(ops, opsCache[url]);
-      if (WANTED_OPS.every((name) => ops[name])) break;
+      if (WANTED_OPS.every(name => ops[name])) break;
     }
     // Only keep the most recent bundles around.
     const keys = Object.keys(opsCache);
@@ -112,12 +115,13 @@ function parseOps(text) {
   const re = new RegExp(
     `queryId:${q}([\\w-]+)${q},operationName:${q}(\\w+)${q}` +
       `(?:,operationType:${q}\\w+${q},metadata:\\{featureSwitches:\\[([^\\]]*)\\])?`,
-    'g'
+    'g',
   );
   for (const m of text.matchAll(re)) {
     if (!WANTED_OPS.includes(m[2])) continue;
     const op = { queryId: m[1] };
-    if (m[3] !== undefined) op.featureSwitches = [...m[3].matchAll(/["'`](\w+)["'`]/g)].map((f) => f[1]);
+    if (m[3] !== undefined)
+      op.featureSwitches = [...m[3].matchAll(/["'`](\w+)["'`]/g)].map(f => f[1]);
     found[m[2]] = op;
   }
   return found;

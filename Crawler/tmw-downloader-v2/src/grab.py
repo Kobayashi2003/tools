@@ -12,7 +12,6 @@ files and then fetching them is one press, not two.
 """
 
 import threading
-from typing import Dict
 
 from .download import Downloads, Task
 from .gateway import Gateway, GatewayError
@@ -28,12 +27,11 @@ class Grabber:
         self.feed_for = feed_for
         self.gateway = Gateway(config)
         self.ledger = Ledger(config.ledger_path)
-        self.downloads = Downloads(config, self.ledger, self._open_task,
-                                   self._finished)
+        self.downloads = Downloads(config, self.ledger, self._open_task, self._finished)
         self.lock = threading.RLock()
-        self._claims: Dict[str, Claim] = {}
+        self._claims: dict[str, Claim] = {}
         # job -> (channel id, message id): where the button that opens it lives.
-        self._where: Dict[str, tuple] = {}
+        self._where: dict[str, tuple] = {}
 
     # -- pressing ---------------------------------------------------------
 
@@ -64,8 +62,8 @@ class Grabber:
                 guild_id=feed.config.guild_id,
                 channel_id=feed.config.channel_id,
                 message_id=rec.message_id,
-                custom_id=rec.custom_id or ("hosted_book_download" if rec.hosted
-                                            else "third_party_download"),
+                custom_id=rec.custom_id
+                or ("hosted_book_download" if rec.hosted else "third_party_download"),
                 application_id=rec.author_id,
             )
         except GatewayError as exc:
@@ -111,9 +109,9 @@ class Grabber:
             raise LookupError("that post has no job on it")
         with self.lock:
             self._where[rec.job] = (feed.config.channel_id, rec.message_id)
-        return self.downloads.queue(rec.job, rec.message_id,
-                                    rec.title or rec.job, feed.display_name,
-                                    force=force)
+        return self.downloads.queue(
+            rec.job, rec.message_id, rec.title or rec.job, feed.display_name, force=force
+        )
 
     def _finished(self, task: Task) -> None:
         """Tick the recommendation off once its files are down.

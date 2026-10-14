@@ -9,27 +9,35 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional, Tuple
 from urllib.request import getproxies
 
 PREFIX = "TMW_"
 API_BASE = "https://discord.com/api/v9"
 GATEWAY = "wss://gateway.discord.gg/?v=9&encoding=json"
-USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 # Config fields an env var may override, as `TMW_<NAME>`.
-OVERRIDABLE = ("cache_dir", "state_file", "download_dir", "port", "channel_id",
-               "guild_id", "channel_name")
+OVERRIDABLE = (
+    "cache_dir",
+    "state_file",
+    "download_dir",
+    "port",
+    "channel_id",
+    "guild_id",
+    "channel_name",
+)
 
 # `m` is 30 days and `y` is 365: this picks a cursor, not an accounting period.
 UNIT_DAYS = {"d": 1, "w": 7, "m": 30, "y": 365}
 HISTORY_RE = re.compile(r"(\d+)\s*([dwmy]?)")
 
 
-def parse_history(spec: str) -> Optional[Tuple[Optional[datetime], Optional[int]]]:
+def parse_history(spec: str) -> tuple[datetime | None, int | None] | None:
     """Read a reach like `7d`, `3m`, `all`, or a plain message count.
 
     Returns `None` for "do not reach back at all", otherwise `(floor, count)`
@@ -43,12 +51,13 @@ def parse_history(spec: str) -> Optional[Tuple[Optional[datetime], Optional[int]
         return (None, None)
     match = HISTORY_RE.fullmatch(text)
     if not match:
-        raise ValueError(f"unreadable history {spec!r}: "
-                         f"use 7d / 2w / 3m / 1y / all, or a plain message count")
+        raise ValueError(
+            f"unreadable history {spec!r}: use 7d / 2w / 3m / 1y / all, or a plain message count"
+        )
     amount, unit = int(match.group(1)), match.group(2)
     if not unit:
         return (None, amount)
-    return (datetime.now(timezone.utc) - timedelta(days=amount * UNIT_DAYS[unit]), None)
+    return (datetime.now(UTC) - timedelta(days=amount * UNIT_DAYS[unit]), None)
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -84,15 +93,19 @@ class Config:
     # `fetch_limit` is a budget of messages for one run. They compose: reaching
     # back to the beginning 5000 messages at a time is several calm runs rather
     # than one long one, and the walk resumes where it stopped.
-    history: str = ""            # 7d / 2w / 3m / 1y / all / a plain count
-    fetch_limit: int = 0         # 0 = no budget
+    history: str = ""
+    """7d / 2w / 3m / 1y / all / a plain count"""
+    fetch_limit: int = 0
+    """0 = no budget."""
 
     # How much life a signed cover link must have left to be handed out as-is.
     link_margin_minutes: int = 120
 
     # how much to show
-    tail: bool = False           # only what arrives after this launch
-    display_cap: int = 0         # 0 = send the lot; the page virtualises it
+    tail: bool = False
+    """Only what arrives after this launch."""
+    display_cap: int = 0
+    """0 = send the lot; the page virtualises it."""
 
     # http.  `page_size` is capped at 100 by Discord, and asking for less is
     # worse rather than safer: the same history then costs proportionally more
@@ -131,7 +144,7 @@ class Config:
     _sources: list = field(default_factory=list)
 
     @classmethod
-    def load(cls, path: str = "config.json") -> "Config":
+    def load(cls, path: str = "config.json") -> Config:
         load_dotenv()
         config = cls()
 
@@ -157,7 +170,7 @@ class Config:
         config._named_channel = config.channel_id
         return config
 
-    def apply_args(self, args) -> "Config":
+    def apply_args(self, args) -> Config:
         for name in ("channel_id", "guild_id", "port", "proxy", "history"):
             value = getattr(args, name, None)
             if value:

@@ -1,75 +1,42 @@
 # pawchive-downloader
 
-A downloader for [Pawchive](https://pawchive.pw). An interactive shell that tracks
-creators, caches their post lists, and downloads new files incrementally and
-concurrently, with optional scheduling.
+Interactive shell for [Pawchive](https://pawchive.pw): tracks creators, caches their post lists
+and downloads new files incrementally, on demand or on a schedule.
 
-## Installation
+## Run
 
-```bash
-pip install -r requirements.txt
-```
-
-`requests` is required; `prompt_toolkit` adds Tab-completion, history and a live
-status bar, and degrades gracefully if absent.
-
-## Usage
+Requires Python 3.14; dependencies are in `pyproject.toml`.
 
 ```bash
 python main.py
 ```
 
-Enter `help` to see all commands, or `help <command>` for one. Basic workflow:
+On Windows, `start.ps1` opens the shell and `stop.ps1` ends it from another window.
+
+`help` lists the commands and `help <command>` its parameters. Parameters are written
+`command:key=value,...`; a bare flag means `true`.
 
 ```bash
-> add                  # Add a creator by URL
-> list                 # List active creators
-> download             # Download one creator's pending posts
-> download-all         # Queue all active creators
-> tasks                # View the download queue
-```
-
-### Inline parameters
-
-`command:key=value,key=value` (a single bare value also works, e.g. `download hane`):
-
-```bash
+> add                                  # add a creator by URL
+> download hane                        # download one creator's pending posts
+> download-all                         # queue every active creator
 > list:sort_by=recent,service=fanbox
-> sync:artist=hane,deep                # a bare bool flag means =true
-> links-all:group=artist/domain,details
-> reset:after_date=2025-01-01
+> sync:artist=hane,deep
 ```
-
-A boolean parameter given with no value is `true` (`:deep` ≡ `:deep=true`).
-
-`links` / `links-all` honor the optional `links_filter` in `data/config.json`
-(`allowed_domains`, `reviewed_artists`, `reviewed_before`); `:filtered=false`
-bypasses it. `help <command>` lists a command's parameters, their values and
-defaults.
 
 ## Configuration
 
-Files land in `{download_dir}/{artist_folder}/{post_folder}/{file}`, templated in
-`data/config.json` and overridable per creator via `config-artist`. Behavior
-(templates, concurrency, retries, filters, timers) lives in `data/config.json`;
-machine-specific paths and endpoints come from the environment (copy
-`.env.example` to `.env`).
-
-```
-precedence:  environment  >  data/config.json  >  built-in defaults
-```
+Behaviour (folder templates, concurrency, retries, link filters, timers) is in
+`data/config.json`, overridable per creator with `config-artist`. Paths and endpoints come from
+the environment (see `.env.example`), which takes precedence:
 
 | Variable | Purpose |
 |---|---|
-| `PAWCHIVE_DOWNLOAD_DIR` | where files are written |
-| `PAWCHIVE_DATA_DIR` | where `config.json` lives (env only) |
-| `PAWCHIVE_CACHE_DIR` / `PAWCHIVE_LOGS_DIR` | runtime locations |
-| `PAWCHIVE_API_BASE` / `PAWCHIVE_FILE_BASE` | endpoints |
-| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | standard proxy names |
+| `PAWCHIVE_DOWNLOAD_DIR` | Where files are written |
+| `PAWCHIVE_DATA_DIR` | Where `config.json` lives |
+| `PAWCHIVE_CACHE_DIR` / `PAWCHIVE_LOGS_DIR` | Runtime locations |
+| `PAWCHIVE_API_BASE` / `PAWCHIVE_FILE_BASE` | Endpoints |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | Proxy |
 
-## Notes
-
-Completeness is prioritized over speed. Files are written to a temp file,
-size-checked, then placed with an atomic `os.replace`; failures are recorded so
-the post stays pending and the next run retries it. Re-running is always safe —
-finished posts are never re-fetched.
+Rerunning is always safe: finished posts are never fetched again, and failed files leave their
+post pending for the next run.

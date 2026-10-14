@@ -16,9 +16,17 @@ def client(tmp_path):
 
 
 def test_job_validation_and_cancellation(client):
-    assert client.post("/api/jobs", json={"kind":"range", "start_page":3, "end_page":2}).status_code == 422
-    assert client.post("/api/jobs", json={"kind":"manual", "keys":["https://evil.example/wenku/abc"]}).status_code == 422
-    result = client.post("/api/jobs", json={"kind":"full", "category":5})
+    assert (
+        client.post("/api/jobs", json={"kind": "range", "start_page": 3, "end_page": 2}).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/jobs", json={"kind": "manual", "keys": ["https://evil.example/wenku/abc"]}
+        ).status_code
+        == 422
+    )
+    result = client.post("/api/jobs", json={"kind": "full", "category": 5})
     assert result.status_code == 201
     job_id = result.json()["id"]
     job = client.get(f"/api/jobs/{job_id}").json()
@@ -37,7 +45,9 @@ def test_retry_failed_items_and_start_paused_task(client):
     db.execute("UPDATE jobs SET status='completed_with_errors' WHERE id=?", (job_id,))
     detail = client.get(f"/api/jobs/{job_id}").json()
     assert detail["items"][0]["retryable"] == 1 and detail["items"][0]["parts"] == {}
-    assert client.post(f"/api/jobs/{job_id}/retry", json={"targets": [KEY]}).json() == {"retried": 1}
+    assert client.post(f"/api/jobs/{job_id}/retry", json={"targets": [KEY]}).json() == {
+        "retried": 1
+    }
     assert client.get(f"/api/jobs/{job_id}").json()["status"] == "queued"
     db.execute("UPDATE jobs SET resume_at='2999-01-01T00:00:00+00:00' WHERE id=?", (job_id,))
     assert client.get("/api/status").json()["paused"]["id"] == job_id
@@ -46,27 +56,52 @@ def test_retry_failed_items_and_start_paused_task(client):
 
 
 def test_settings_validation(client):
-    assert client.put("/api/settings", json={"backoff_base": 60, "backoff_max": 30}).status_code == 422
-    assert client.put("/api/settings", json={"active_hours": True, "active_start": "25:00"}).status_code == 422
-    assert client.put("/api/settings", json={"request_delay": 40, "max_delay": 30}).status_code == 422
-    assert client.put("/api/settings", json={"request_delay": 40, "max_delay": 30,
-                                             "adaptive_delay": False}).status_code == 200
-    saved = client.put("/api/settings", json={"active_hours": True, "active_start": "23:30", "rest_every": 20})
+    assert (
+        client.put("/api/settings", json={"backoff_base": 60, "backoff_max": 30}).status_code == 422
+    )
+    assert (
+        client.put(
+            "/api/settings", json={"active_hours": True, "active_start": "25:00"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put("/api/settings", json={"request_delay": 40, "max_delay": 30}).status_code == 422
+    )
+    assert (
+        client.put(
+            "/api/settings", json={"request_delay": 40, "max_delay": 30, "adaptive_delay": False}
+        ).status_code
+        == 200
+    )
+    saved = client.put(
+        "/api/settings", json={"active_hours": True, "active_start": "23:30", "rest_every": 20}
+    )
     assert saved.status_code == 200 and saved.json()["active_end"] == "07:00"
 
 
 def test_origin_and_host_protection(client):
-    assert client.post("/api/jobs",json={"kind":"full"},headers={"Origin":"https://evil.example"}).status_code == 403
-    assert client.get("/api/status", headers={"Host":"evil.example"}).status_code == 400
-    assert client.post("/api/jobs",json={"kind":"full"},headers={"Origin":"http://testserver"}).status_code == 201
+    assert (
+        client.post(
+            "/api/jobs", json={"kind": "full"}, headers={"Origin": "https://evil.example"}
+        ).status_code
+        == 403
+    )
+    assert client.get("/api/status", headers={"Host": "evil.example"}).status_code == 400
+    assert (
+        client.post(
+            "/api/jobs", json={"kind": "full"}, headers={"Origin": "http://testserver"}
+        ).status_code
+        == 201
+    )
 
 
 def test_settings_snapshot_and_csv(client):
-    job_id = client.post("/api/jobs", json={"kind":"full"}).json()["id"]
-    assert client.put("/api/settings", json={"request_delay":2}).status_code == 200
+    job_id = client.post("/api/jobs", json={"kind": "full"}).json()["id"]
+    assert client.put("/api/settings", json={"request_delay": 2}).status_code == 200
     assert client.get(f"/api/jobs/{job_id}").json()["config"]["request_delay"] == 1
     db = client.app.state.db
-    db.save_work(KEY,{"title":"=1+1", "authors":[], "volumeJp":[],"titleZh":"Test"},1)
+    db.save_work(KEY, {"title": "=1+1", "authors": [], "volumeJp": [], "titleZh": "Test"}, 1)
     assert "'=1+1" in client.get("/api/export.csv").text
     assert client.get("/api/works?query=Test").json()["total"] == 1
     assert client.get(f"/api/works/{KEY}").json()["files"] == []
@@ -74,17 +109,17 @@ def test_settings_snapshot_and_csv(client):
 
 def test_file_delivery_rejects_outside_root(client, tmp_path):
     db = client.app.state.db
-    db.save_work(KEY,{"title":"Test", "authors":[], "volumeJp":[]},1)
+    db.save_work(KEY, {"title": "Test", "authors": [], "volumeJp": []}, 1)
     outside = tmp_path / "secret.epub"
     outside.write_bytes(b"secret")
-    db.save_file(KEY,"v.epub","jp-zh","hash",outside,6,"digest")
+    db.save_file(KEY, "v.epub", "jp-zh", "hash", outside, 6, "digest")
     assert client.get("/api/files/1/raw").status_code == 404
     assert client.get("/api/files/1/ja").status_code == 404
     assert client.get("/api/files/1/other").status_code == 404
 
 
 def test_process_lock_prevents_multiple_workers(tmp_path):
-    a, b = ProcessLock(tmp_path/"lock"), ProcessLock(tmp_path/"lock")
+    a, b = ProcessLock(tmp_path / "lock"), ProcessLock(tmp_path / "lock")
     a.acquire()
     try:
         with pytest.raises(RuntimeError):
@@ -96,17 +131,21 @@ def test_process_lock_prevents_multiple_workers(tmp_path):
 
 
 def test_url_and_range_validation():
-    assert normalize_key("https://n.novelia.cc/"+KEY+"?x=1") == KEY
-    assert parse_range("1,3,5-8",6) == [1,3,5,6]
+    assert normalize_key("https://n.novelia.cc/" + KEY + "?x=1") == KEY
+    assert parse_range("1,3,5-8", 6) == [1, 3, 5, 6]
     with pytest.raises(ValueError):
-        parse_range("5-3",6)
+        parse_range("5-3", 6)
     with pytest.raises(ValueError):
-        JobRequest(kind="full",volumes="1")
+        JobRequest(kind="full", volumes="1")
 
 
 def test_library_filters_and_task_removal(client):
     db = client.app.state.db
-    db.save_work(KEY, {"title": "Alpha", "authors": [], "volumeJp": [{"volumeId": "a"}, {"volumeId": "b"}]}, 1)
+    db.save_work(
+        KEY,
+        {"title": "Alpha", "authors": [], "volumeJp": [{"volumeId": "a"}, {"volumeId": "b"}]},
+        1,
+    )
     db.save_file(KEY, "a", "jp-zh", "hash", Path("a.epub"), 1, "digest")
     assert client.get("/api/works?state=partial").json()["total"] == 1
     assert client.get("/api/works?state=pending").json()["items"][0]["pending_count"] == 1
@@ -120,3 +159,36 @@ def test_library_filters_and_task_removal(client):
     db.log(job_id, "done")
     assert client.post("/api/jobs/clear").json()["removed"] == 1
     assert client.get(f"/api/jobs/{job_id}").status_code == 404
+
+
+def test_retry_while_running_only_temporary(client):
+    db = client.app.state.db
+    other = "wenku/688da4c4c923db0b7aa9943f"
+    job_id = client.post("/api/jobs", json={"kind": "manual", "keys": [KEY, other]}).json()["id"]
+    db.add_targets(job_id, [KEY, other])
+    db.execute("UPDATE jobs SET status='running' WHERE id=?", (job_id,))
+    db.execute("UPDATE job_items SET status='failed',retryable=(target=?)", (KEY,))
+    response = client.post(f"/api/jobs/{job_id}/retry", json={"only_retryable": True})
+    assert response.json() == {"retried": 1}
+    assert client.get(f"/api/jobs/{job_id}").json()["status"] == "running"
+    statuses = {r["target"]: r["status"] for r in db.rows("SELECT * FROM job_items")}
+    assert statuses == {KEY: "pending", other: "failed"}
+
+
+def test_log_pages_open_on_latest_lines_and_filter_problems(client):
+    db = client.app.state.db
+    job_id = client.post("/api/jobs", json={"kind": "full"}).json()["id"]
+    for index in range(700):
+        db.log(job_id, f"line {index}", "error" if index % 100 == 0 else "info")
+    latest = client.get(f"/api/jobs/{job_id}").json()
+    assert latest["logs"][-1]["message"] == "line 699" and len(latest["logs"]) == 300
+    assert latest["log_earlier"] is True
+    earlier = client.get(f"/api/jobs/{job_id}?before={latest['logs'][0]['id']}").json()
+    assert earlier["logs"][-1]["id"] == latest["logs"][0]["id"] - 1
+    newer = client.get(f"/api/jobs/{job_id}?after={latest['logs'][-2]['id']}").json()
+    assert [line["message"] for line in newer["logs"]] == ["line 699"]
+    problems = client.get(f"/api/jobs/{job_id}?problems=true").json()
+    assert [line["message"] for line in problems["logs"]] == [
+        f"line {i}" for i in range(0, 700, 100)
+    ]
+    assert problems["log_earlier"] is False

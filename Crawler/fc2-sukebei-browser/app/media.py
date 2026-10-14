@@ -14,19 +14,26 @@ import requests
 
 from .net import FetchError
 
-ALLOWED_DOMAINS = ("paipancon.com", "fc2.com")       # the domain itself or any subdomain
+ALLOWED_DOMAINS = ("paipancon.com", "fc2.com")  # the domain itself or any subdomain
 MAX_REDIRECTS = 3
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4"}
 MAX_BYTES = 40 * 1024 * 1024
-MEDIA_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
-               ".gif": "image/gif", ".mp4": "video/mp4"}
+MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+}
 
 
 def allowed(url):
     parts = urlsplit(url or "")
     host = (parts.hostname or "").lower()
-    return (parts.scheme in ("http", "https")
-            and any(host == d or host.endswith("." + d) for d in ALLOWED_DOMAINS))
+    return parts.scheme in ("http", "https") and any(
+        host == d or host.endswith("." + d) for d in ALLOWED_DOMAINS
+    )
 
 
 def extension(url):
@@ -65,7 +72,7 @@ class MediaCache:
                 if not path.is_file():
                     self._download(url, path)
             finally:
-                with self._guard:                         # keep _locks from growing forever
+                with self._guard:  # keep _locks from growing forever
                     self._locks.pop(path.name, None)
         return path
 
@@ -78,7 +85,9 @@ class MediaCache:
             target = urljoin(url, response.headers.get("Location", ""))
             response.close()
             if not allowed(target):
-                raise FetchError(f"Redirected to a host that is not allowed: {urlsplit(target).hostname}")
+                raise FetchError(
+                    f"Redirected to a host that is not allowed: {urlsplit(target).hostname}"
+                )
             url = target
             response = self.http.get(url, stream=True, allow_redirects=False)
         response.close()
@@ -103,7 +112,7 @@ class MediaCache:
             if size > MAX_BYTES or size == 0:
                 raise FetchError("Empty or oversized media")
             os.replace(partial, path)
-        except requests.RequestException as exc:         # connection dropped mid-download
+        except requests.RequestException as exc:  # connection dropped mid-download
             raise FetchError(f"{type(exc).__name__}: {exc}") from exc
         finally:
             response.close()

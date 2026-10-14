@@ -39,7 +39,8 @@ def _rank(url):
 def parse_detail(page_html, fc2_id):
     media_re = re.compile(
         r"/fc2daily/data/" + re.escape(label(fc2_id)) + r"/[A-Za-z0-9_\-]+\.(?:jpe?g|png|webp|mp4)",
-        re.IGNORECASE)
+        re.IGNORECASE,
+    )
     urls = sorted({BASE + m for m in media_re.findall(page_html)}, key=lambda u: (_rank(u), u))
     heading = _HEADING.search(page_html)
     return {

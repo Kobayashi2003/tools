@@ -17,13 +17,11 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional, Tuple
 from urllib.parse import urljoin
 
+from .progress import Board
 from .search import fetch_detail
 from .session import create_session, get
-
-from .progress import Board
 
 #: One live progress area for the process. Bars are rewritten in place; anything
 #: printed through `_print` is flushed above them so it survives.
@@ -44,14 +42,18 @@ def human_size(num: float) -> str:
 
 # ---- backends ----
 
-def resolve_member(session, config, record) -> Optional[str]:
+
+def resolve_member(session, config, record) -> str | None:
     if not config.secret_key:
         if config.backend == "member":
-            _print("[member] no membership key — pass -k / set ANNAS_SECRET_KEY, "
-                   "or use --backend auto")
+            _print(
+                "[member] no membership key — pass -k / set ANNAS_SECRET_KEY, or use --backend auto"
+            )
         return None
-    url = (f"{config.mirror.rstrip('/')}/dyn/api/fast_download.json"
-           f"?md5={record.md5}&key={config.secret_key}")
+    url = (
+        f"{config.mirror.rstrip('/')}/dyn/api/fast_download.json"
+        f"?md5={record.md5}&key={config.secret_key}"
+    )
     response = get(session, url, config)
     if response is None:
         return None
@@ -66,7 +68,7 @@ def resolve_member(session, config, record) -> Optional[str]:
     return None
 
 
-def resolve_libgen(session, config, record) -> Optional[str]:
+def resolve_libgen(session, config, record) -> str | None:
     """Follow the record's Libgen mirror to the keyed `get.php` URL."""
     detail = fetch_detail(session, config, record.md5)
     pages = [m for m in detail.get("mirrors", []) if "libgen" in m or "library.lol" in m]
@@ -75,8 +77,13 @@ def resolve_libgen(session, config, record) -> Optional[str]:
     pages.insert(0, f"https://libgen.li/ads.php?md5={record.md5}")
 
     for page_url in pages:
-        response = get(session, page_url, config, allow_redirects=True,
-                       headers={"Referer": record.url(config.mirror)})
+        response = get(
+            session,
+            page_url,
+            config,
+            allow_redirects=True,
+            headers={"Referer": record.url(config.mirror)},
+        )
         if response is None or response.status_code != 200:
             continue
         match = re.search(r'href=["\']((?:[^"\']*/)?get\.php\?[^"\']+)["\']', response.text)
@@ -89,7 +96,7 @@ def resolve_libgen(session, config, record) -> Optional[str]:
     return None
 
 
-def resolve_browser(config, record, driver_holder) -> Optional[str]:
+def resolve_browser(config, record, driver_holder) -> str | None:
     """Drive the site's slow-download page with Selenium and read the final link."""
     # One browser, one page at a time: concurrent driver.get() calls on a shared
     # driver interleave, and a thread then reads the link off another thread's
@@ -98,13 +105,15 @@ def resolve_browser(config, record, driver_holder) -> Optional[str]:
         return _resolve_browser(config, record, driver_holder)
 
 
-def _resolve_browser(config, record, driver_holder) -> Optional[str]:
+def _resolve_browser(config, record, driver_holder) -> str | None:
     driver = driver_holder.get()
     if driver is None:
         return None
     base = config.mirror.rstrip("/")
-    _print(f"[browser] {record.md5}: waiting on the slow-download page (verification + "
-           "countdown, up to a few minutes) — finish any challenge in the window if one appears")
+    _print(
+        f"[browser] {record.md5}: waiting on the slow-download page (verification + "
+        "countdown, up to a few minutes) — finish any challenge in the window if one appears"
+    )
     deadline = time.time() + RECORD_BUDGET
     for server in range(0, 6):
         if time.time() >= deadline:
@@ -115,21 +124,21 @@ def _resolve_browser(config, record, driver_holder) -> Optional[str]:
             driver.get(url)
         except Exception as exc:
             # A timeout here is one dead server, not a dead run — try the next.
-            _print(f"[browser] {record.md5}: server #{server + 1}: "
-                   f"{type(exc).__name__}")
+            _print(f"[browser] {record.md5}: server #{server + 1}: {type(exc).__name__}")
             continue
-        link = _wait_for_download_link(driver, config, base,
-                                       limit=max(10, int(deadline - time.time())))
+        link = _wait_for_download_link(
+            driver, config, base, limit=max(10, int(deadline - time.time()))
+        )
         if link:
             return link
         _print(f"[browser] {record.md5}: server #{server + 1} gave nothing, trying the next one")
     return None
 
 
-_FILE_HREF_RE = re.compile(r'\.(epub|pdf|mobi|azw3|cbz|cbr|djvu|fb2|zip|txt)(\?|$)', re.I)
+_FILE_HREF_RE = re.compile(r"\.(epub|pdf|mobi|azw3|cbz|cbr|djvu|fb2|zip|txt)(\?|$)", re.I)
 
 
-def _wait_for_download_link(driver, config, base, limit: int = 300) -> Optional[str]:
+def _wait_for_download_link(driver, config, base, limit: int = 300) -> str | None:
     """The page holds a countdown (and sometimes a DDoS-Guard check) before it
     swaps in the real link, so poll until an off-site file link shows up."""
     from selenium.webdriver.common.by import By
@@ -137,8 +146,9 @@ def _wait_for_download_link(driver, config, base, limit: int = 300) -> Optional[
     deadline = time.time() + limit
     while time.time() < deadline:
         try:
-            elements = (driver.find_elements(By.CSS_SELECTOR, "a.js-download-link[href]")
-                        or driver.find_elements(By.CSS_SELECTOR, "a[href]"))
+            elements = driver.find_elements(
+                By.CSS_SELECTOR, "a.js-download-link[href]"
+            ) or driver.find_elements(By.CSS_SELECTOR, "a[href]")
             for element in elements:
                 href = element.get_attribute("href") or ""
                 if not href or href.startswith(base) or href.startswith("/"):
@@ -226,7 +236,8 @@ def _create_driver(config):
             options.add_argument("--headless=new")
         driver = arm(driver_cls(options=options))
         driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
         return driver
 
     def firefox():
@@ -253,9 +264,11 @@ def _create_driver(config):
 
 # ---- driving ----
 
-def resolve(session, config, record, driver_holder) -> Tuple[Optional[str], str]:
-    order = ({"member": ["member"], "libgen": ["libgen"], "browser": ["browser"]}
-             .get(config.backend, ["member", "libgen", "browser"]))
+
+def resolve(session, config, record, driver_holder) -> tuple[str | None, str]:
+    order = {"member": ["member"], "libgen": ["libgen"], "browser": ["browser"]}.get(
+        config.backend, ["member", "libgen", "browser"]
+    )
     for name in order:
         if name == "member":
             url = resolve_member(session, config, record)
@@ -268,8 +281,7 @@ def resolve(session, config, record, driver_holder) -> Tuple[Optional[str], str]
     return None, ""
 
 
-def save(session, config, url: str, path: Path, expected: int = 0,
-         expect_md5: str = "") -> bool:
+def save(session, config, url: str, path: Path, expected: int = 0, expect_md5: str = "") -> bool:
     if path.exists() and path.stat().st_size > 0:
         _print(f"  exists  {path.name}")
         return True
@@ -293,11 +305,11 @@ def save(session, config, url: str, path: Path, expected: int = 0,
                 written += len(chunk)
                 BOARD.update(path, written, total)
         if total and written < total * 0.98:
-            raise IOError(f"truncated: {written} of {total} bytes")
+            raise OSError(f"truncated: {written} of {total} bytes")
         # Anna's Archive keys every record by the file's own md5, so this catches
         # a mirror that answered with the wrong book.
         if expect_md5 and digest.hexdigest() != expect_md5.lower():
-            raise IOError(f"wrong file: md5 {digest.hexdigest()} != {expect_md5}")
+            raise OSError(f"wrong file: md5 {digest.hexdigest()} != {expect_md5}")
         temp.replace(path)
         BOARD.finish(path, f"  saved   {path.name} ({human_size(written)})")
         return True
@@ -308,7 +320,7 @@ def save(session, config, url: str, path: Path, expected: int = 0,
         return False
 
 
-def download_all(session, config, picks: List[Tuple[object, Path]]) -> Tuple[int, int]:
+def download_all(session, config, picks: list[tuple[object, Path]]) -> tuple[int, int]:
     """`picks` is a list of (record, destination path). Returns (ok, total)."""
     driver_holder = DriverHolder(config)
     # Libgen mints the download key against a session cookie, not just the md5 in
@@ -332,6 +344,7 @@ def download_all(session, config, picks: List[Tuple[object, Path]]) -> Tuple[int
 
     ok = 0
     try:
+
         def task(item):
             record, path = item
             try:
@@ -341,8 +354,7 @@ def download_all(session, config, picks: List[Tuple[object, Path]]) -> Tuple[int
                 own = worker_session()
                 url, backend = resolve(own, config, record, driver_holder)
                 if not url:
-                    _print(f"  FAILED  {path.name}: no download link found "
-                           f"({record.md5})")
+                    _print(f"  FAILED  {path.name}: no download link found ({record.md5})")
                     return False
                 _print(f"  via {backend}: {path.name}")
                 return save(own, config, url, path, record.size, record.md5)
@@ -361,7 +373,7 @@ def download_all(session, config, picks: List[Tuple[object, Path]]) -> Tuple[int
     return ok, len(picks)
 
 
-def _duplicate_paths(picks) -> List[Tuple[Path, int]]:
+def _duplicate_paths(picks) -> list[tuple[Path, int]]:
     counts = {}
     for _, path in picks:
         key = str(path).casefold()  # Windows paths are case-insensitive

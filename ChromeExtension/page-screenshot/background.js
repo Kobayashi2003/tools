@@ -14,7 +14,8 @@ const CAPTURE_INTERVAL_MS = 550;
 const MAX_CANVAS_DIMENSION = 32000;
 const MAX_CANVAS_AREA = 268000000;
 
-const RESTRICTED_URL = /^(chrome|edge|about|chrome-extension):|^https:\/\/chrome\.google\.com\/webstore/;
+const RESTRICTED_URL =
+  /^(chrome|edge|about|chrome-extension):|^https:\/\/chrome\.google\.com\/webstore/;
 
 let capturing = false;
 
@@ -23,7 +24,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const run = msg.mode === 'visible' ? captureVisibleOnly : captureFullPage;
   run(msg.tabId)
     .then(sendResponse)
-    .catch((err) => sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }));
+    .catch(err =>
+      sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }),
+    );
   return true; // async response
 });
 
@@ -68,7 +71,7 @@ async function captureFullPage(tabId) {
 
     for (let i = 0; i < targets.length; i++) {
       const started = Date.now();
-      const actualY = await execIn(tabId, scrollTo, [targets[i]]);
+      const actualY = await execIn(tabId, scrollPageTo, [targets[i]]);
       if (actualY === lastY && shots.length > 0) break; // already at the bottom, nothing new to capture
       await sleep(Math.max(0, CAPTURE_INTERVAL_MS - (Date.now() - started)));
 
@@ -101,7 +104,7 @@ async function captureFullPage(tabId) {
 async function captureWithRetry(windowId) {
   try {
     return await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
-  } catch (err) {
+  } catch {
     // Most likely the per-second capture quota; back off once and retry.
     await sleep(1000);
     return chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
@@ -109,7 +112,7 @@ async function captureWithRetry(windowId) {
 }
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function execIn(tabId, func, args = []) {
@@ -189,10 +192,17 @@ function prepare() {
   }
   window.__fpsHidden = hidden;
 
-  return { rect, contentHeight, step: rect.height, viewportWidth, viewportHeight, dpr: window.devicePixelRatio || 1 };
+  return {
+    rect,
+    contentHeight,
+    step: rect.height,
+    viewportWidth,
+    viewportHeight,
+    dpr: window.devicePixelRatio || 1,
+  };
 }
 
-function scrollTo(y) {
+function scrollPageTo(y) {
   if (window.__fpsScrollMode === 'element' && window.__fpsScrollRoot) {
     window.__fpsScrollRoot.scrollTop = y;
     return window.__fpsScrollRoot.scrollTop;
@@ -241,7 +251,7 @@ function clamp(v, min, max) {
 // plain document-scroll mode, or just the inner container's box otherwise);
 // everything outside it is static chrome and is only drawn once, from shot 0.
 async function stitch(shots, metrics) {
-  const bitmaps = await Promise.all(shots.map((s) => dataUrlToBitmap(s.dataUrl)));
+  const bitmaps = await Promise.all(shots.map(s => dataUrlToBitmap(s.dataUrl)));
   const dpr = metrics.dpr;
   const vw = bitmaps[0].width;
   const vh = bitmaps[0].height;
@@ -270,16 +280,28 @@ async function stitch(shots, metrics) {
   shots.forEach((s, i) => {
     ctx.drawImage(
       bitmaps[i],
-      rectLeft, rectTop, rectWidth, rectHeight,
-      rectLeft, rectTop + Math.round(s.y * dpr), rectWidth, rectHeight
+      rectLeft,
+      rectTop,
+      rectWidth,
+      rectHeight,
+      rectLeft,
+      rectTop + Math.round(s.y * dpr),
+      rectWidth,
+      rectHeight,
     );
   });
 
   if (chromeBelowHeight > 0) {
     ctx.drawImage(
       bitmaps[0],
-      0, rectTop + rectHeight, vw, chromeBelowHeight,
-      0, rectTop + contentBandHeight, vw, chromeBelowHeight
+      0,
+      rectTop + rectHeight,
+      vw,
+      chromeBelowHeight,
+      0,
+      rectTop + contentBandHeight,
+      vw,
+      chromeBelowHeight,
     );
   }
 
@@ -312,7 +334,7 @@ function suggestFilename(tab, prefix) {
     /* keep default */
   }
   const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = n => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   return `${prefix}-${host}-${stamp}.png`.replace(/[^a-z0-9.-]/gi, '_');
 }

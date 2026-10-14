@@ -1,14 +1,13 @@
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple
 
-from ..core.cache import Cache
-from ..core.formatter import Formatter
 from ..common.logger import Logger
+from ..core.cache import Cache
+from ..core.files import extract_files, get_config_value
+from ..core.formatter import Formatter
 from ..core.models import Artist, Config
 from ..core.storage import Storage
-from ..core.files import extract_files, get_config_value
 
 
 class Validator:
@@ -18,7 +17,9 @@ class Validator:
     via `data/validation_ignore.json`.
     """
 
-    def __init__(self, data_dir: str, cache: Cache, storage: Storage, config: Config, logger: Logger):
+    def __init__(
+        self, data_dir: str, cache: Cache, storage: Storage, config: Config, logger: Logger
+    ):
         self.data_dir = Path(data_dir)
         self.cache = cache
         self.storage = storage
@@ -29,30 +30,33 @@ class Validator:
     # ==================== Conflict detection ====================
 
     def _templates(self, artist: Artist, group: str = ""):
-        cv = lambda k: get_config_value(artist, self.config, k)
+        def cv(k):
+            return get_config_value(artist, self.config, k)
+
         return {
-            'download_dir': cv('download_dir'),
-            'artist_folder_template': cv('artist_folder_template'),
-            'post_folder_template': cv('post_folder_template'),
-            'file_template': cv('file_template'),
-            'date_format': cv('date_format'),
-            'rename_images_only': cv('rename_images_only'),
+            "download_dir": cv("download_dir"),
+            "artist_folder_template": cv("artist_folder_template"),
+            "post_folder_template": cv("post_folder_template"),
+            "file_template": cv("file_template"),
+            "date_format": cv("date_format"),
+            "rename_images_only": cv("rename_images_only"),
             # Must agree with Downloader._artist_dir, or every file looks missing.
-            'group': group,
+            "group": group,
         }
 
     @staticmethod
     def _artist_dir(artist: Artist, t) -> Path:
-        return Formatter.artist_dir(t['download_dir'], artist,
-                                    t['artist_folder_template'], t['group'])
+        return Formatter.artist_dir(
+            t["download_dir"], artist, t["artist_folder_template"], t["group"]
+        )
 
-    def find_conflicts(self, artists: List[Artist]) -> List[Tuple[str, List[str]]]:
+    def find_conflicts(self, artists: list[Artist]) -> list[tuple[str, list[str]]]:
         """`[(path, [ids])]` for every path claimed by more than one item."""
-        artist_paths = defaultdict(list)   # path -> [artist_id]
-        post_paths = defaultdict(list)     # path -> ["artist:post"]
-        file_paths = defaultdict(list)     # path -> ["artist:post:name"]
+        artist_paths = defaultdict(list)  # path -> [artist_id]
+        post_paths = defaultdict(list)  # path -> ["artist:post"]
+        file_paths = defaultdict(list)  # path -> ["artist:post:name"]
 
-        groups = self.storage.artist_groups()   # read once, not per artist
+        groups = self.storage.artist_groups()  # read once, not per artist
         for artist in artists:
             t = self._templates(artist, groups.get(artist.id, ""))
             artist_dir = self._artist_dir(artist, t)
@@ -62,13 +66,19 @@ class Validator:
                 files = extract_files(post)
                 if not files:
                     continue
-                post_folder = Formatter.post_folder(post, t['post_folder_template'], t['date_format'])
+                post_folder = Formatter.post_folder(
+                    post, t["post_folder_template"], t["date_format"]
+                )
                 post_dir = artist_dir / post_folder
                 post_paths[str(post_dir)].append(f"{artist.id}:{post.id}")
 
-                names = Formatter.file_names([f['name'] for f in files], t['file_template'],
-                                             t['rename_images_only'], self.config.image_extensions)
-                for f, name in zip(files, names):
+                names = Formatter.file_names(
+                    [f["name"] for f in files],
+                    t["file_template"],
+                    t["rename_images_only"],
+                    self.config.image_extensions,
+                )
+                for f, name in zip(files, names, strict=False):
                     file_paths[str(post_dir / name)].append(f"{artist.id}:{post.id}:{f['name']}")
 
         conflicts = []
@@ -81,31 +91,33 @@ class Validator:
 
     # ==================== Ignore management ====================
 
-    def load_ignores(self) -> Dict:
+    def load_ignores(self) -> dict:
         if not self.ignore_file.exists():
             return {}
         try:
-            data = json.loads(self.ignore_file.read_text(encoding='utf-8'))
+            data = json.loads(self.ignore_file.read_text(encoding="utf-8"))
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
 
-    def save_ignores(self, data: Dict):
-        self.ignore_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+    def save_ignores(self, data: dict):
+        self.ignore_file.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     def _filter_ignored(self, conflicts):
-        ignored = set(self.load_ignores().get('ignored_paths', []))
+        ignored = set(self.load_ignores().get("ignored_paths", []))
         return [(p, ids) for p, ids in conflicts if p not in ignored]
 
-    def ignore_paths(self, paths: List[str]):
+    def ignore_paths(self, paths: list[str]):
         data = self.load_ignores()
-        current = set(data.get('ignored_paths', []))
+        current = set(data.get("ignored_paths", []))
         current.update(paths)
-        data['ignored_paths'] = sorted(current)
+        data["ignored_paths"] = sorted(current)
         self.save_ignores(data)
 
     def clear_ignores(self):
-        self.save_ignores({'ignored_paths': []})
+        self.save_ignores({"ignored_paths": []})
 
     # ==================== Cache reset for conflicts ====================
 
@@ -115,7 +127,7 @@ class Validator:
         post_ids = set()
         for _path, ids in conflicts:
             for ident in ids:
-                parts = ident.split(':')
+                parts = ident.split(":")
                 if len(parts) >= 2 and parts[0] == artist.id:
                     post_ids.add(parts[1])
         for pid in post_ids:
@@ -126,8 +138,9 @@ class Validator:
 
     # ==================== Orphan folder cleanup ====================
 
-    def clean_post_folders(self, artist: Artist, quarantine: str = "_invalid",
-                           dry: bool = True) -> List[Tuple[str, str]]:
+    def clean_post_folders(
+        self, artist: Artist, quarantine: str = "_invalid", dry: bool = True
+    ) -> list[tuple[str, str]]:
         """Quarantine folders matching no cached post. Returns (from, to) moves."""
         t = self._templates(artist, self.storage.artist_group(artist.id))
         artist_dir = self._artist_dir(artist, t)
@@ -135,8 +148,9 @@ class Validator:
             return []
 
         expected = {
-            Formatter.post_folder(p, t['post_folder_template'], t['date_format'])
-            for p in self.cache.load_posts(artist.id) if extract_files(p)
+            Formatter.post_folder(p, t["post_folder_template"], t["date_format"])
+            for p in self.cache.load_posts(artist.id)
+            if extract_files(p)
         }
         quarantine_dir = artist_dir / quarantine
         moves = []

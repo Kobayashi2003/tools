@@ -33,16 +33,26 @@ def _int(name, default):
 class Settings:
     data_dir: Path
     port: int = 18050
-    proxy: str | None = None          # None: requests honours HTTP(S)_PROXY on its own
-    workers: int = 3                  # parallel metadata lookups
-    sukebei_delay: float = 1.5        # seconds between requests to sukebei
-    source_delay: float = 0.5         # seconds between page requests to FC2
-    paipancon_delay: float = 6.0      # paipancon answers HTTP 429 above ~10 pages per minute
-    watch_minutes: int = 30           # run Update when the last one is older than N minutes (0 = off)
+    proxy: str | None = None
+    """None: requests honours HTTP(S)_PROXY on its own."""
+    workers: int = 3
+    """Parallel metadata lookups."""
+    sukebei_delay: float = 1.5
+    """Seconds between requests to sukebei."""
+    source_delay: float = 0.5
+    """Seconds between page requests to FC2."""
+    paipancon_delay: float = 6.0
+    """Seconds; paipancon answers HTTP 429 above ~10 pages per minute."""
+    watch_minutes: int = 30
+    """Run Update when the last one is older than N minutes (0 = off)."""
     default_query: str = "FC2"
 
     def host_delays(self):
-        return {"sukebei.nyaa.si": self.sukebei_delay, "paipancon.com": self.paipancon_delay}
+        return {
+            "sukebei.nyaa.si": self.sukebei_delay,
+            "sukebei.cn.nyaa.net": self.sukebei_delay,
+            "paipancon.com": self.paipancon_delay,
+        }
 
     @classmethod
     def from_env(cls):

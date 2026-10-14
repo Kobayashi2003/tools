@@ -20,15 +20,19 @@ from pathlib import Path
 from .jsonio import read_json, write_json
 
 _UNITS = {
-    'B': 1,
-    'K': 1024, 'KB': 1024,
-    'M': 1024 ** 2, 'MB': 1024 ** 2,
-    'G': 1024 ** 3, 'GB': 1024 ** 3,
-    'T': 1024 ** 4, 'TB': 1024 ** 4,
+    "B": 1,
+    "K": 1024,
+    "KB": 1024,
+    "M": 1024**2,
+    "MB": 1024**2,
+    "G": 1024**3,
+    "GB": 1024**3,
+    "T": 1024**4,
+    "TB": 1024**4,
 }
 
 # Longest first: "MB" must win over the "B" that also ends the string.
-_SUFFIXES = ('TB', 'GB', 'MB', 'KB', 'T', 'G', 'M', 'K', 'B')
+_SUFFIXES = ("TB", "GB", "MB", "KB", "T", "G", "M", "K", "B")
 
 
 class BadSize(ValueError):
@@ -49,13 +53,13 @@ def parse_size(value, default: int = 0) -> int:
     if isinstance(value, (int, float)):
         return max(0, int(value))
 
-    text = str(value).strip().replace('_', '').replace(' ', '').upper()
+    text = str(value).strip().replace("_", "").replace(" ", "").upper()
     if not text:
         return default
     for suffix in _SUFFIXES:
         if text.endswith(suffix) and len(text) > len(suffix):
             try:
-                return max(0, int(float(text[:-len(suffix)]) * _UNITS[suffix]))
+                return max(0, int(float(text[: -len(suffix)]) * _UNITS[suffix]))
             except ValueError:
                 raise BadSize(f"not a size: {value!r}") from None
     try:
@@ -67,9 +71,9 @@ def parse_size(value, default: int = 0) -> int:
 def format_size(num: int) -> str:
     """Byte count -> short human string, spelled the way `parse_size` reads."""
     size = float(num or 0)
-    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
-        if size < 1024 or unit == 'TB':
-            return f"{int(size)}B" if unit == 'B' else f"{size:.1f}{unit}"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{int(size)}B" if unit == "B" else f"{size:.1f}{unit}"
         size /= 1024
     return f"{size:.1f}TB"
 
@@ -117,8 +121,9 @@ class RateLimiter:
                 return False
             with self._lock:
                 now = time.monotonic()
-                self._tokens = min(float(self.burst),
-                                   self._tokens + (now - self._updated) * self.rate)
+                self._tokens = min(
+                    float(self.burst), self._tokens + (now - self._updated) * self.rate
+                )
                 self._updated = now
                 # Integer take only: a fractional one would decrement the bucket
                 # without decrementing the debt, leaking tokens on every chunk.
@@ -166,8 +171,7 @@ class RequestLimiter:
                 return False
             with self._lock:
                 now = time.monotonic()
-                self._tokens = min(self.burst,
-                                   self._tokens + (now - self._updated) * self.rate)
+                self._tokens = min(self.burst, self._tokens + (now - self._updated) * self.rate)
                 self._updated = now
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
@@ -213,17 +217,18 @@ class ByteQuota:
             data = read_json(self.path, None) or {}
         except Exception:
             return  # A corrupt counter starts a fresh window; it never blocks.
-        started = float(data.get('started') or 0)
+        started = float(data.get("started") or 0)
         if started and 0 <= (time.time() - started) < self.window:
             self._started = started
-            self._used = max(0, int(data.get('used') or 0))
+            self._used = max(0, int(data.get("used") or 0))
 
     def _save(self):
         if not self.path:
             return
         try:
-            write_json(self.path, {'started': self._started, 'used': self._used,
-                                   'limit': self.limit})
+            write_json(
+                self.path, {"started": self._started, "used": self._used, "limit": self.limit}
+            )
         except Exception:
             pass  # Advisory bookkeeping; never fail a download over it.
 
@@ -275,8 +280,10 @@ class ByteQuota:
             return True
 
     def _spent_message(self) -> str:
-        return (f"quota spent: {format_size(self._used)} of "
-                f"{format_size(self.limit)}, resets in {self._resets_in_locked()}")
+        return (
+            f"quota spent: {format_size(self._used)} of "
+            f"{format_size(self.limit)}, resets in {self._resets_in_locked()}"
+        )
 
     def _resets_in_locked(self) -> str:
         left = max(0, int(self._started + self.window - time.time()))
@@ -284,9 +291,13 @@ class ByteQuota:
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {'enabled': self.enabled, 'used': self._used, 'limit': self.limit,
-                    'remaining': max(0, self.limit - self._used) if self.enabled else 0,
-                    'resets_in': self._resets_in_locked()}
+            return {
+                "enabled": self.enabled,
+                "used": self._used,
+                "limit": self.limit,
+                "remaining": max(0, self.limit - self._used) if self.enabled else 0,
+                "resets_in": self._resets_in_locked(),
+            }
 
 
 class Throttle:
@@ -296,12 +307,21 @@ class Throttle:
     one limit and miss the others.
     """
 
-    def __init__(self, max_concurrent=0, rate=0, burst=0, quota=0,
-                 state_path=None, window_hours: float = 24.0,
-                 requests_per_second=0, request_burst=0):
+    def __init__(
+        self,
+        max_concurrent=0,
+        rate=0,
+        burst=0,
+        quota=0,
+        state_path=None,
+        window_hours: float = 24.0,
+        requests_per_second=0,
+        request_burst=0,
+    ):
         self.max_concurrent = max(0, int(max_concurrent or 0))
-        self._semaphore = (threading.BoundedSemaphore(self.max_concurrent)
-                           if self.max_concurrent else None)
+        self._semaphore = (
+            threading.BoundedSemaphore(self.max_concurrent) if self.max_concurrent else None
+        )
         self.rate = RateLimiter(rate, burst)
         self.requests = RequestLimiter(requests_per_second, request_burst)
         self.quota = ByteQuota(quota, state_path, window_hours)
@@ -337,11 +357,13 @@ class Throttle:
         return self.rate.charge(amount, should_stop)
 
     def describe(self) -> str:
-        rate = f"{format_size(self.rate.rate)}/s" if self.rate.enabled else 'unlimited'
-        quota = format_size(self.quota.limit) if self.quota.enabled else 'unlimited'
-        reqs = f"{self.requests.rate:g}/s" if self.requests.enabled else 'unlimited'
-        return (f"concurrency={self.max_concurrent or 'unlimited'}, "
-                f"requests={reqs}, rate={rate}, quota={quota}")
+        rate = f"{format_size(self.rate.rate)}/s" if self.rate.enabled else "unlimited"
+        quota = format_size(self.quota.limit) if self.quota.enabled else "unlimited"
+        reqs = f"{self.requests.rate:g}/s" if self.requests.enabled else "unlimited"
+        return (
+            f"concurrency={self.max_concurrent or 'unlimited'}, "
+            f"requests={reqs}, rate={rate}, quota={quota}"
+        )
 
 
 def jittered(delay: float, jitter: float) -> float:

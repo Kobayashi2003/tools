@@ -1,7 +1,6 @@
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from ..common.jsonio import CorruptJSON, coerce, read_json, write_json
 from ..common.logger import Logger
@@ -37,32 +36,32 @@ class Cache:
 
     # ==================== Profile ====================
 
-    def save_profile(self, artist_id: str, data: Dict):
+    def save_profile(self, artist_id: str, data: dict):
         with self.lock:
             profile = coerce(Profile, data)
             profile.cached_at = datetime.now().isoformat()
             write_json(self._profile_path(artist_id), profile.__dict__)
 
-    def load_profile(self, artist_id: str) -> Optional[Profile]:
+    def load_profile(self, artist_id: str) -> Profile | None:
         with self.lock:
             data = read_json(self._profile_path(artist_id))
             return coerce(Profile, data) if data else None
 
     # ==================== Posts ====================
 
-    def _save_posts(self, artist_id: str, posts: List[Post]):
+    def _save_posts(self, artist_id: str, posts: list[Post]):
         write_json(self._posts_path(artist_id), [p.__dict__ for p in posts])
 
-    def save_posts(self, artist_id: str, posts: List[Post]):
+    def save_posts(self, artist_id: str, posts: list[Post]):
         with self.lock:
             self._save_posts(artist_id, posts)
 
-    def _load_posts_raw(self, artist_id: str) -> List[Post]:
+    def _load_posts_raw(self, artist_id: str) -> list[Post]:
         # A corrupt file must raise, never read as []: callers overwrite what
         # they read, and an empty read makes an artist look brand new.
         return [coerce(Post, item) for item in read_json(self._posts_path(artist_id), [])]
 
-    def load_posts(self, artist_id: str, apply_filters: bool = True) -> List[Post]:
+    def load_posts(self, artist_id: str, apply_filters: bool = True) -> list[Post]:
         with self.lock:
             posts = self._load_posts_raw(artist_id)
             if not apply_filters or not posts:
@@ -81,8 +80,14 @@ class Cache:
                 self.logger.cache_filtered(artist=artist.display_name(), removed=removed)
             return filtered
 
-    def update_post(self, artist_id: str, post_id: str, done: bool,
-                    failed_files: List[str] = None, content: str = None):
+    def update_post(
+        self,
+        artist_id: str,
+        post_id: str,
+        done: bool,
+        failed_files: list[str] | None = None,
+        content: str | None = None,
+    ):
         with self.lock:
             posts = self._load_posts_raw(artist_id)
             for p in posts:
@@ -100,33 +105,39 @@ class Cache:
 
     # ==================== Queries ====================
 
-    def get_undone(self, artist_id: str) -> List[Post]:
+    def get_undone(self, artist_id: str) -> list[Post]:
         # Lost posts are excluded: the server has no files for them, so a retry
         # is wasted. `download:lost` is the deliberate way to try them anyway.
-        return [p for p in self.load_posts(artist_id)
-                if (not p.done or p.failed_files) and not p.lost]
+        return [
+            p for p in self.load_posts(artist_id) if (not p.done or p.failed_files) and not p.lost
+        ]
 
-    def get_lost(self, artist_id: str) -> List[Post]:
+    def get_lost(self, artist_id: str) -> list[Post]:
         return [p for p in self.load_posts(artist_id) if p.lost and not p.done]
 
-    def stats(self, artist_id: str) -> Dict:
+    def stats(self, artist_id: str) -> dict:
         try:
             posts = self.load_posts(artist_id)
         except CorruptJSON as e:
-            self.logger.cache_corrupt(artist_id=artist_id, error=str(e), level='error')
-            return {'total': 0, 'done': 0, 'pending': 0, 'failed': 0, 'lost': 0,
-                    'corrupt': True}
+            self.logger.cache_corrupt(artist_id=artist_id, error=str(e), level="error")
+            return {"total": 0, "done": 0, "pending": 0, "failed": 0, "lost": 0, "corrupt": True}
         total = len(posts)
         done = sum(1 for p in posts if p.done)
         lost = sum(1 for p in posts if p.lost and not p.done)
         failed = sum(1 for p in posts if p.failed_files and not p.lost)
         # `pending` is work that can actually make progress: lost is set aside.
-        return {'total': total, 'done': done, 'pending': total - done - lost,
-                'failed': failed, 'lost': lost, 'corrupt': False}
+        return {
+            "total": total,
+            "done": done,
+            "pending": total - done - lost,
+            "failed": failed,
+            "lost": lost,
+            "corrupt": False,
+        }
 
     # ==================== Maintenance ====================
 
-    def reset_after_date(self, artist_id: str, after_date: str = None) -> int:
+    def reset_after_date(self, artist_id: str, after_date: str | None = None) -> int:
         with self.lock:
             posts = self._load_posts_raw(artist_id)
             count = 0
@@ -139,7 +150,7 @@ class Cache:
                     count += 1
             if count:
                 self._save_posts(artist_id, posts)
-                self.logger.cache_reset(artist_id=artist_id, after=after_date or 'all', count=count)
+                self.logger.cache_reset(artist_id=artist_id, after=after_date or "all", count=count)
             return count
 
     def deduplicate(self, artist_id: str) -> int:

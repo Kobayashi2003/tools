@@ -46,28 +46,35 @@ def _dispatch(ctx, command_map, text, logger):
 
     try:
         cmd.handler(ctx, **kwargs)
-        ctx.storage.add_history(cmd.name, success=True, artist_id=ctx._last_artist,
-                                params=kwargs)
+        ctx.storage.add_history(cmd.name, success=True, artist_id=ctx._last_artist, params=kwargs)
     except ExitShell:
         raise
     except KeyboardInterrupt:
-        print("\nCommand interrupted. Background downloads continue; "
-              "'cancel-all' stops them, 'exit' quits.")
+        print(
+            "\nCommand interrupted. Background downloads continue; "
+            "'cancel-all' stops them, 'exit' quits."
+        )
     except CommandError as e:
-        ctx.storage.add_history(cmd.name, success=False, artist_id=ctx._last_artist,
-                                params=kwargs, note=str(e))
+        ctx.storage.add_history(
+            cmd.name, success=False, artist_id=ctx._last_artist, params=kwargs, note=str(e)
+        )
         print(e)
     except CorruptJSON as e:
-        ctx.storage.add_history(cmd.name, success=False, artist_id=ctx._last_artist,
-                                params=kwargs, note=str(e))
-        print(f"Cache problem: {e}\n"
-              f"Nothing was overwritten. Restore that file from a backup, or delete "
-              f"it to re-fetch the creator from scratch.")
+        ctx.storage.add_history(
+            cmd.name, success=False, artist_id=ctx._last_artist, params=kwargs, note=str(e)
+        )
+        print(
+            f"Cache problem: {e}\n"
+            f"Nothing was overwritten. Restore that file from a backup, or delete "
+            f"it to re-fetch the creator from scratch."
+        )
     except Exception as e:
-        ctx.storage.add_history(cmd.name, success=False, artist_id=ctx._last_artist,
-                                params=kwargs, note=str(e))
-        logger.cli_command_failed(command=cmd.name, error=str(e),
-                                  trace=traceback.format_exc(), level='error')
+        ctx.storage.add_history(
+            cmd.name, success=False, artist_id=ctx._last_artist, params=kwargs, note=str(e)
+        )
+        logger.cli_command_failed(
+            command=cmd.name, error=str(e), trace=traceback.format_exc(), level="error"
+        )
         print(f"Error: {e}  (details in the log)")
     finally:
         ctx._last_artist = None
@@ -90,20 +97,21 @@ def _status_line(ctx):
     def line():
         st = ctx.scheduler.status()
         parts = []
-        if st['running']:
+        if st["running"]:
             names = [t.artist_id for t in ctx.scheduler.list_active()]
-            shown = ', '.join(_display(n) for n in names[:3])
+            shown = ", ".join(_display(n) for n in names[:3])
             if len(names) > 3:
                 shown += f" +{len(names) - 3}"
             parts.append(f"downloading {shown}")
-        if st['queued']:
+        if st["queued"]:
             parts.append(f"{st['queued']} queued")
         snap = ctx.downloader.notifier.snapshot()
-        if snap['files']:
+        if snap["files"]:
             parts.append(f"{len(snap['files'])} file(s) at {human_size(int(snap['speed']))}/s")
-        if st['completed']:
+        if st["completed"]:
             done = ctx.scheduler.completed
             failed = sum(1 for t in done if t.error)
             parts.append(f"{len(done)} finished" + (f", {failed} failed" if failed else ""))
         return " | ".join(parts) if parts else "idle - 'help' for commands"
+
     return line

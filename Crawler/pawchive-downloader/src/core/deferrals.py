@@ -22,7 +22,6 @@ import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
 
 from ..common.jsonio import read_json, write_json
 
@@ -37,15 +36,21 @@ class Deferrals:
     FLUSH_EVERY = 16
     FLUSH_SECONDS = 30.0
 
-    def __init__(self, path, first_days: float = 1.0, backoff: float = 2.0,
-                 cap_days: float = 30.0, logger=None):
+    def __init__(
+        self,
+        path,
+        first_days: float = 1.0,
+        backoff: float = 2.0,
+        cap_days: float = 30.0,
+        logger=None,
+    ):
         self.path = Path(path)
         self.first = max(0.0, float(first_days or 0))
         self.backoff = max(1.0, float(backoff or 1.0))
         self.cap = max(self.first, float(cap_days or 0))
         self.logger = logger
         self._lock = threading.Lock()
-        self._entries: Dict[str, dict] = {}
+        self._entries: dict[str, dict] = {}
         self._pending = 0
         self._flushed = time.monotonic()
         self._skipped = 0
@@ -74,8 +79,10 @@ class Deferrals:
         self._flushed = time.monotonic()
 
     def _maybe_flush_locked(self):
-        if (self._pending >= self.FLUSH_EVERY
-                or time.monotonic() - self._flushed >= self.FLUSH_SECONDS):
+        if (
+            self._pending >= self.FLUSH_EVERY
+            or time.monotonic() - self._flushed >= self.FLUSH_SECONDS
+        ):
             self._save_locked()
 
     def flush(self):
@@ -101,26 +108,26 @@ class Deferrals:
             entry = self._entries.get(key)
             if not entry:
                 return True
-            nxt = _parse(entry.get('next'))
+            nxt = _parse(entry.get("next"))
             if nxt is None or nxt <= datetime.now():
                 return True
             self._skipped += 1
             return False
 
-    def miss(self, key: str, name: str = "") -> Optional[dict]:
+    def miss(self, key: str, name: str = "") -> dict | None:
         """Record a 404 and push the next attempt out. Returns the new entry."""
         if not self.enabled or not key:
             return None
         now = datetime.now()
         with self._lock:
-            entry = self._entries.get(key) or {'first_seen': now.isoformat(), 'misses': 0}
-            entry['misses'] = int(entry.get('misses', 0)) + 1
-            entry['last_seen'] = now.isoformat()
-            wait = self._wait_days(entry['misses'])
-            entry['next'] = (now + timedelta(days=wait)).isoformat()
-            entry['wait_days'] = round(wait, 3)
+            entry = self._entries.get(key) or {"first_seen": now.isoformat(), "misses": 0}
+            entry["misses"] = int(entry.get("misses", 0)) + 1
+            entry["last_seen"] = now.isoformat()
+            wait = self._wait_days(entry["misses"])
+            entry["next"] = (now + timedelta(days=wait)).isoformat()
+            entry["wait_days"] = round(wait, 3)
             if name:
-                entry['name'] = name
+                entry["name"] = name
             self._entries[key] = entry
             self._pending += 1
             self._maybe_flush_locked()
@@ -152,22 +159,25 @@ class Deferrals:
     def snapshot(self) -> dict:
         with self._lock:
             now = datetime.now()
-            waiting = sum(1 for e in self._entries.values()
-                          if (_parse(e.get('next')) or now) > now)
-            return {'enabled': self.enabled, 'tracked': len(self._entries),
-                    'waiting': waiting, 'due': len(self._entries) - waiting,
-                    'first_days': self.first, 'backoff': self.backoff,
-                    'cap_days': self.cap}
+            waiting = sum(1 for e in self._entries.values() if (_parse(e.get("next")) or now) > now)
+            return {
+                "enabled": self.enabled,
+                "tracked": len(self._entries),
+                "waiting": waiting,
+                "due": len(self._entries) - waiting,
+                "first_days": self.first,
+                "backoff": self.backoff,
+                "cap_days": self.cap,
+            }
 
     def describe(self) -> str:
         if not self.enabled:
-            return 'disabled'
-        return (f"{self.first:g}d x{self.backoff:g} cap {self.cap:g}d, "
-                f"{len(self._entries)} tracked")
+            return "disabled"
+        return f"{self.first:g}d x{self.backoff:g} cap {self.cap:g}d, {len(self._entries)} tracked"
 
 
-def _parse(value) -> Optional[datetime]:
+def _parse(value) -> datetime | None:
     try:
         return datetime.fromisoformat(value) if value else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

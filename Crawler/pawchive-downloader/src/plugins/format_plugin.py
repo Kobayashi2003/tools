@@ -16,16 +16,19 @@ template variables ('' = download root).
 def format_artist_plugin(inner):
     def wrapper(artist, template, group=""):
         return inner(artist, template, group)
+
     return wrapper
 
 
 def format_post_plugin(inner):
     def wrapper(post, template, date_format):
         return inner(post, template, date_format)
+
     return wrapper
 
 
 def format_file_plugin(inner):
     def wrapper(name, idx, template):
         return inner(name, idx, template)
+
     return wrapper

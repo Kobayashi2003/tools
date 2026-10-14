@@ -2,16 +2,18 @@
 """FC2 Sukebei Browser command line."""
 
 import argparse
+import io
 import sys
 import time
 
 for stream in (sys.stdout, sys.stderr):
-    if hasattr(stream, "reconfigure"):
+    if isinstance(stream, io.TextIOWrapper):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def port_in_use(port):
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         return probe.connect_ex(("127.0.0.1", port)) == 0
 
@@ -20,10 +22,14 @@ def serve(settings, port):
     # Check before the app starts: a second instance would otherwise start crawling the same
     # library and, when its bind fails, remove the running server's PID file on the way out.
     if port_in_use(port):
-        print(f"Port {port} is already in use — the server is probably running: http://127.0.0.1:{port}/")
+        print(
+            f"Port {port} is already in use — the server is probably running: http://127.0.0.1:{port}/"
+        )
         return 1
     import uvicorn
+
     from app.server import create_app
+
     uvicorn.run(create_app(settings), host="127.0.0.1", port=port, workers=1)
     return 0
 
@@ -32,12 +38,14 @@ def crawl(settings, kind, blocks=5, query=""):
     """Run one crawl job and wait until every queued title has its metadata."""
     import dataclasses
 
+    from app.crawler import Crawler
     from app.media import MediaCache
     from app.net import Http
     from app.store import Store
-    from app.crawler import Crawler
 
-    settings = dataclasses.replace(settings, watch_minutes=0)   # no timer-started jobs alongside this one
+    settings = dataclasses.replace(
+        settings, watch_minutes=0
+    )  # no timer-started jobs alongside this one
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     store = Store(settings.data_dir / "library.db")
     http = Http(delay=settings.source_delay, delays=settings.host_delays(), proxy=settings.proxy)
@@ -61,7 +69,9 @@ def crawl(settings, kind, blocks=5, query=""):
         crawler.close()
         stats = store.stats()
         store.close()
-    print(f"Library: {stats['titles']} title(s), {stats['torrents']} torrent(s), {stats['failed']} failed.")
+    print(
+        f"Library: {stats['titles']} title(s), {stats['torrents']} torrent(s), {stats['failed']} failed."
+    )
     return 0
 
 
@@ -103,11 +113,18 @@ def main():
     commands = parser.add_subparsers(dest="command")
     serve_cmd = commands.add_parser("serve", help="Start the local Web UI (default)")
     serve_cmd.add_argument("--port", type=int, default=settings.port)
-    crawl_cmd = commands.add_parser("crawl", help="Grow the library without the UI, then fetch metadata")
-    crawl_cmd.add_argument("kind", choices=("update", "older", "search"),
-                           help="update: new uploads; older: history blocks; search: a custom query")
+    crawl_cmd = commands.add_parser(
+        "crawl", help="Grow the library without the UI, then fetch metadata"
+    )
+    crawl_cmd.add_argument(
+        "kind",
+        choices=("update", "older", "search"),
+        help="update: new uploads; older: history blocks; search: a custom query",
+    )
     crawl_cmd.add_argument("query", nargs="?", default="", help="sukebei query for `search`")
-    crawl_cmd.add_argument("--blocks", type=int, default=5, help="history blocks for `older` (default 5)")
+    crawl_cmd.add_argument(
+        "--blocks", type=int, default=5, help="history blocks for `older` (default 5)"
+    )
     commands.add_parser("doctor", help="Check that sukebei, FC2 and paipancon answer and parse")
     args = parser.parse_args()
 

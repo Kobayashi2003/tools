@@ -30,9 +30,9 @@ def _load_module(module_filename: str) -> types.ModuleType:
         return cached[1]
 
     # Name it after its path so its relative imports resolve.
-    parts = pathlib.Path(module_filename).with_suffix('').parts
-    full_name = '.'.join(parts)
-    package = '.'.join(parts[:-1]) or None
+    parts = pathlib.Path(module_filename).with_suffix("").parts
+    full_name = ".".join(parts)
+    package = ".".join(parts[:-1]) or None
 
     spec = importlib.util.spec_from_file_location(full_name, path)
     if spec is None or spec.loader is None:
@@ -59,7 +59,9 @@ def dynamic_get(var_name: str, module_filename: str, default=None) -> Any:
     return value
 
 
-def dynamic_call(func_name: str, module_filename: str, *args: Any, default=None, **kwargs: Any) -> Any:
+def dynamic_call(
+    func_name: str, module_filename: str, *args: Any, default=None, **kwargs: Any
+) -> Any:
     """Call a function from a file, reloading it each call.
 
     With no args, returns the function itself so it can be used as a decorator.
@@ -75,7 +77,9 @@ def dynamic_call(func_name: str, module_filename: str, *args: Any, default=None,
     if func is None:
         func = default
     if not callable(func):
-        raise AttributeError(f"Function '{func_name}' not found or not callable in {module_filename}")
+        raise AttributeError(
+            f"Function '{func_name}' not found or not callable in {module_filename}"
+        )
     if not args and not kwargs:
         return func  # decorator / late-binding use
     return func(*args, **kwargs)
@@ -87,12 +91,15 @@ def plugin_hook(func_name: str, module_filename: str):
     Resolving per-call is what makes plugin edits hot-reload. With no plugin,
     `func` runs unchanged.
     """
+
     def decorator(func):
         def wrapper(*args, **kwargs):
             plugin = dynamic_call(func_name, module_filename, default=lambda inner: inner)
             return plugin(func)(*args, **kwargs)
-        wrapper.__name__ = getattr(func, '__name__', func_name)
+
+        wrapper.__name__ = getattr(func, "__name__", func_name)
         return wrapper
+
     return decorator
 
 

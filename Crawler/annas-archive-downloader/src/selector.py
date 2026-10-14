@@ -1,26 +1,21 @@
 """Interactive checkbox list over the per-volume picks.
 
 Uses prompt_toolkit for a real arrow-keys-and-space checkbox when there is a
-tty and the package is installed; otherwise falls back to a numbered list plus
+tty; otherwise falls back to a numbered list plus
 a selection expression, which also covers piped/CI use.
 """
 
 import sys
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
 
-try:
-    from prompt_toolkit.application import Application
-    from prompt_toolkit.formatted_text import to_formatted_text
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.layout import Layout, Window
-    from prompt_toolkit.layout.controls import FormattedTextControl
-    from prompt_toolkit.layout.dimension import Dimension
-    from prompt_toolkit.data_structures import Point
-    from prompt_toolkit.styles import Style
-    HAS_PROMPT_TOOLKIT = True
-except Exception:  # pragma: no cover - optional dependency
-    HAS_PROMPT_TOOLKIT = False
-
+from prompt_toolkit.application import Application
+from prompt_toolkit.data_structures import Point
+from prompt_toolkit.formatted_text import to_formatted_text
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.styles import Style
 
 _HELP = "↑/↓ move · space toggle · a all · n none · i invert · enter download · q cancel"
 
@@ -34,13 +29,14 @@ _STYLE = {
 }
 
 
-def choose(rows: Sequence[str], preselected: Optional[Sequence[bool]] = None,
-           header: str = "") -> Optional[List[int]]:
+def choose(
+    rows: Sequence[str], preselected: Sequence[bool] | None = None, header: str = ""
+) -> list[int] | None:
     """Return the indexes the user checked, or None if they cancelled."""
     if not rows:
         return []
     selected = list(preselected) if preselected is not None else [True] * len(rows)
-    if HAS_PROMPT_TOOLKIT and _is_tty():
+    if _is_tty():
         return _checkbox_app(rows, selected, header)
     return _text_prompt(rows, selected, header)
 
@@ -52,7 +48,7 @@ def _is_tty() -> bool:
         return False
 
 
-def _checkbox_app(rows, selected, header) -> Optional[List[int]]:
+def _checkbox_app(rows, selected, header) -> list[int] | None:
     state = {"cursor": 0, "cancelled": False}
 
     def render():
@@ -63,12 +59,15 @@ def _checkbox_app(rows, selected, header) -> Optional[List[int]]:
         for index, row in enumerate(rows):
             at_cursor = index == state["cursor"]
             fragments.append(("class:cursor" if at_cursor else "", "❯ " if at_cursor else "  "))
-            fragments.append(("class:mark" if selected[index] else "class:dim",
-                              "[x] " if selected[index] else "[ ] "))
+            fragments.append(
+                (
+                    "class:mark" if selected[index] else "class:dim",
+                    "[x] " if selected[index] else "[ ] ",
+                )
+            )
             fragments.append(("" if selected[index] else "class:dim", row))
             fragments.append(("", "\n"))
-        fragments.append(("class:help",
-                          f"\n{sum(selected)} of {len(rows)} selected"))
+        fragments.append(("class:help", f"\n{sum(selected)} of {len(rows)} selected"))
         return to_formatted_text(fragments)
 
     # render() emits: [header] then the help line then a blank line, so the first
@@ -80,8 +79,7 @@ def _checkbox_app(rows, selected, header) -> Optional[List[int]]:
         # Keeps the highlighted row inside the viewport as the list scrolls.
         return Point(x=0, y=state["cursor"] + first_row_line)
 
-    control = FormattedTextControl(render, focusable=True,
-                                   get_cursor_position=cursor_position)
+    control = FormattedTextControl(render, focusable=True, get_cursor_position=cursor_position)
     window = Window(control, height=Dimension(preferred=len(rows) + 4), wrap_lines=False)
 
     keys = KeyBindings()
@@ -141,16 +139,21 @@ def _checkbox_app(rows, selected, header) -> Optional[List[int]]:
         state["cancelled"] = True
         event.app.exit()
 
-    Application(layout=Layout(window), key_bindings=keys,
-                style=Style.from_dict(_STYLE), full_screen=False,
-                mouse_support=False, erase_when_done=False).run()
+    Application(
+        layout=Layout(window),
+        key_bindings=keys,
+        style=Style.from_dict(_STYLE),
+        full_screen=False,
+        mouse_support=False,
+        erase_when_done=False,
+    ).run()
 
     if state["cancelled"]:
         return None
     return [index for index, value in enumerate(selected) if value]
 
 
-def _text_prompt(rows, selected, header) -> Optional[List[int]]:
+def _text_prompt(rows, selected, header) -> list[int] | None:
     if header:
         print(header)
     for index, row in enumerate(rows, 1):
@@ -160,7 +163,7 @@ def _text_prompt(rows, selected, header) -> Optional[List[int]]:
     while True:
         try:
             answer = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             return None
         if answer.lower() in ("q", "quit", "cancel"):
@@ -172,7 +175,7 @@ def _text_prompt(rows, selected, header) -> Optional[List[int]]:
         print("Could not read that selection, try again.")
 
 
-def _apply_expression(answer: str, selected: List[bool]) -> bool:
+def _apply_expression(answer: str, selected: list[bool]) -> bool:
     lowered = answer.lower()
     if lowered in ("all", "a", "*"):
         selected[:] = [True] * len(selected)

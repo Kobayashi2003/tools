@@ -1,25 +1,25 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional
-
 
 # ==================== Core Data Models ====================
+
 
 @dataclass
 class Artist:
     """A tracked creator. `id` is `{service}_{user_id}` and matches kemono's ids."""
+
     id: str
     service: str
     user_id: str
     name: str
     url: str = ""
     alias: str = ""
-    last_date: Optional[str] = None
-    timer: Optional[Dict] = None
+    last_date: str | None = None
+    timer: dict | None = None
     ignore: bool = False
     completed: bool = False
-    config: Dict = field(default_factory=dict)
-    filter: Dict = field(default_factory=dict)
+    config: dict = field(default_factory=dict)
+    filter: dict = field(default_factory=dict)
 
     def display_name(self) -> str:
         return self.alias or self.name
@@ -28,6 +28,7 @@ class Artist:
 @dataclass
 class Post:
     """A single post and its download state."""
+
     id: str
     user: str
     service: str
@@ -35,11 +36,11 @@ class Post:
     content: str = ""
     published: str = ""
     added: str = ""
-    edited: Optional[str] = None
-    file: Optional[Dict] = None
-    attachments: List[Dict] = field(default_factory=list)
+    edited: str | None = None
+    file: dict | None = None
+    attachments: list[dict] = field(default_factory=list)
     done: bool = False
-    failed_files: List[str] = field(default_factory=list)
+    failed_files: list[str] = field(default_factory=list)
     # Upstream has only metadata, no file bytes (`has_full: false`); kept out of
     # the normal download/undone flow. Set on sync, cleared by `sync-lost` or a
     # successful download. Default False so an old cache is never silently lost.
@@ -50,10 +51,11 @@ class Post:
 class Profile:
     """Creator profile returned by the API. Pawchive does not expose a post
     count, so `updated` is what we diff against to detect changes cheaply."""
+
     id: str
     name: str = ""
     service: str = ""
-    public_id: Optional[str] = None
+    public_id: str | None = None
     indexed: str = ""
     updated: str = ""
     cached_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -61,9 +63,11 @@ class Profile:
 
 # ==================== Configuration ====================
 
+
 @dataclass
 class Config:
     """Application configuration (global; artists may override a subset)."""
+
     # Directories
     data_dir: str = "data"
     cache_dir: str = "cache"
@@ -71,13 +75,13 @@ class Config:
     download_dir: str = "downloads"
 
     # Scheduling & filtering
-    global_timer: Optional[Dict] = None
-    global_filter: Dict = field(default_factory=dict)
+    global_timer: dict | None = None
+    global_filter: dict = field(default_factory=dict)
 
     # `links`/`links-all` view filter; empty = show everything. Keys:
     # allowed_domains (keep only these), reviewed_artists (hide, links already
     # gone through), reviewed_before (posts newer than this still surface).
-    links_filter: Dict = field(default_factory=dict)
+    links_filter: dict = field(default_factory=dict)
 
     # Pawchive has migrated domains before (.st -> .pw).
     api_base: str = "https://pawchive.pw/api/v1"
@@ -132,7 +136,7 @@ class Config:
     # 500. Empty = built-in behaviour: 404 permanent, everything else retried.
     #
     #   {"429": {"action": "retry", "attempts": 10, "delay": 60, "backoff": 1}}
-    status_policies: Dict = field(default_factory=dict)
+    status_policies: dict = field(default_factory=dict)
 
     # `updated` is a bulk-import batch timestamp and posts get inserted after
     # it, so trusting it can skip new posts. `page_workers` is speed only.
@@ -197,27 +201,30 @@ class Config:
     save_empty_posts: bool = False
     rename_images_only: bool = True
     image_extensions: set = field(
-        default_factory=lambda: {'.jpe', '.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        default_factory=lambda: {".jpe", ".jpg", ".jpeg", ".png", ".gif", ".webp"}
     )
 
 
 # ==================== History ====================
+
 
 @dataclass
 class HistoryRecord:
     command: str
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     success: bool = True
-    artist_id: Optional[str] = None
-    params: Dict = field(default_factory=dict)
+    artist_id: str | None = None
+    params: dict = field(default_factory=dict)
     note: str = ""
 
 
 # ==================== Download Results ====================
 
+
 @dataclass
 class DownloadResult:
     """Outcome of downloading one artist."""
+
     artist_id: str
     success: bool = True
     posts_downloaded: int = 0
@@ -226,10 +233,12 @@ class DownloadResult:
 
 # ==================== Scheduler Models ====================
 
+
 class TaskType:
     MANUAL = "manual"
     SCHEDULED = "scheduled"
-    SYNC = "sync"        # refresh the post list only, no files
+    SYNC = "sync"
+    """Refresh the post list only, no files."""
 
 
 class TaskStatus:
@@ -242,23 +251,26 @@ class TaskStatus:
 @dataclass
 class DownloadTask:
     artist_id: str
-    from_date: Optional[str] = None
-    until_date: Optional[str] = None
-    deep: bool = False               # SYNC only: also re-flag edited posts
+    from_date: str | None = None
+    until_date: str | None = None
+    deep: bool = False
+    """SYNC only: also re-flag edited posts."""
     # Download subsets. `lost` forces a retry of posts upstream has no files for;
     # `pending`/`failed` split the undone set into never-tried and previously
     # failed. None or both of the latter means the whole undone set.
     lost: bool = False
     pending: bool = False
     failed: bool = False
-    recover_lost: bool = False       # SYNC only: un-mark posts the server has restored
+    recover_lost: bool = False
+    """SYNC only: un-mark posts the server has restored."""
     task_type: str = TaskType.MANUAL
     status: str = TaskStatus.QUEUED
     created_at: datetime = field(default_factory=datetime.now)
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    error: Optional[str] = None
-    note: str = ""                   # one-line outcome, shown by `tasks`
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    note: str = ""
+    """One-line outcome, shown by `tasks`."""
 
     def __eq__(self, other):
         return isinstance(other, DownloadTask) and (
@@ -272,30 +284,35 @@ class DownloadTask:
 
 # ==================== External Links ====================
 
+
 @dataclass
 class ExternalLink:
     """A URL found in a post's content/body."""
+
     url: str
     domain: str
     protocol: str
     post_id: str
     post_title: str
     post_published: str
-    post_edited: Optional[str]
+    post_edited: str | None
     artist_id: str
 
 
 # ==================== Migration (template re-layout) ====================
 
+
 class MigrationType:
     POST = "post"
     FILE = "file"
-    ARTIST = "artist"   # whole creator folder, moved to match the templates
+    ARTIST = "artist"
+    """Whole creator folder, moved to match the templates."""
 
 
 @dataclass
 class MigrationConfig:
     """A snapshot of the path templates used to compute old/new locations."""
+
     download_dir: str
     artist_folder_template: str
     post_folder_template: str
@@ -309,16 +326,19 @@ class MigrationConfig:
 class MigrationPlan:
     migration_type: str
     total_items: int = 0
-    mappings: List[tuple] = field(default_factory=list)   # (old, new, item_id)
-    conflicts: List[tuple] = field(default_factory=list)  # (path, [ids])
-    skipped: List[tuple] = field(default_factory=list)    # (item_id, reason)
+    mappings: list[tuple] = field(default_factory=list)
+    """(old, new, item_id)"""
+    conflicts: list[tuple] = field(default_factory=list)
+    """(path, [ids])"""
+    skipped: list[tuple] = field(default_factory=list)
+    """(item_id, reason)"""
 
     @property
     def success_count(self) -> int:
         return len(self.mappings)
 
     @staticmethod
-    def empty(migration_type: str) -> 'MigrationPlan':
+    def empty(migration_type: str) -> MigrationPlan:
         return MigrationPlan(migration_type=migration_type)
 
 
@@ -327,4 +347,5 @@ class MigrationResult:
     migration_type: str
     total: int
     success: int = 0
-    failed: List[tuple] = field(default_factory=list)  # (old, new, item_id, error)
+    failed: list[tuple] = field(default_factory=list)
+    """(old, new, item_id, error)"""

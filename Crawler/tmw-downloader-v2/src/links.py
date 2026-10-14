@@ -14,7 +14,6 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict
 
 from .models import expiry_of
 
@@ -26,7 +25,7 @@ WRITE_EVERY = 5.0
 class LinkStore:
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.urls: Dict[str, str] = {}
+        self.urls: dict[str, str] = {}
         self._dirty = False
         self._saved_at = 0.0
         self.load()
@@ -36,7 +35,7 @@ class LinkStore:
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             return
         now = time.time()
         for key, url in (data.get("urls") or {}).items():

@@ -30,18 +30,32 @@ class FakeHttp:
     def __init__(self):
         self.pages = {
             sukebei.search_url("FC2"): fixtures.listing_page(
-                [fixtures.listing_row(4732176, "FC2-PPV-4802589 1080p", "22" * 20, seeders=2),
-                 fixtures.listing_row(4732175, "fc2-ppv-4802589 first", "11" * 20, seeders=9),
-                 fixtures.listing_row(4732100, "FC2 PPV 1289686 old", "33" * 20, seeders=0),
-                 fixtures.listing_row(4732099, "No code here", "44" * 20)],
-                total=4, has_next=False),
+                [
+                    fixtures.listing_row(4732176, "FC2-PPV-4802589 1080p", "22" * 20, seeders=2),
+                    fixtures.listing_row(4732175, "fc2-ppv-4802589 first", "11" * 20, seeders=9),
+                    fixtures.listing_row(4732100, "FC2 PPV 1289686 old", "33" * 20, seeders=0),
+                    fixtures.listing_row(4732099, "No code here", "44" * 20),
+                ],
+                total=4,
+                has_next=False,
+            ),
             fc2.article_url("4802589"): fixtures.FC2_ARTICLE,
             fc2.article_url("1289686"): fixtures.FC2_REMOVED,
             paipancon.detail_url("4802589"): fixtures.PAIPANCON,
             sukebei.view_url(4732175): fixtures.VIEW,
         }
-        self.json_pages = {f"{fc2.BASE}/api/v2/videos/4802589/sample": {"path": "https://vip.fc2.com/s.mp4?mid=x", "code": 200}}
-        self.media = {"https://paipancon.com/fc2daily/data/FC2-PPV-4802589/cover.jpg": (b"\xff\xd8jpeg", "image/jpeg")}
+        self.json_pages = {
+            f"{fc2.BASE}/api/v2/videos/4802589/sample": {
+                "path": "https://vip.fc2.com/s.mp4?mid=x",
+                "code": 200,
+            }
+        }
+        self.media = {
+            "https://paipancon.com/fc2daily/data/FC2-PPV-4802589/cover.jpg": (
+                b"\xff\xd8jpeg",
+                "image/jpeg",
+            )
+        }
         self.requests = []
         self.last_headers = None
 

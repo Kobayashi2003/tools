@@ -37,17 +37,19 @@ import time
 from . import fc2, paipancon, sukebei
 from .net import FetchError
 
-PER_JOB_PAGE_LIMIT = -(-sukebei.MAX_RESULTS // sukebei.PAGE_SIZE)   # 14: sukebei stops at 1000 results
+PER_JOB_PAGE_LIMIT = -(
+    -sukebei.MAX_RESULTS // sukebei.PAGE_SIZE
+)  # 14: sukebei stops at 1000 results
 AUTO_RETRY_ATTEMPTS = 3
 AUTO_RETRY_SECONDS = 180
 STAGES = ("fc2", "pp")
-URGENT, NEW, HISTORY = 0, 1, 2              # queue priorities, lowest first
-BLOCK_DIGITS = 4                            # history blocks are 4-digit id prefixes,
-LAST_BLOCK = 10 ** (BLOCK_DIGITS - 1)       # 1000 ...
-FIRST_BLOCK = 10 ** BLOCK_DIGITS - 1        # ... 9999
+URGENT, NEW, HISTORY = 0, 1, 2  # queue priorities, lowest first
+BLOCK_DIGITS = 4  # history blocks are 4-digit id prefixes,
+LAST_BLOCK = 10 ** (BLOCK_DIGITS - 1)  # 1000 ...
+FIRST_BLOCK = 10**BLOCK_DIGITS - 1  # ... 9999
 TOTAL_BLOCKS = FIRST_BLOCK - LAST_BLOCK + 1
 MAX_PREFIX_DIGITS = 8
-UPDATE_RETRY_SECONDS = 600                  # after a failed or cancelled automatic Update
+UPDATE_RETRY_SECONDS = 600  # after a failed or cancelled automatic Update
 
 
 class Cancelled(Exception):
@@ -80,8 +82,8 @@ class StageQueue:
 
     def __init__(self):
         self._heap = []
-        self._queued = {}                   # id -> (priority, order) of its live heap entry
-        self._taken = set()                 # ids handed to a worker and not done yet
+        self._queued = {}  # id -> (priority, order) of its live heap entry
+        self._taken = set()  # ids handed to a worker and not done yet
         self._order = itertools.count()
         self._cond = threading.Condition()
         self._closed = False
@@ -91,11 +93,13 @@ class StageQueue:
         """Queue `item`; returns True when it was not queued before."""
         with self._cond:
             current = self._queued.get(item)
-            if current is not None and (current[0] < priority or (current[0] == priority and not newest_first)):
+            if current is not None and (
+                current[0] < priority or (current[0] == priority and not newest_first)
+            ):
                 return False
             order = next(self._order)
             entry = (priority, -order if newest_first else order)
-            self._queued[item] = entry                  # older heap entries for item are now stale
+            self._queued[item] = entry  # older heap entries for item are now stale
             heapq.heappush(self._heap, (*entry, item))
             if current is None:
                 self.unfinished += 1
@@ -108,9 +112,9 @@ class StageQueue:
             while True:
                 while self._heap:
                     priority, order, item = heapq.heappop(self._heap)
-                    if self._queued.get(item) == (priority, order):     # skip superseded entries
+                    if self._queued.get(item) == (priority, order):  # skip superseded entries
                         del self._queued[item]
-                        self._taken.add(item)       # atomically: never seen as neither queued nor taken
+                        self._taken.add(item)  # atomically: never seen as neither queued nor taken
                         return item
                 if self._closed or not block:
                     return None
@@ -134,8 +138,11 @@ class StageQueue:
     def ids(self):
         """Queued ids in the order they will be taken."""
         with self._cond:
-            return [item for priority, order, item in sorted(self._heap)
-                    if self._queued.get(item) == (priority, order)]
+            return [
+                item
+                for priority, order, item in sorted(self._heap)
+                if self._queued.get(item) == (priority, order)
+            ]
 
     def __len__(self):
         with self._cond:
@@ -150,9 +157,9 @@ class Crawler:
         self.settings = settings
         self.log_lines = collections.deque(maxlen=300)
         self._queues = {stage: StageQueue() for stage in STAGES}
-        self._priority = {}          # id -> priority it carries through both stages
-        self._active = {}            # worker name -> fc2 id being fetched
-        self._reset_at = {}          # id -> monotonic time of its last refresh
+        self._priority = {}  # id -> priority it carries through both stages
+        self._active = {}  # worker name -> fc2 id being fetched
+        self._reset_at = {}  # id -> monotonic time of its last refresh
         self._stop = threading.Event()
         self._job = None
         self._job_lock = threading.Lock()
@@ -163,8 +170,11 @@ class Crawler:
 
     def start(self):
         self.http.on_retry = lambda host, error, wait: self.log(
-            f"{host}: {error}; retrying in {wait:.0f} s", "warn")
-        workers = [("fc2", f"fc2-{i + 1}") for i in range(self.settings.workers)] + [("pp", "paipancon")]
+            f"{host}: {error}; retrying in {wait:.0f} s", "warn"
+        )
+        workers = [("fc2", f"fc2-{i + 1}") for i in range(self.settings.workers)] + [
+            ("pp", "paipancon")
+        ]
         for stage, name in workers:
             thread = threading.Thread(target=self._worker, args=(stage,), name=name, daemon=True)
             thread.start()
@@ -219,8 +229,16 @@ class Crawler:
         """Re-fetch a title from every source and drop its cached media (e.g. placeholder covers)."""
         title = self.store.title(fc2_id)
         if title:
-            self.media.forget([title["cover"], title["cover_full"], title["grid"], *title["clips"],
-                               *(s["thumb"] for s in title["samples"]), *(s["full"] for s in title["samples"])])
+            self.media.forget(
+                [
+                    title["cover"],
+                    title["cover_full"],
+                    title["grid"],
+                    *title["clips"],
+                    *(s["thumb"] for s in title["samples"]),
+                    *(s["full"] for s in title["samples"]),
+                ]
+            )
         # A fetch already in flight for this title started before the reset; its result is dropped.
         self._reset_at[fc2_id] = time.monotonic()
         self.store.reset_sources(fc2_id, everything=True, reset_attempts=True)
@@ -256,8 +274,8 @@ class Crawler:
                     self.fetch_fc2(fc2_id, started)
                 else:
                     self.fetch_paipancon(fc2_id, started)
-            except Exception as exc:                     # never let one title kill a worker
-                if not self._stop.is_set():              # shutting down: the store may be closed
+            except Exception as exc:  # never let one title kill a worker
+                if not self._stop.is_set():  # shutting down: the store may be closed
                     self._save(fc2_id, stage, {f"{stage}_state": "error"}, str(exc), started)
                     self.log(f"FC2-PPV-{fc2_id}: {exc}", "error")
             finally:
@@ -295,9 +313,24 @@ class Crawler:
             return
         fields = {"fc2_state": "ok" if article else "removed"}
         if article:
-            fields.update({k: article[k] for k in (
-                "title", "seller", "seller_url", "released", "duration", "rating", "reviews", "tags",
-                "cover", "cover_full", "samples")})
+            fields.update(
+                {
+                    k: article[k]
+                    for k in (
+                        "title",
+                        "seller",
+                        "seller_url",
+                        "released",
+                        "duration",
+                        "rating",
+                        "reviews",
+                        "tags",
+                        "cover",
+                        "cover_full",
+                        "samples",
+                    )
+                }
+            )
         self._save(fc2_id, "fc2", fields, started=started)
 
     def fetch_paipancon(self, fc2_id, started=None):
@@ -307,7 +340,9 @@ class Crawler:
             self._save(fc2_id, "pp", {"pp_state": "error"}, str(exc), started)
             self.log(f"FC2-PPV-{fc2_id}: paipancon: {exc}", "warn")
             return
-        fields = {"pp_state": "ok" if pp and (pp["clips"] or pp["cover"]) else "missing"}
+        fields: dict[str, object] = {
+            "pp_state": "ok" if pp and (pp["clips"] or pp["cover"]) else "missing"
+        }
         if pp:
             fields.update(clips=pp["clips"], grid=pp["grid"])
             # paipancon fills whatever FC2 could not provide (typically removed articles).
@@ -327,24 +362,46 @@ class Crawler:
 
     # --- crawl jobs ---------------------------------------------------------------------
 
-    def start_job(self, kind, blocks=5, query="", pages=PER_JOB_PAGE_LIMIT, check_files=False):
+    def start_job(self, kind, blocks=5, query="", pages=None, check_files=False, source=None):
         """Start an `update`, `older` (history blocks) or `search` job; one runs at a time."""
         runners = {"update": self._run_update, "older": self._run_older, "search": self._run_search}
         if kind not in runners:
             raise ValueError(f"Unknown job {kind!r}")
+        source = source or self.store.get_meta("crawl_source", "nyaa")
+        if source not in sukebei.SOURCES:
+            raise ValueError(f"Unknown source {source!r}")
+        page_limit = max(1, int(pages)) if pages is not None else None
+        if source == "nyaa":
+            page_limit = min(page_limit or PER_JOB_PAGE_LIMIT, PER_JOB_PAGE_LIMIT)
         with self._job_lock:
             if self._job and self._job["running"]:
                 raise RuntimeError("Another crawl is already running.")
             self._job_cancel.clear()
             self._job = {
-                "kind": kind, "query": (query or "").strip() or self.settings.default_query,
-                "pages": max(1, min(int(pages), PER_JOB_PAGE_LIMIT)), "blocks": max(1, int(blocks)),
-                "check_files": bool(check_files), "page": 0, "pages_read": 0, "block": None,
-                "blocks_done": 0, "seen": 0, "new_torrents": 0, "new_titles": 0, "files_checked": 0,
-                "gap": False, "running": True, "error": "", "started_at": int(time.time()), "finished_at": None,
+                "kind": kind,
+                "query": (query or "").strip() or self.settings.default_query,
+                "pages": page_limit,
+                "source": source,
+                "blocks": max(1, int(blocks)),
+                "check_files": bool(check_files),
+                "page": 0,
+                "pages_read": 0,
+                "block": None,
+                "blocks_done": 0,
+                "seen": 0,
+                "new_torrents": 0,
+                "new_titles": 0,
+                "files_checked": 0,
+                "gap": False,
+                "running": True,
+                "error": "",
+                "started_at": int(time.time()),
+                "finished_at": None,
             }
             job = self._job
-        threading.Thread(target=self._run_job, args=(job, runners[kind]), name=f"job-{kind}", daemon=True).start()
+        threading.Thread(
+            target=self._run_job, args=(job, runners[kind]), name=f"job-{kind}", daemon=True
+        ).start()
         return dict(job)
 
     def cancel(self):
@@ -360,14 +417,18 @@ class Crawler:
             self.log(f"Crawl failed: {exc}", "error")
         finally:
             job.update(running=False, finished_at=int(time.time()))
-            self.log(f"{job['kind'].capitalize()} finished: {job['pages_read']} page(s), "
-                     f"{job['new_torrents']} new torrent(s), {job['new_titles']} new title(s).")
+            self.log(
+                f"{job['kind'].capitalize()} finished: {job['pages_read']} page(s), "
+                f"{job['new_torrents']} new torrent(s), {job['new_titles']} new title(s)."
+            )
 
     def _read_page(self, query, page, priority, job):
         """Fetch one listing page, store its FC2 torrents and queue their titles."""
         if self._job_cancel.is_set():
             raise Cancelled()
-        listing = sukebei.parse_listing(self.http.text(sukebei.search_url(query, page)))
+        listing = sukebei.parse_listing(
+            self.http.text(sukebei.search_url(query, page, source=job["source"]))
+        )
         found = [t for t in listing.torrents if t.fc2_id]
         result = self.store.upsert_torrents(found)
         self.schedule(result["ids"], priority)
@@ -385,23 +446,28 @@ class Crawler:
         self.store.set_meta("last_update_try", int(time.time()))
         frontier = self.store.get_meta("newest_view_id")
         newest, reached = frontier or 0, False
-        for page in range(1, PER_JOB_PAGE_LIMIT + 1):
+        page = 1
+        while job["pages"] is None or page <= job["pages"]:
             listing = self._read_page(self.settings.default_query, page, NEW, job)
             newest = max([newest] + [t.view_id for t in listing.torrents])
             if frontier and any(t.view_id <= frontier for t in listing.torrents):
                 reached = True
                 break
             if not listing.has_next:
-                reached = listing.total < sukebei.MAX_RESULTS     # the true end, not the 1000 cap
+                reached = job["source"] != "nyaa" or listing.total < sukebei.MAX_RESULTS
                 break
+            page += 1
         # Only a finished walk moves the frontier, so an interrupted one is redone next time.
         self.store.set_meta("newest_view_id", newest)
         self.store.set_meta("last_update_at", int(time.time()))
         if frontier and not reached:
             job["gap"] = True
             self.store.set_meta("update_gap", True)
-            self.log("More than 1000 uploads since the last update: some of them could not be listed. "
-                     "History blocks still pick them up; use “Re-check history” for blocks already done.", "warn")
+            self.log(
+                "More than 1000 uploads since the last update: some of them could not be listed. "
+                "History blocks still pick them up; use “Re-check history” for blocks already done.",
+                "warn",
+            )
 
     def _run_older(self, job):
         """History: the next `blocks` id blocks of the walk (see the module docstring)."""
@@ -417,7 +483,7 @@ class Crawler:
             self.store.set_meta("history_top", top)
         for _ in range(job["blocks"]):
             job["block"] = cursor
-            self._read_block(str(cursor), job)       # raises on failure: the block stays next
+            self._read_block(str(cursor), job)  # raises on failure: the block stays next
             job["blocks_done"] += 1
             cursor = next_block(cursor, top)
             self.store.set_meta("history_next", cursor)
@@ -430,8 +496,13 @@ class Crawler:
         page = 1
         while True:
             listing = self._read_page(f"{prefix}*", page, HISTORY, job)
-            if page == 1 and listing.total >= sukebei.MAX_RESULTS and len(prefix) < MAX_PREFIX_DIGITS:
-                for digit in "9876543210":               # too broad for one query: split it
+            if (
+                page == 1
+                and job["source"] == "nyaa"
+                and listing.total >= sukebei.MAX_RESULTS
+                and len(prefix) < MAX_PREFIX_DIGITS
+            ):
+                for digit in "9876543210":  # too broad for one query: split it
                     self._read_block(prefix + digit, job)
                 return
             if not listing.has_next:
@@ -439,11 +510,13 @@ class Crawler:
             page += 1
 
     def _run_search(self, job):
-        """A custom sukebei query (a seller, a keyword, an id), every page up to the cap."""
-        for page in range(1, job["pages"] + 1):
+        """Read a custom query until its last page or the requested page limit."""
+        page = 1
+        while job["pages"] is None or page <= job["pages"]:
             listing = self._read_page(job["query"], page, NEW, job)
             if not listing.has_next:
                 break
+            page += 1
 
     def reset_history(self):
         """Walk history again from the newest block (after an update gap, for instance)."""
@@ -459,17 +532,18 @@ class Crawler:
             if self._job_cancel.is_set():
                 raise Cancelled()
             try:
-                self.torrent_detail(view_id, refresh=True)
+                self.torrent_detail(view_id, refresh=True, source=job["source"])
                 job["files_checked"] += 1
             except FetchError as exc:
                 self.log(f"Torrent {view_id}: {exc}", "warn")
 
-    def torrent_detail(self, view_id, refresh=False):
+    def torrent_detail(self, view_id, refresh=False, source=None):
+        source = source or self.store.get_meta("crawl_source", "nyaa")
         torrent = self.store.torrent(view_id)
         if torrent is None:
             return None
         if torrent["files"] is None or refresh:
-            detail = sukebei.parse_view(self.http.text(sukebei.view_url(view_id)))
+            detail = sukebei.parse_view(self.http.text(sukebei.view_url(view_id, source=source)))
             self.store.save_torrent_detail(view_id, detail)
             torrent = self.store.torrent(view_id)
         return torrent
@@ -481,7 +555,7 @@ class Crawler:
                 try:
                     self.start_job("update")
                 except RuntimeError:
-                    pass                                 # another crawl is running; try next minute
+                    pass  # another crawl is running; try next minute
             self._stop.wait(60)
 
     def update_due(self, now=None):
@@ -497,7 +571,9 @@ class Crawler:
         now = time.time() if now is None else now
         since_success = now - self.store.get_meta("last_update_at", 0)
         since_try = now - self.store.get_meta("last_update_try", 0)
-        return since_success >= minutes * 60 and since_try >= min(UPDATE_RETRY_SECONDS, minutes * 60)
+        return since_success >= minutes * 60 and since_try >= min(
+            UPDATE_RETRY_SECONDS, minutes * 60
+        )
 
     # --- status -------------------------------------------------------------------------
 
@@ -514,7 +590,9 @@ class Crawler:
             "history_top": top,
             "history_next": nxt,
             # "main": newest block down to 1000; "short": 9999 down to just above the start
-            "history_phase": "short" if nxt is not None and top is not None and nxt > top else "main",
+            "history_phase": "short"
+            if nxt is not None and top is not None and nxt > top
+            else "main",
             "history_blocks": blocks_read(top, nxt, done),
             "history_total": TOTAL_BLOCKS,
             "history_complete": done,

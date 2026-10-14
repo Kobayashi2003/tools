@@ -1,6 +1,5 @@
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from ..common import env
 from ..common.jsonio import coerce, read_json, write_json
@@ -17,9 +16,9 @@ class Storage:
     the download tree -- see `artist_groups`.
     """
 
-    def __init__(self, data_dir: str = None):
+    def __init__(self, data_dir: str | None = None):
         # Bootstrap path: it says where config.json is, so it can't come from it.
-        self.data_dir = Path(data_dir or env.get('DATA_DIR', 'data'))
+        self.data_dir = Path(data_dir or env.get("DATA_DIR", "data"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.artists_dir = self.data_dir / "artists"
         self.artists_file = self.data_dir / "artists.json"
@@ -29,8 +28,11 @@ class Storage:
         self._ensure_files()
 
     def _ensure_files(self):
-        for path, default in ((self.artists_file, []), (self.config_file, {}),
-                              (self.history_file, [])):
+        for path, default in (
+            (self.artists_file, []),
+            (self.config_file, {}),
+            (self.history_file, []),
+        ):
             if not path.exists():
                 write_json(path, default)
 
@@ -40,8 +42,8 @@ class Storage:
         """Config, with `PAWCHIVE_*` env vars overlaid on top of the file."""
         with self.lock:
             data = read_json(self.config_file, {})
-            if isinstance(data.get('image_extensions'), list):
-                data['image_extensions'] = set(data['image_extensions'])
+            if isinstance(data.get("image_extensions"), list):
+                data["image_extensions"] = set(data["image_extensions"])
             config = coerce(Config, data)
 
         env.apply_overrides(config)
@@ -57,8 +59,8 @@ class Storage:
         with self.lock:
             on_disk = read_json(self.config_file, {})
             data = dict(config.__dict__)
-            if isinstance(data.get('image_extensions'), set):
-                data['image_extensions'] = sorted(data['image_extensions'])
+            if isinstance(data.get("image_extensions"), set):
+                data["image_extensions"] = sorted(data["image_extensions"])
             for field in env.OVERRIDABLE:
                 if not env.get(field):
                     continue
@@ -70,18 +72,18 @@ class Storage:
 
     # ==================== Artists ====================
 
-    def _read_primary(self) -> List[Artist]:
+    def _read_primary(self) -> list[Artist]:
         return [coerce(Artist, item) for item in read_json(self.artists_file, [])]
 
-    def _write_primary(self, artists: List[Artist]):
+    def _write_primary(self, artists: list[Artist]):
         write_json(self.artists_file, [a.__dict__ for a in artists])
 
-    def get_artists(self) -> List[Artist]:
+    def get_artists(self) -> list[Artist]:
         with self.lock:
             artists = self._read_primary()
             seen = {a.id for a in artists}
             for _group, item in self._read_subdir_items():
-                aid = item.get('id')
+                aid = item.get("id")
                 if aid and aid not in seen:
                     artists.append(coerce(Artist, item))
                     seen.add(aid)
@@ -98,15 +100,15 @@ class Storage:
         """
         if not self.artists_dir.is_dir():
             return
-        for path in sorted(self.artists_dir.rglob('*.json')):
-            group = path.relative_to(self.artists_dir).with_suffix('').as_posix()
+        for path in sorted(self.artists_dir.rglob("*.json")):
+            group = path.relative_to(self.artists_dir).with_suffix("").as_posix()
             content = read_json(path, [])
             items = content if isinstance(content, list) else [content]
             for item in items:
                 if isinstance(item, dict):
                     yield group, item
 
-    def artist_groups(self) -> Dict[str, str]:
+    def artist_groups(self) -> dict[str, str]:
         """`artist_id -> group path`, feeding the `{group}` template variables.
 
         Artists in `artists.json` map to `''` (the download root); it wins on
@@ -114,9 +116,9 @@ class Storage:
         should read this map once rather than calling `artist_group` per artist.
         """
         with self.lock:
-            groups: Dict[str, str] = {}
+            groups: dict[str, str] = {}
             for group, item in self._read_subdir_items():
-                aid = item.get('id')
+                aid = item.get("id")
                 if aid and aid not in groups:
                     groups[aid] = group
             for artist in self._read_primary():
@@ -126,7 +128,7 @@ class Storage:
     def artist_group(self, artist_id: str) -> str:
         return self.artist_groups().get(artist_id, "")
 
-    def get_artist(self, artist_id: str) -> Optional[Artist]:
+    def get_artist(self, artist_id: str) -> Artist | None:
         return next((a for a in self.get_artists() if a.id == artist_id), None)
 
     def save_artist(self, artist: Artist):
@@ -150,15 +152,15 @@ class Storage:
     def _update_in_subdir(self, artist: Artist) -> bool:
         if not self.artists_dir.is_dir():
             return False
-        for path in sorted(self.artists_dir.rglob('*.json')):
+        for path in sorted(self.artists_dir.rglob("*.json")):
             content = read_json(path, [])
             changed = False
-            if isinstance(content, dict) and content.get('id') == artist.id:
+            if isinstance(content, dict) and content.get("id") == artist.id:
                 content = artist.__dict__
                 changed = True
             elif isinstance(content, list):
                 for idx, item in enumerate(content):
-                    if isinstance(item, dict) and item.get('id') == artist.id:
+                    if isinstance(item, dict) and item.get("id") == artist.id:
                         content[idx] = artist.__dict__
                         changed = True
                         break
@@ -177,30 +179,43 @@ class Storage:
 
             if not self.artists_dir.is_dir():
                 return
-            for path in sorted(self.artists_dir.rglob('*.json')):
+            for path in sorted(self.artists_dir.rglob("*.json")):
                 content = read_json(path, [])
-                if isinstance(content, dict) and content.get('id') == artist_id:
+                if isinstance(content, dict) and content.get("id") == artist_id:
                     path.unlink(missing_ok=True)
                     return
                 if isinstance(content, list):
-                    new = [i for i in content if not (isinstance(i, dict) and i.get('id') == artist_id)]
+                    new = [
+                        i for i in content if not (isinstance(i, dict) and i.get("id") == artist_id)
+                    ]
                     if len(new) != len(content):
                         write_json(path, new)
                         return
 
     # ==================== History ====================
 
-    def add_history(self, command: str, success: bool = True, artist_id: str = None,
-                    params: dict = None, note: str = ""):
+    def add_history(
+        self,
+        command: str,
+        success: bool = True,
+        artist_id: str | None = None,
+        params: dict | None = None,
+        note: str = "",
+    ):
         with self.lock:
             data = read_json(self.history_file, [])
-            data.append(HistoryRecord(
-                command=command, success=success, artist_id=artist_id,
-                params=params or {}, note=note,
-            ).__dict__)
+            data.append(
+                HistoryRecord(
+                    command=command,
+                    success=success,
+                    artist_id=artist_id,
+                    params=params or {},
+                    note=note,
+                ).__dict__
+            )
             write_json(self.history_file, data[-500:])
 
-    def get_history(self, limit: int = 10) -> List[HistoryRecord]:
+    def get_history(self, limit: int = 10) -> list[HistoryRecord]:
         with self.lock:
             data = read_json(self.history_file, [])
             return [coerce(HistoryRecord, item) for item in data[-limit:]][::-1]

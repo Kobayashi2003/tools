@@ -21,11 +21,10 @@
   let candidates = [];
   let activeIndex = 0;
   let lastSignature = '';
-  let lastPointer = { x: 0, y: 0 };
 
   // --- settings -------------------------------------------------------------
 
-  chrome.storage.sync.get(cfg, (stored) => Object.assign(cfg, stored));
+  chrome.storage.sync.get(cfg, stored => Object.assign(cfg, stored));
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'sync') return;
     if (changes.enabled) cfg.enabled = changes.enabled.newValue;
@@ -102,7 +101,14 @@
       }
     } else if (tag === 'VIDEO' && el.poster) {
       const url = resolveUrl(el.poster);
-      out.push({ url, element: el, rect, width: el.videoWidth, height: el.videoHeight, kind: 'poster' });
+      out.push({
+        url,
+        element: el,
+        rect,
+        width: el.videoWidth,
+        height: el.videoHeight,
+        kind: 'poster',
+      });
     }
 
     // Any element may also carry a CSS background image.
@@ -138,7 +144,7 @@
   }
 
   function signatureOf(list) {
-    return list.map((c) => c.url).join('\n');
+    return list.map(c => c.url).join('\n');
   }
 
   // --- overlay UI -----------------------------------------------------------
@@ -190,7 +196,8 @@
     box.style.height = r.height + 'px';
 
     const dims = c.width && c.height ? `${c.width}×${c.height}` : '';
-    const counter = candidates.length > 1 ? `${activeIndex + 1}/${candidates.length} · scroll to switch · ` : '';
+    const counter =
+      candidates.length > 1 ? `${activeIndex + 1}/${candidates.length} · scroll to switch · ` : '';
     badge.textContent = `${counter}${dims ? dims + ' · ' : ''}${shortName(c.url)}`;
 
     // Flip the badge below the box if there is no room above.
@@ -220,14 +227,14 @@
     // worker, so inline them as a data URL first.
     if (url.startsWith('blob:')) {
       try {
-        const blob = await fetch(url).then((r) => r.blob());
+        const blob = await fetch(url).then(r => r.blob());
         url = await new Promise((resolve, reject) => {
           const fr = new FileReader();
           fr.onload = () => resolve(fr.result);
           fr.onerror = reject;
           fr.readAsDataURL(blob);
         });
-      } catch (err) {
+      } catch {
         flashBadge('✗ could not read blob image');
         return;
       }
@@ -235,13 +242,13 @@
 
     chrome.runtime.sendMessage(
       { action: 'downloadImage', url, filename: filenameFor(item) },
-      (res) => {
+      res => {
         if (chrome.runtime.lastError || !res || !res.ok) {
           flashBadge('✗ ' + ((res && res.error) || chrome.runtime.lastError?.message || 'failed'));
         } else {
           flashBadge('✓ downloading');
         }
-      }
+      },
     );
   }
 
@@ -257,7 +264,6 @@
   // --- event wiring ---------------------------------------------------------
 
   function refreshAt(x, y) {
-    lastPointer = { x, y };
     const next = collectImages(x, y);
     const sig = signatureOf(next);
     if (sig !== lastSignature) {
@@ -273,7 +279,7 @@
 
   document.addEventListener(
     'mousemove',
-    (e) => {
+    e => {
       if (!cfg.enabled) return;
       if (!modifierActive(e)) {
         clearHighlight();
@@ -281,13 +287,13 @@
       }
       refreshAt(e.clientX, e.clientY);
     },
-    true
+    true,
   );
 
   // Cycle through overlapping images with the wheel while the modifier is held.
   document.addEventListener(
     'wheel',
-    (e) => {
+    e => {
       if (!cfg.enabled || !modifierActive(e) || candidates.length < 2) return;
       e.preventDefault();
       e.stopPropagation();
@@ -295,13 +301,13 @@
       activeIndex = (activeIndex + dir + candidates.length) % candidates.length;
       renderHighlight();
     },
-    { capture: true, passive: false }
+    { capture: true, passive: false },
   );
 
   // Modifier + left click downloads the currently highlighted image.
   document.addEventListener(
     'click',
-    (e) => {
+    e => {
       if (!cfg.enabled || e.button !== 0 || !modifierActive(e)) return;
       // Make sure the stack reflects the exact click point.
       refreshAt(e.clientX, e.clientY);
@@ -311,20 +317,20 @@
       e.stopImmediatePropagation();
       download(candidates[activeIndex]);
     },
-    true
+    true,
   );
 
   // Suppress the default mousedown action (e.g. image drag / link focus)
   // so the click feels like a clean capture.
   document.addEventListener(
     'mousedown',
-    (e) => {
+    e => {
       if (!cfg.enabled || e.button !== 0 || !modifierActive(e)) return;
       if (collectImages(e.clientX, e.clientY).length) {
         e.preventDefault();
       }
     },
-    true
+    true,
   );
 
   // Keep the highlight glued to the image while the page scrolls.
@@ -333,7 +339,7 @@
     () => {
       if (candidates.length) renderHighlight();
     },
-    true
+    true,
   );
 
   window.addEventListener('blur', clearHighlight);

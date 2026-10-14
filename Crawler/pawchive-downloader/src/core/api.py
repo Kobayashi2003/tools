@@ -3,13 +3,13 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List
 from urllib.parse import quote
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from ..common import backoff
-from ..common.limiter import QuotaExceeded, Throttle
+from ..common.limiter import Throttle
 from ..common.logger import Logger
 from .policy import StatusPolicies
 
@@ -38,33 +38,33 @@ class API:
 
     PAGE_SIZE = 50
 
-    def __init__(self, logger: Logger, config, throttle: Throttle = None):
+    def __init__(self, logger: Logger, config, throttle: Throttle | None = None):
         self.logger = logger
         self.config = config
-        self.api_base = config.api_base.rstrip('/')
-        self.file_base = config.file_base.rstrip('/')
+        self.api_base = config.api_base.rstrip("/")
+        self.file_base = config.file_base.rstrip("/")
         self.throttle = throttle or self._build_throttle(config)
         self.policies = self._build_policies(config)
         self.session = self._new_session()
         self.headers = {
-            'User-Agent': config.user_agent,
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.5',
+            "User-Agent": config.user_agent,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.5",
         }
         self._stop = threading.Event()
 
     @staticmethod
     def _build_throttle(config) -> Throttle:
         return Throttle(
-            max_concurrent=getattr(config, 'max_concurrent_downloads', 0),
-            rate=getattr(config, 'max_download_rate', 0),
-            burst=getattr(config, 'download_burst', 0),
-            quota=getattr(config, 'daily_download_quota', 0),
+            max_concurrent=getattr(config, "max_concurrent_downloads", 0),
+            rate=getattr(config, "max_download_rate", 0),
+            burst=getattr(config, "download_burst", 0),
+            quota=getattr(config, "daily_download_quota", 0),
             # Under data/, not cache/: a spent budget must survive a cache wipe.
-            state_path=Path(getattr(config, 'data_dir', 'data')) / 'quota.json',
-            window_hours=getattr(config, 'quota_window_hours', 24.0),
-            requests_per_second=getattr(config, 'max_file_requests_per_second', 0),
-            request_burst=getattr(config, 'file_request_burst', 0),
+            state_path=Path(getattr(config, "data_dir", "data")) / "quota.json",
+            window_hours=getattr(config, "quota_window_hours", 24.0),
+            requests_per_second=getattr(config, "max_file_requests_per_second", 0),
+            request_burst=getattr(config, "file_request_burst", 0),
         )
 
     @staticmethod
@@ -75,9 +75,13 @@ class API:
         keeps meaning what it meant; writing an explicit `404` rule takes over.
         """
         return StatusPolicies.parse(
-            getattr(config, 'status_policies', None),
-            fallback={'404': {'action': 'permanent',
-                              'attempts': getattr(config, 'not_found_max_retries', 3)}},
+            getattr(config, "status_policies", None),
+            fallback={
+                "404": {
+                    "action": "permanent",
+                    "attempts": getattr(config, "not_found_max_retries", 3),
+                }
+            },
         )
 
     def _new_session(self) -> requests.Session:
@@ -88,12 +92,12 @@ class API:
         which reads to a server as far more churn than we are actually making.
         """
         session = requests.Session()
-        size = max(self.throttle.max_concurrent,
-                   int(getattr(self.config, 'page_workers', 4) or 4), 10)
-        adapter = requests.adapters.HTTPAdapter(pool_connections=size,
-                                                pool_maxsize=size)
-        session.mount('https://', adapter)
-        session.mount('http://', adapter)
+        size = max(
+            self.throttle.max_concurrent, int(getattr(self.config, "page_workers", 4) or 4), 10
+        )
+        adapter = HTTPAdapter(pool_connections=size, pool_maxsize=size)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
         return session
 
     # ==================== Lifecycle ====================
@@ -125,17 +129,18 @@ class API:
             url += f"?f={quote(name)}"
         return url
 
-    def _get_json(self, url: str, timeout: int = None):
+    def _get_json(self, url: str, timeout: int | None = None):
         self._check_stop()
-        resp = self.session.get(url, headers=self.headers,
-                                timeout=timeout or self.config.request_timeout)
+        resp = self.session.get(
+            url, headers=self.headers, timeout=timeout or self.config.request_timeout
+        )
         resp.raise_for_status()
         return resp.json()
 
-    def get_profile(self, service: str, user_id: str) -> Dict:
+    def get_profile(self, service: str, user_id: str) -> dict:
         return self._get_json(f"{self.api_base}/{service}/user/{user_id}/profile")
 
-    def get_posts(self, service: str, user_id: str, offset: int = 0) -> List[Dict]:
+    def get_posts(self, service: str, user_id: str, offset: int = 0) -> list[dict]:
         url = f"{self.api_base}/{service}/user/{user_id}"
         if offset:
             url += f"?o={offset}"
@@ -150,20 +155,20 @@ class API:
 
     @staticmethod
     def _status_of(e: Exception):
-        return getattr(getattr(e, 'response', None), 'status_code', None)
+        return getattr(getattr(e, "response", None), "status_code", None)
 
     @staticmethod
     def _kind_of(e: Exception) -> str:
         """The policy key for a failure that carries no HTTP status."""
         if isinstance(e, TransientAPIError):
-            return 'invalid'
+            return "invalid"
         if isinstance(e, requests.exceptions.Timeout):
-            return 'timeout'
+            return "timeout"
         if isinstance(e, requests.exceptions.ConnectionError):
-            return 'connection'
-        return 'network'
+            return "connection"
+        return "network"
 
-    def _retry(self, func, describe: str, max_attempts: int = None):
+    def _retry(self, func, describe: str, max_attempts: int | None = None):
         """Retry until the failure's own policy says to stop.
 
         What each failure *means* is a table, not an if-ladder here: see
@@ -187,7 +192,7 @@ class API:
         one would only delay every other file behind it.
         """
         bound = int(self.config.max_retries if max_attempts is None else max_attempts) or 0
-        seen: Dict[str, int] = {}
+        seen: dict[str, int] = {}
 
         def decide(e, _attempt):
             """Seconds to wait, or None to give up. May raise its own verdict."""
@@ -196,26 +201,34 @@ class API:
             limit = rule.limit() or bound
 
             if limit >= 0 and limit and count >= limit:
-                if rule.action == 'permanent':
+                if rule.action == "permanent":
                     raise PermanentAPIError(
-                        f"{describe}: {rule.describe()} after {count} attempts") from e
+                        f"{describe}: {rule.describe()} after {count} attempts"
+                    ) from e
                 return None
             return backoff.wait_for(
                 count,
                 rule.delay if rule.delay is not None else self.config.retry_delay,
-                rule.backoff if rule.backoff is not None
-                else getattr(self.config, 'retry_backoff', 2.0),
-                rule.cap if rule.cap is not None
-                else getattr(self.config, 'retry_delay_cap', 60),
-                rule.jitter if rule.jitter is not None
-                else getattr(self.config, 'retry_jitter', 0.0),
+                rule.backoff
+                if rule.backoff is not None
+                else getattr(self.config, "retry_backoff", 2.0),
+                rule.cap if rule.cap is not None else getattr(self.config, "retry_delay_cap", 60),
+                rule.jitter
+                if rule.jitter is not None
+                else getattr(self.config, "retry_jitter", 0.0),
             )
 
         def on_retry(e, n, d):
             rule = self.policies.match(self._status_of(e), self._kind_of(e))
             self.logger.api_network_error(
-                op=describe, status=self._status_of(e), error=str(e),
-                policy=rule.describe(), attempt=n, retry_in=d, level='warning')
+                op=describe,
+                status=self._status_of(e),
+                error=str(e),
+                policy=rule.describe(),
+                attempt=n,
+                retry_in=d,
+                level="warning",
+            )
 
         try:
             return backoff.retry(
@@ -225,27 +238,31 @@ class API:
                 should_stop=self._stop.is_set,
                 on_retry=on_retry,
                 on_give_up=lambda e, n: self.logger.api_gave_up(
-                    op=describe, error=str(e), attempts=n, level='error'),
+                    op=describe, error=str(e), attempts=n, level="error"
+                ),
             )
         except backoff.Cancelled:
-            raise InterruptedError("Request cancelled")
+            raise InterruptedError("Request cancelled") from None
 
-    def get_profile_until_success(self, service: str, user_id: str) -> Dict:
-        return self._retry(lambda: self.get_profile(service, user_id), f"profile {service}/{user_id}")
+    def get_profile_until_success(self, service: str, user_id: str) -> dict:
+        return self._retry(
+            lambda: self.get_profile(service, user_id), f"profile {service}/{user_id}"
+        )
 
-    def get_posts_until_success(self, service: str, user_id: str, offset: int = 0) -> List[Dict]:
+    def get_posts_until_success(self, service: str, user_id: str, offset: int = 0) -> list[dict]:
         return self._retry(lambda: self.get_posts(service, user_id, offset), f"posts o={offset}")
 
     # ==================== Paging ====================
 
-    def _fetch_pages(self, service: str, user_id: str, offsets: List[int]) -> List[List[Dict]]:
+    def _fetch_pages(self, service: str, user_id: str, offsets: list[int]) -> list[list[dict]]:
         if len(offsets) == 1:
             return [self.get_posts_until_success(service, user_id, offsets[0])]
         with ThreadPoolExecutor(max_workers=len(offsets)) as pool:
-            return list(pool.map(
-                lambda o: self.get_posts_until_success(service, user_id, o), offsets))
+            return list(
+                pool.map(lambda o: self.get_posts_until_success(service, user_id, o), offsets)
+            )
 
-    def get_all_posts(self, service: str, user_id: str) -> List[Dict]:
+    def get_all_posts(self, service: str, user_id: str) -> list[dict]:
         """Fetch every post of a creator.
 
         There is no post count to check the result against, so the rule is: a
@@ -255,8 +272,8 @@ class API:
 
         Batches are concurrent for speed only.
         """
-        workers = max(1, int(getattr(self.config, 'page_workers', 4)))
-        posts: List[Dict] = []
+        workers = max(1, int(getattr(self.config, "page_workers", 4)))
+        posts: list[dict] = []
         offset = 0
 
         while True:
@@ -264,7 +281,7 @@ class API:
             offsets = [offset + i * self.PAGE_SIZE for i in range(workers)]
             pages = self._fetch_pages(service, user_id, offsets)
 
-            for page_offset, page in zip(offsets, pages):
+            for page_offset, page in zip(offsets, pages, strict=False):
                 if len(page) == self.PAGE_SIZE:
                     posts.extend(page)
                     continue
@@ -276,8 +293,11 @@ class API:
                     return posts
 
                 self.logger.api_page_anomaly(
-                    creator=f"{service}/{user_id}", offset=page_offset,
-                    size=len(page), level='warning')
+                    creator=f"{service}/{user_id}",
+                    offset=page_offset,
+                    size=len(page),
+                    level="warning",
+                )
                 if not page:
                     posts.extend(probe)  # the empty page was transient
                 # Always advance: resuming *at* this offset could spin forever.
@@ -293,13 +313,15 @@ class API:
         # A HEAD is still a request to the file host, and counts as one.
         if not self.throttle.request(self._stop.is_set):
             raise InterruptedError("Request cancelled")
-        resp = self.session.head(url, headers=self.headers, allow_redirects=True,
-                                 timeout=self.config.request_timeout)
+        resp = self.session.head(
+            url, headers=self.headers, allow_redirects=True, timeout=self.config.request_timeout
+        )
         resp.raise_for_status()
-        return int(resp.headers.get('content-length', 0) or 0)
+        return int(resp.headers.get("content-length", 0) or 0)
 
-    def download_file(self, url: str, save_path: str, raise_on_error: bool = False,
-                      on_progress=None) -> bool:
+    def download_file(
+        self, url: str, save_path: str, raise_on_error: bool = False, on_progress=None
+    ) -> bool:
         """Download to `save_path`, verified and atomically placed.
 
         Held inside one of the throttle's global transfer slots, so the caller's
@@ -323,11 +345,15 @@ class API:
                 # never allowed costs the host nothing, which is the point.
                 if not self.throttle.request(self._stop.is_set):
                     raise InterruptedError("Download cancelled")
-                resp = self.session.get(url, headers=self.headers, stream=True,
-                                        timeout=max(60, self.config.request_timeout))
+                resp = self.session.get(
+                    url,
+                    headers=self.headers,
+                    stream=True,
+                    timeout=max(60, self.config.request_timeout),
+                )
                 resp.raise_for_status()
 
-                content_length = int(resp.headers.get('content-length', 0) or 0)
+                content_length = int(resp.headers.get("content-length", 0) or 0)
                 if not content_length:
                     try:
                         content_length = self.content_length_of(url)
@@ -339,7 +365,7 @@ class API:
                     return True
 
                 downloaded = 0
-                with open(temp_path, 'wb') as f:
+                with open(temp_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=65536):
                         if self._stop.is_set():
                             raise InterruptedError("Download cancelled")
@@ -356,12 +382,13 @@ class API:
             if content_length and downloaded != content_length:
                 # A short read must never be renamed into place as if complete.
                 raise TransientAPIError(
-                    f"truncated download: got {downloaded} of {content_length} bytes")
+                    f"truncated download: got {downloaded} of {content_length} bytes"
+                )
 
             if path.exists() and not content_length:
                 # Unverifiable bytes must not destroy an existing file.
                 self._cleanup(temp_path)
-                self.logger.api_kept_existing(file=path.name, level='warning')
+                self.logger.api_kept_existing(file=path.name, level="warning")
                 return True
 
             os.replace(temp_path, path)
@@ -388,7 +415,9 @@ class API:
 
     def download_file_until_success(self, url: str, save_path: str, on_progress=None) -> bool:
         return self._retry(
-            lambda: self.download_file(url, save_path, raise_on_error=True, on_progress=on_progress),
+            lambda: self.download_file(
+                url, save_path, raise_on_error=True, on_progress=on_progress
+            ),
             f"download {Path(save_path).name}",
-            max_attempts=getattr(self.config, 'download_max_retries', 5),
+            max_attempts=getattr(self.config, "download_max_retries", 5),
         )

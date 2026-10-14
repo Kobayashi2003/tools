@@ -1,25 +1,43 @@
 import copy
 import shutil
 import zipfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast
 
 import pytest
 
-from app.client import Cancelled, TransientError, fingerprint
+from app.client import Cancelled, Client, NetworkError, fingerprint
 from app.database import Database
 from app.worker import Worker
 
 KEY = "wenku/688da4c4c923db0b7aa9943e"
 
 
-def epub(path, bilingual=True, paragraph="日本語の本文", css=b""):
+def epub(
+    path: Path, bilingual: bool = True, paragraph: str = "日本語の本文", css: bytes = b""
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-        z.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>')
-        z.writestr("OPS/book.opf", '<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:language>zh</dc:language><dc:title>Test</dc:title></metadata><manifest></manifest><spine></spine></package>')
+        z.writestr(
+            "META-INF/container.xml",
+            '<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>',
+        )
+        z.writestr(
+            "OPS/book.opf",
+            '<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:language>zh</dc:language><dc:title>Test</dc:title></metadata><manifest></manifest><spine></spine></package>',
+        )
         z.writestr("OPS/Styles/book.css", css)
-        body = f'<p style="opacity:0.4">{paragraph}</p><p>测试译文</p><p/>' if bilingual else f'<p>{paragraph}</p><p/>'
-        z.writestr("OPS/chapter.xhtml", f'<html><head><title>Test</title><link href="Styles/book.css" rel="stylesheet"/></head><body>{body}</body></html>')
+        body = (
+            f'<p style="opacity:0.4">{paragraph}</p><p>测试译文</p><p/>'
+            if bilingual
+            else f"<p>{paragraph}</p><p/>"
+        )
+        z.writestr(
+            "OPS/chapter.xhtml",
+            f'<html><head><title>Test</title><link href="Styles/book.css" rel="stylesheet"/></head><body>{body}</body></html>',
+        )
     return path
 
 
@@ -28,9 +46,16 @@ class Upstream:
         self.root = root
         self.raw = epub(root / "raw.epub")
         self.original = epub(root / "original.epub", False, css=b"html{writing-mode:vertical-rl}")
-        self.works = {KEY: {"title": "Test novel", "titleZh": "Test", "authors": ["Author"],
-                           "level": "一般向", "volumeJp": [{"volumeId": "volume1.epub", "sakura": 10, "total": 10}],
-                           "volumeZh": []}}
+        self.works = {
+            KEY: {
+                "title": "Test novel",
+                "titleZh": "Test",
+                "authors": ["Author"],
+                "level": "一般向",
+                "volumeJp": [{"volumeId": "volume1.epub", "sakura": 10, "total": 10}],
+                "volumeZh": [],
+            }
+        }
         self.pages = {1: [KEY]}
         self.downloads = []
         self.checked = []
@@ -41,6 +66,7 @@ class Upstream:
         self.cancel_volume = None
         self.fail_times = {}  # volume -> number of transient failures before success
         self.raise_on = {}  # volume -> exception raised on every attempt
+        self.bilingual_errors = {}  # volume -> exception raised for the bilingual file only
         self.waits = []
         self.clients = []
 
@@ -56,8 +82,10 @@ class Upstream:
                 upstream.listed.append((page, category))
                 if upstream.fail_page == page:
                     raise RuntimeError("Temporary listing error")
-                return {"items": [{"id": k.split("/", 1)[1]} for k in upstream.pages.get(page, [])],
-                        "pageNumber": max(upstream.pages)}
+                return {
+                    "items": [{"id": k.split("/", 1)[1]} for k in upstream.pages.get(page, [])],
+                    "pageNumber": max(upstream.pages),
+                }
 
             def metadata(self, key):
                 check()
@@ -69,15 +97,21 @@ class Upstream:
                 if volume == upstream.cancel_volume:
                     raise Cancelled("Test interruption")
                 if volume == upstream.fail_volume or (original and upstream.fail_reference):
-                    raise TransientError("Temporary download error")
+                    raise NetworkError("Temporary download error")
                 if volume in upstream.raise_on:
                     raise upstream.raise_on[volume]
+                if not original and volume in upstream.bilingual_errors:
+                    raise upstream.bilingual_errors[volume]
                 if upstream.fail_times.get(volume):
                     upstream.fail_times[volume] -= 1
-                    raise TransientError("Temporary download error")
+                    raise NetworkError("Temporary download error")
                 upstream.downloads.append((key, volume, original))
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(upstream.original if original else upstream.raw, destination)
+                if destination.suffix == ".txt":  # text volumes: original Japanese or interleaved
+                    text = "日本語\n" if original else "日本語\n中文\n"
+                    destination.write_text(text, encoding="utf-8")
+                else:
+                    shutil.copyfile(upstream.original if original else upstream.raw, destination)
                 return destination.stat().st_size, fingerprint(destination.read_bytes().hex())
 
             def wait(self, seconds, reason):
@@ -95,5 +129,5 @@ class Upstream:
 def system(tmp_path):
     db = Database(tmp_path / "data" / "library.sqlite3")
     upstream = Upstream(tmp_path / "upstream")
-    worker = Worker(db, tmp_path / "downloads", upstream.client)
+    worker = Worker(db, tmp_path / "downloads", cast(Callable[..., Client], upstream.client))
     return db, worker, upstream

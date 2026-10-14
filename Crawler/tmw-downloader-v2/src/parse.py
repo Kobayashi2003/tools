@@ -19,7 +19,6 @@ without it there is nothing to press and nothing to download.
 """
 
 import re
-from typing import List
 
 from .models import FileEntry, Rec, snowflake_time
 
@@ -74,12 +73,12 @@ def kind_key(text: str) -> str:
 def _fields(content: str) -> dict:
     """Read the labelled block. Values keep their line breaks."""
     out, current = {}, None
-    blurb: List[str] = []
+    blurb: list[str] = []
     for raw in (content or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         line = raw.rstrip()
         match = LABEL_RE.match(line)
         key = LABELS.get(match.group(1).strip().casefold()) if match else None
-        if key:
+        if match and key:
             current = key
             out[key] = match.group(2).strip()
             continue
@@ -94,7 +93,7 @@ def _fields(content: str) -> dict:
     return out
 
 
-def _covers(raw: dict) -> List[FileEntry]:
+def _covers(raw: dict) -> list[FileEntry]:
     attachments = [FileEntry.from_attachment(a) for a in raw.get("attachments") or []]
     return [a for a in attachments if a.is_image]
 
@@ -152,7 +151,7 @@ def build_rec(raw: dict) -> Rec:
     )
 
 
-def why_dropped(messages: List[dict]) -> dict:
+def why_dropped(messages: list[dict]) -> dict:
     """Count what never became a recommendation, and for which reason.
 
     A recommendations channel is mostly recommendations, so a poor yield means
@@ -172,7 +171,7 @@ def why_dropped(messages: List[dict]) -> dict:
     return tally
 
 
-def _settle_labels(recs: List[Rec]) -> None:
+def _settle_labels(recs: list[Rec]) -> None:
     """Spell each kind the way the channel spells it most often.
 
     The bot writes the type from a fixed menu, so folding is nearly always
@@ -189,9 +188,9 @@ def _settle_labels(recs: List[Rec]) -> None:
             rec.label = max(table, key=table.get)
 
 
-def build_posts(messages: List[dict], config=None) -> List[Rec]:
+def build_posts(messages: list[dict], config=None) -> list[Rec]:
     """Oldest first in, oldest first out. Chatter and stickies are dropped."""
-    recs: List[Rec] = []
+    recs: list[Rec] = []
     for raw in sorted(messages, key=lambda m: int(m["id"])):
         if raw.get("type", 0) not in CONTENT_TYPES:
             continue
@@ -204,7 +203,7 @@ def build_posts(messages: List[dict], config=None) -> List[Rec]:
     return recs
 
 
-def apply_names(recs: List[Rec], names: dict) -> None:
+def apply_names(recs: list[Rec], names: dict) -> None:
     """Put resolved display names on the mentions, in place.
 
     The bot posts mentions with pings suppressed, so Discord sends the message

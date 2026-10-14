@@ -11,20 +11,13 @@ resuming rather than restarting when a transfer breaks.
 """
 
 import argparse
+import io
 import re
 import sys
 import threading
 import time
 import webbrowser
 from datetime import datetime
-
-# Titles and filenames here are Japanese; the default Windows console codec
-# (cp936/cp932) would raise UnicodeEncodeError on the first line printed.
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
 
 from src.api import AuthRequired, NoAccess
 from src.config import Config
@@ -33,6 +26,13 @@ from src.grab import Grabber
 from src.models import human_size, snowflake_time
 from src.parse import why_dropped
 from src.server import serve
+
+# Titles and filenames here are Japanese; the default Windows console codec
+# (cp936/cp932) would raise UnicodeEncodeError on the first line printed.
+for _stream in (sys.stdout, sys.stderr):
+    if isinstance(_stream, io.TextIOWrapper):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 TOKEN_HELP = """\
 No token found. Discord's API does not accept cookies -- every call carries an
@@ -50,46 +50,72 @@ there. Or run with --offline to read whatever is already cached."""
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Browse the reading club's recommendation channels as a "
-                    "local page, and download what they point at.")
+        "local page, and download what they point at."
+    )
     parser.add_argument("--channel_id", help="Channel to read (default: #book-recommendations)")
     parser.add_argument("--guild_id", help="Server the channel is in")
-    parser.add_argument("--port", type=int,
-                        help="Local port (default: 18040; if it is taken or reserved, "
-                             "the next free one of the ten from it)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        help="Local port (default: 18040; if it is taken or reserved, "
+        "the next free one of the ten from it)",
+    )
     parser.add_argument("--proxy", help="HTTP(S) proxy URL")
     parser.add_argument("--config", metavar="FILE", help="Config file (default: config.json)")
-    parser.add_argument("--out", metavar="DIR",
-                        help="Where downloads land (default: downloads/)")
-    parser.add_argument("--history", metavar="REACH",
-                        help="How far back to read: 7d, 2w, 3m, 1y, all, or a "
-                             "plain message count. Only ever extends the cache")
-    parser.add_argument("--count", type=int, metavar="N",
-                        help="Stop after N messages this run. Combines with "
-                             "--history, and the walk resumes next time")
-    parser.add_argument("--tail", action="store_true",
-                        help="Show only what arrives after this launch. The "
-                             "cache still fills in the background")
-    parser.add_argument("--cap", type=int, metavar="N",
-                        help="Most posts the page renders at once (default 0, "
-                             "no cap: the page virtualises the list)")
-    parser.add_argument("--grab", metavar="POST", nargs="+",
-                        help="Download these recommendations and exit. Takes "
-                             "message ids or Discord message links")
-    parser.add_argument("--offline", action="store_true",
-                        help="Serve the cache without talking to Discord")
+    parser.add_argument("--out", metavar="DIR", help="Where downloads land (default: downloads/)")
+    parser.add_argument(
+        "--history",
+        metavar="REACH",
+        help="How far back to read: 7d, 2w, 3m, 1y, all, or a "
+        "plain message count. Only ever extends the cache",
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        metavar="N",
+        help="Stop after N messages this run. Combines with "
+        "--history, and the walk resumes next time",
+    )
+    parser.add_argument(
+        "--tail",
+        action="store_true",
+        help="Show only what arrives after this launch. The cache still fills in the background",
+    )
+    parser.add_argument(
+        "--cap",
+        type=int,
+        metavar="N",
+        help="Most posts the page renders at once (default 0, "
+        "no cap: the page virtualises the list)",
+    )
+    parser.add_argument(
+        "--grab",
+        metavar="POST",
+        nargs="+",
+        help="Download these recommendations and exit. Takes message ids or Discord message links",
+    )
+    parser.add_argument(
+        "--offline", action="store_true", help="Serve the cache without talking to Discord"
+    )
     parser.add_argument("--no-open", action="store_true", help="Do not open a browser")
-    parser.add_argument("--doctor", action="store_true",
-                        help="Test the token step by step and report what "
-                             "Discord says at each one")
-    parser.add_argument("--print", dest="print_only", action="store_true",
-                        help="List the newest recommendations on the console and exit")
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Test the token step by step and report what Discord says at each one",
+    )
+    parser.add_argument(
+        "--print",
+        dest="print_only",
+        action="store_true",
+        help="List the newest recommendations on the console and exit",
+    )
     return parser
 
 
 REACH_HELP = """--history / --count read one channel's past, and this run would have
 read #{name} ({cid}) -- the default, not something you asked for.
 
-  python main.py --channel_id {cid} {flag}
+  uv run python main.py --channel_id {cid} {flag}
 
 Or set channel_id and history together in config.json, where that pair is
 deliberate. The page can do it too: open it and press Fetch."""
@@ -114,16 +140,17 @@ def reach_needs_a_channel(config: Config, args) -> str:
 def progress(label: str):
     """Count plus the date reached -- during a long backfill the useful
     question is what year you are in, not how many rows went by."""
+
     def report(count: int, edge_id: str):
         when = snowflake_time(edge_id).astimezone()
-        print(f"\r  {label} {count:,} messages… ({when:%Y-%m-%d}){' ' * 8}",
-              end="", flush=True)
+        print(f"\r  {label} {count:,} messages… ({when:%Y-%m-%d}){' ' * 8}", end="", flush=True)
+
     return report
 
 
 def sync(feed: Feed, config: Config) -> bool:
     """Fill forward, then reach back if this run was asked to."""
-    if config.offline:
+    if config.offline or feed.client is None:
         print(f"Offline: {len(feed.cache)} cached message(s).")
         return True
 
@@ -135,21 +162,21 @@ def sync(feed: Feed, config: Config) -> bool:
     # otherwise report "nothing newer" and show an empty channel. One page back
     # is enough to have something; the page grows the rest as you scroll.
     if not len(feed.cache) and not config.has_reach:
-        first = feed.backfill(spec="", limit=config.page_size,
-                              on_progress=progress("first:"))
+        first = feed.backfill(spec="", limit=config.page_size, on_progress=progress("first:"))
         print("\r  {:,} message(s) to start with.{}".format(first["added"], " " * 20))
 
     result = feed.sync(on_progress=progress("new:"))
     if result["fetched"]:
-        print(f"\r  {result['fetched']:,} message(s) newer than the cache, "
-              f"{result['added']:,} new.{' ' * 20}")
+        print(
+            f"\r  {result['fetched']:,} message(s) newer than the cache, "
+            f"{result['added']:,} new.{' ' * 20}"
+        )
     else:
         print("  nothing newer than the cache.")
 
     if config.has_reach:
         if config.history in ("all", "full", "everything"):
-            print("  reaching back to the start of the channel — "
-                  "Ctrl+C is safe, progress is kept.")
+            print("  reaching back to the start of the channel — Ctrl+C is safe, progress is kept.")
         older = feed.backfill(on_progress=progress("back:"))
         note = "reached the start of the channel" if older["done"] else "stopped at the limit"
         print(f"\r  {older['added']:,} older message(s), {note}.{' ' * 20}")
@@ -164,8 +191,7 @@ def describe_coverage(coverage: dict) -> str:
     start = datetime.fromisoformat(coverage["oldest_at"]).astimezone()
     end = datetime.fromisoformat(coverage["newest_at"]).astimezone()
     edge = "complete" if coverage["complete"] else "partial, reaches back further"
-    return (f"{start:%Y-%m-%d} → {end:%Y-%m-%d %H:%M} "
-            f"({coverage['messages']:,} messages, {edge})")
+    return f"{start:%Y-%m-%d} → {end:%Y-%m-%d %H:%M} ({coverage['messages']:,} messages, {edge})"
 
 
 def doctor(config: Config) -> int:
@@ -208,21 +234,34 @@ def doctor(config: Config) -> int:
     steps = [
         ("me", "who the token belongs to", "GET", "/users/@me", None),
         ("guilds", "the servers it can see", "GET", "/users/@me/guilds", None),
-        ("member", "its membership of this server", "GET",
-         f"/users/@me/guilds/{config.guild_id}/member", None),
-        ("roles", "the roles that exist there", "GET",
-         f"/guilds/{config.guild_id}/roles", None),
-        ("channels", "the channels it can see there", "GET",
-         f"/guilds/{config.guild_id}/channels", None),
+        (
+            "member",
+            "its membership of this server",
+            "GET",
+            f"/users/@me/guilds/{config.guild_id}/member",
+            None,
+        ),
+        ("roles", "the roles that exist there", "GET", f"/guilds/{config.guild_id}/roles", None),
+        (
+            "channels",
+            "the channels it can see there",
+            "GET",
+            f"/guilds/{config.guild_id}/channels",
+            None,
+        ),
         ("channel", "the channel itself", "GET", f"/channels/{config.channel_id}", None),
-        ("messages", "one message from it", "GET",
-         f"/channels/{config.channel_id}/messages", {"limit": 1}),
+        (
+            "messages",
+            "one message from it",
+            "GET",
+            f"/channels/{config.channel_id}/messages",
+            {"limit": 1},
+        ),
     ]
 
     failed = None
     for key, label, method, path, params in steps:
-        status, why, data = client.probe(method, path,
-                                         **({"params": params} if params else {}))
+        status, why, data = client.probe(method, path, **({"params": params} if params else {}))
         ok = bool(status and 200 <= status < 300)
         got[key] = data if ok else None
         print()
@@ -233,22 +272,28 @@ def doctor(config: Config) -> int:
             continue
 
         if key == "me":
-            print(f"     {data.get('username')} ({data.get('id')})")
+            print(f"     {(data or {}).get('username')} ({(data or {}).get('id')})")
         elif key == "guilds":
             here = [g for g in data or [] if str(g.get("id")) == config.guild_id]
-            print(f"     {len(data or [])} server(s); this one: "
-                  f"{'yes -- ' + here[0].get('name') if here else 'NOT PRESENT'}")
+            print(
+                f"     {len(data or [])} server(s); this one: "
+                f"{'yes -- ' + here[0].get('name') if here else 'NOT PRESENT'}"
+            )
         elif key == "member":
-            print(f"     joined {str(data.get('joined_at'))[:10]}, "
-                  f"{len(data.get('roles') or [])} role(s), pending={data.get('pending')}")
+            print(
+                f"     joined {str((data or {}).get('joined_at'))[:10]}, "
+                f"{len((data or {}).get('roles') or [])} role(s), pending={(data or {}).get('pending')}"
+            )
         elif key == "roles":
             print(f"     {len(data or [])} role(s) defined")
         elif key == "channels":
             here = [c for c in data or [] if str(c.get("id")) == config.channel_id]
-            print(f"     {len(data or [])} listed; the configured id is "
-                  + ("present" if here else "NOT among them"))
+            print(
+                f"     {len(data or [])} listed; the configured id is "
+                + ("present" if here else "NOT among them")
+            )
         elif key == "channel":
-            print(f"     #{data.get('name')}")
+            print(f"     #{(data or {}).get('name')}")
         else:
             print(f"     {len(data or [])} message(s) readable")
 
@@ -268,8 +313,9 @@ def doctor(config: Config) -> int:
         gateway.close()
 
     # ---- why a permission refusal happened ------------------------------
-    chan = next((c for c in (got.get("channels") or [])
-                 if str(c.get("id")) == config.channel_id), None)
+    chan = next(
+        (c for c in (got.get("channels") or []) if str(c.get("id")) == config.channel_id), None
+    )
     if failed and chan and got.get("member") is not None:
         mine = set(str(r) for r in (got["member"].get("roles") or []))
         by_id = {str(r.get("id")): r for r in (got.get("roles") or [])}
@@ -393,18 +439,17 @@ def grab(feed: Feed, grabber: Grabber, wanted, config: Config) -> int:
     seen = {}
     while any(t.active for t in tasks):
         for task in tasks:
-            line = "{:>8}  {}".format(task.state, task.title or task.job)
+            line = f"{task.state:>8}  {task.title or task.job}"
             step = task.state
             if task.transfers:
                 done = sum(1 for f in task.transfers if f.state in ("done", "held"))
                 got = sum(f.got for f in task.transfers)
                 size = sum(f.size for f in task.transfers)
                 pct = int(100 * got / size) if size else 0
-                line += "  {}/{} files  {}".format(
-                    done, len(task.transfers), human_size(got))
+                line += f"  {done}/{len(task.transfers)} files  {human_size(got)}"
                 if size:
-                    line += " of {}  {}%".format(human_size(size), pct)
-                step = "{} {} {}".format(task.state, done, pct)
+                    line += f" of {human_size(size)}  {pct}%"
+                step = f"{task.state} {done} {pct}"
             if seen.get(task.job) != step:
                 seen[task.job] = step
                 print(line)
@@ -466,9 +511,11 @@ def run(config: Config, args) -> int:
     # A poor yield is worth explaining rather than leaving as a mystery.
     if len(feed.cache) and len(posts) * 4 < len(feed.cache):
         t = why_dropped(feed.cache.all())
-        print(f"  {t['kept']:,} of {t['total']:,} messages are recommendations "
-              f"(chatter: {t['human']:,}, system: {t['system']:,}, "
-              f"no job: {t['no_job']:,})")
+        print(
+            f"  {t['kept']:,} of {t['total']:,} messages are recommendations "
+            f"(chatter: {t['human']:,}, system: {t['system']:,}, "
+            f"no job: {t['no_job']:,})"
+        )
 
     httpd, port = serve(channels, grabber, config.port)
     url = f"http://127.0.0.1:{port}/"
@@ -476,8 +523,7 @@ def run(config: Config, args) -> int:
     print(f"  archive: {describe_coverage(feed.coverage())}")
     print(f"  downloads: {config.download_path.resolve()}")
     if config.tail:
-        print("  showing only what arrives after this launch (--tail); "
-              "the cache keeps filling.")
+        print("  showing only what arrives after this launch (--tail); the cache keeps filling.")
     print(f"  {url}   (Ctrl+C to stop)")
 
     if config.open_browser:

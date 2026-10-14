@@ -5,17 +5,20 @@ from app.fc2id import extract_id, parse_id, strip_code
 from tests import fixtures
 
 
-@pytest.mark.parametrize("text, expected", [
-    ("FC2 PPV 1289686 (UNCENSORED 2160p)", "1289686"),
-    ("FC2 4902562 初撮", "4902562"),
-    ("FC2PPV-4907687-", "4907687"),
-    ("FC2-PPV-4823894", "4823894"),
-    ("fc2-ppv-4812315 初撮り", "4812315"),
-    ("[FHD]FC2PPV‐4907687_1", "4907687"),
-    ("Some release 2160p", None),
-    ("FC2 123", None),
-    ("FC2-PPV-123456789", None),
-])
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("FC2 PPV 1289686 (UNCENSORED 2160p)", "1289686"),
+        ("FC2 4902562 初撮", "4902562"),
+        ("FC2PPV-4907687-", "4907687"),
+        ("FC2-PPV-4823894", "4823894"),
+        ("fc2-ppv-4812315 初撮り", "4812315"),
+        ("[FHD]FC2PPV‐4907687_1", "4907687"),
+        ("Some release 2160p", None),
+        ("FC2 123", None),
+        ("FC2-PPV-123456789", None),
+    ],
+)
 def test_extract_id(text, expected):
     assert extract_id(text) == expected
 
@@ -43,7 +46,7 @@ def test_listing_rows():
     assert first.name == "fc2-ppv-4802589 藻梨特典有 & more"
     assert first.infohash == "68b8f9604d16dae11cb76c52990c54bddb80b070"
     assert first.magnet.startswith("magnet:?xt=urn:btih:") and "&amp;" not in first.magnet
-    assert first.size_bytes == int(1.8 * 1024 ** 3)
+    assert first.size_bytes == int(1.8 * 1024**3)
     assert (first.seeders, first.leechers, first.downloads) == (5, 11, 3)
     assert first.uploaded_at == 1791484390
     assert first.category == "Real Life - Videos"
@@ -78,6 +81,7 @@ def test_view_file_tree_and_risk():
 
 def test_fc2_article():
     article = fc2.parse_article(fixtures.FC2_ARTICLE)
+    assert article is not None
     assert article["title"] == "美巨乳&JD"
     assert article["cover"].startswith("https://contents-thumbnail2.fc2.com/w480/")
     assert article["cover_full"].startswith("https://contents-thumbnail2.fc2.com/w1280/")

@@ -10,6 +10,7 @@ from tests.conftest import drain, run_job
 def searched(http):
     """The sukebei queries requested, in order (page 1 only)."""
     from urllib.parse import parse_qs, urlsplit
+
     out = []
     for url in http.requests:
         if url.startswith(sukebei.BASE + "/?"):
@@ -26,11 +27,16 @@ def test_update_stops_at_the_newest_torrent_already_held(env):
     assert app.state.store.get_meta("newest_view_id") == 4732176
 
     http.pages[sukebei.search_url("FC2")] = fixtures.listing_page(
-        [fixtures.listing_row(4732300, "FC2-PPV-4900001 new", "55" * 20),
-         fixtures.listing_row(4732176, "FC2-PPV-4802589 1080p", "22" * 20)], total=1000, has_next=True)
+        [
+            fixtures.listing_row(4732300, "FC2-PPV-4900001 new", "55" * 20),
+            fixtures.listing_row(4732176, "FC2-PPV-4802589 1080p", "22" * 20),
+        ],
+        total=1000,
+        has_next=True,
+    )
     http.requests.clear()
     second = run_job(client, kind="update")
-    assert second["pages_read"] == 1                     # stopped at a known torrent; page 2 never read
+    assert second["pages_read"] == 1  # stopped at a known torrent; page 2 never read
     assert (second["new_torrents"], second["new_titles"]) == (1, 1)
     assert app.state.store.get_meta("newest_view_id") == 4732300
     assert not second["gap"]
@@ -47,7 +53,10 @@ def test_update_reports_a_gap_when_the_listing_cap_is_hit_before_the_frontier(en
     client, app, http = env
     app.state.store.set_meta("newest_view_id", 100)
     http.pages[sukebei.search_url("FC2")] = fixtures.listing_page(
-        [fixtures.listing_row(4732300, "FC2-PPV-4900001 new", "55" * 20)], total=1000, has_next=False)
+        [fixtures.listing_row(4732300, "FC2-PPV-4900001 new", "55" * 20)],
+        total=1000,
+        has_next=False,
+    )
     job = run_job(client, kind="update")
     assert job["gap"]
     assert client.get("/api/status").json()["coverage"]["update_gap"]
@@ -55,9 +64,10 @@ def test_update_reports_a_gap_when_the_listing_cap_is_hit_before_the_frontier(en
 
 def test_older_walks_id_blocks_downward_and_resumes(env):
     client, app, http = env
-    run_job(client, kind="update")                       # highest id held: 4802589
+    run_job(client, kind="update")  # highest id held: 4802589
     http.pages[sukebei.search_url("4802*")] = fixtures.listing_page(
-        [fixtures.listing_row(4700001, "FC2-PPV-4802111 older", "66" * 20)], total=1, has_next=False)
+        [fixtures.listing_row(4700001, "FC2-PPV-4802111 older", "66" * 20)], total=1, has_next=False
+    )
     http.requests.clear()
 
     job = run_job(client, kind="older", blocks=2)
@@ -67,7 +77,7 @@ def test_older_walks_id_blocks_downward_and_resumes(env):
     assert (coverage["history_top"], coverage["history_next"]) == (4802, 4800)
 
     http.requests.clear()
-    run_job(client, kind="older", blocks=1)              # continues where it stopped
+    run_job(client, kind="older", blocks=1)  # continues where it stopped
     assert searched(http) == ["4800*"]
     assert app.state.store.get_meta("history_next") == 4799
 
@@ -95,8 +105,7 @@ def test_a_failed_block_is_not_marked_done(env):
     http.text = broken
     job = run_job(client, kind="older", blocks=3)
     assert job["error"] and job["blocks_done"] == 1
-    assert app.state.store.get_meta("history_next") == 4801      # retried from 4801 next time
-
+    assert app.state.store.get_meta("history_next") == 4801  # retried from 4801 next time
 
 
 def test_history_wraps_to_the_short_ids_above_its_start(env):
@@ -123,14 +132,18 @@ def test_history_completes_just_above_where_it_started(env):
     run_job(client, kind="older", blocks=5)
     assert searched(http) == ["4803*"]
     coverage = client.get("/api/status").json()["coverage"]
-    assert coverage["history_complete"] and coverage["history_blocks"] == coverage["history_total"] == 9000
+    assert (
+        coverage["history_complete"]
+        and coverage["history_blocks"] == coverage["history_total"] == 9000
+    )
     http.requests.clear()
-    run_job(client, kind="older", blocks=5)                # nothing left to read
+    run_job(client, kind="older", blocks=5)  # nothing left to read
     assert searched(http) == []
 
 
 def test_next_block_covers_every_prefix_once():
     from app.crawler import next_block
+
     seen, cursor = [], 4802
     while cursor is not None:
         seen.append(cursor)
@@ -150,19 +163,23 @@ def test_reset_history_starts_again_from_the_newest_block(env):
     coverage = client.post("/api/history/reset", json={}).json()
     assert coverage["history_next"] is None and not coverage["update_gap"]
     app.state.crawler._job = {"running": True}
-    assert client.post("/api/history/reset", json={}).status_code == 409   # an Older run would overwrite it
+    assert (
+        client.post("/api/history/reset", json={}).status_code == 409
+    )  # an Older run would overwrite it
 
 
 def test_history_titles_wait_behind_new_uploads(env):
     client, app, http = env
     crawler = app.state.crawler
-    run_job(client, kind="update")                       # 4802589, 1289686 queued as new uploads
+    run_job(client, kind="update")  # 4802589, 1289686 queued as new uploads
     http.pages[sukebei.search_url("4802*")] = fixtures.listing_page(
-        [fixtures.listing_row(4700001, "FC2-PPV-4802111 older", "66" * 20)], total=1, has_next=False)
+        [fixtures.listing_row(4700001, "FC2-PPV-4802111 older", "66" * 20)], total=1, has_next=False
+    )
     run_job(client, kind="older", blocks=1)
     http.pages[sukebei.search_url("FC2")] = fixtures.listing_page(
-        [fixtures.listing_row(4732300, "FC2-PPV-4900001 new", "55" * 20)], total=1, has_next=False)
-    run_job(client, kind="update")                       # a later new upload still goes first
+        [fixtures.listing_row(4732300, "FC2-PPV-4900001 new", "55" * 20)], total=1, has_next=False
+    )
+    run_job(client, kind="update")  # a later new upload still goes first
     assert crawler._queues["fc2"].ids() == ["4802589", "1289686", "4900001", "4802111"]
     drain(crawler)
 
@@ -170,10 +187,50 @@ def test_history_titles_wait_behind_new_uploads(env):
 def test_custom_search_reads_every_page_until_the_last(env):
     client, app, http = env
     http.pages[sukebei.search_url("bisirichn")] = fixtures.listing_page(
-        [fixtures.listing_row(4732400, "FC2-PPV-4700000 seller pick", "77" * 20)], total=76, has_next=True)
+        [fixtures.listing_row(4732400, "FC2-PPV-4700000 seller pick", "77" * 20)],
+        total=76,
+        has_next=True,
+    )
     http.requests.clear()
     job = run_job(client, kind="search", query="bisirichn")
     assert job["pages_read"] == 2 and job["new_titles"] == 1
+
+
+def test_selected_source_search_reads_beyond_fourteen_pages(env):
+    client, app, http = env
+    assert client.put("/api/source", json={"source": "nyaa_cn"}).status_code == 200
+    for page in range(1, 17):
+        http.pages[sukebei.search_url("seller", page, source="nyaa_cn")] = fixtures.listing_page(
+            [], total=1200, has_next=page < 16
+        )
+    http.requests.clear()
+    job = run_job(client, kind="search", query="seller")
+    assert job["error"] == ""
+    assert job["source"] == "nyaa_cn" and job["pages_read"] == 16
+    assert all(url.startswith(sukebei.SOURCES["nyaa_cn"]) for url in http.requests)
+    job = run_job(client, kind="search", query="seller", pages=3)
+    assert job["pages_read"] == 3
+
+
+def test_saved_source_applies_to_default_update_and_file_checks(env):
+    client, app, http = env
+    assert client.get("/api/source").json() == {"source": "nyaa"}
+    client.put("/api/source", json={"source": "nyaa_cn"})
+    assert app.state.store.get_meta("crawl_source") == "nyaa_cn"
+    http.pages[sukebei.search_url("FC2", source="nyaa_cn")] = fixtures.listing_page(
+        [fixtures.listing_row(4732175, "FC2-PPV-4802589", "11" * 20)],
+        total=1,
+        has_next=False,
+    )
+    http.pages[sukebei.view_url(4732175, source="nyaa_cn")] = fixtures.VIEW
+    http.requests.clear()
+    job = run_job(client, kind="update", check_files=True)
+    assert job["error"] == "" and job["files_checked"] == 1
+    assert job["source"] == "nyaa_cn"
+    assert all(url.startswith(sukebei.SOURCES["nyaa_cn"]) for url in http.requests)
+    assert client.put("/api/source", json={"source": "unknown"}).status_code == 422
+    assert client.post("/api/jobs", json={"source": "unknown"}).status_code == 422
+    assert client.get("/api/source").json() == {"source": "nyaa_cn"}
 
 
 def test_stage_queue_orders_by_priority_then_arrival_with_urgent_newest_first():
@@ -183,20 +240,28 @@ def test_stage_queue_orders_by_priority_then_arrival_with_urgent_newest_first():
     q.put("new-2", NEW)
     q.put("look-1", URGENT, newest_first=True)
     q.put("look-2", URGENT, newest_first=True)
-    assert q.put("history", NEW) is False                # moved up, not added twice
+    assert q.put("history", NEW) is False  # moved up, not added twice
     assert q.ids() == ["look-2", "look-1", "new-1", "new-2", "history"]
-    assert [q.get(block=False) for _ in range(5)] == ["look-2", "look-1", "new-1", "new-2", "history"]
+    assert [q.get(block=False) for _ in range(5)] == [
+        "look-2",
+        "look-1",
+        "new-1",
+        "new-2",
+        "history",
+    ]
     assert q.get(block=False) is None and q.unfinished == 5
 
 
 def test_cancelled_update_is_not_relaunched_at_once(env):
     client, app, _ = env
     crawler, store = app.state.crawler, app.state.store
-    crawler.settings = crawler.settings.__class__(**{**crawler.settings.__dict__, "watch_minutes": 30})
-    assert crawler.update_due(now=10_000)                       # never updated
-    store.set_meta("last_update_try", 10_000)                   # an attempt that was cancelled
+    crawler.settings = crawler.settings.__class__(
+        **{**crawler.settings.__dict__, "watch_minutes": 30}
+    )
+    assert crawler.update_due(now=10_000)  # never updated
+    store.set_meta("last_update_try", 10_000)  # an attempt that was cancelled
     assert not crawler.update_due(now=10_000 + 60)
-    assert crawler.update_due(now=10_000 + 601)                 # retried after ten minutes
+    assert crawler.update_due(now=10_000 + 601)  # retried after ten minutes
     store.set_meta("last_update_at", 20_000)
     assert not crawler.update_due(now=20_000 + 29 * 60)
     assert crawler.update_due(now=20_000 + 30 * 60)
@@ -212,7 +277,10 @@ def test_worker_hands_over_before_marking_the_stage_done(env):
     drain(crawler)
     seen = []
     real = crawler._hand_over
-    crawler._hand_over = lambda fc2_id: (seen.append(crawler._queues["fc2"].unfinished), real(fc2_id))
+    crawler._hand_over = lambda fc2_id: (
+        seen.append(crawler._queues["fc2"].unfinished),
+        real(fc2_id),
+    )
     crawler.schedule(["4802589"], NEW)
     worker = threading.Thread(target=crawler._worker, args=("fc2",))
     worker.start()
@@ -222,6 +290,6 @@ def test_worker_hands_over_before_marking_the_stage_done(env):
         threading.Event().wait(0.01)
     crawler._queues["fc2"].close()
     worker.join(2)
-    assert seen == [1]                                          # still counted while handing over
+    assert seen == [1]  # still counted while handing over
     assert crawler._queues["pp"].ids() == ["4802589"] and not crawler.idle()
     drain(crawler)

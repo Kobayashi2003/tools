@@ -30,7 +30,7 @@ _OG_TITLE = re.compile(r'<meta property="og:title" content="([^"]*)"')
 _MAIN_THUMB = re.compile(r'items_article_MainitemThumb.{0,400}?<img[^>]+src="([^"]+)"', re.S)
 _DURATION = re.compile(r'<p class="items_article_info">\s*([\d:]+)\s*</p>')
 _SELLER = re.compile(r'href="([^"]*/users/[^"]+)"[^>]*data-article-seller-name[^>]*>([^<]*)<')
-_RATING = re.compile(r'items_article_StarA.{0,400}?items_article_Star(\d)', re.S)
+_RATING = re.compile(r"items_article_StarA.{0,400}?items_article_Star(\d)", re.S)
 _TAG = re.compile(r'data-tag="([^"]+)"')
 _RELEASED = re.compile(r"(?:販売日|Sale Day|Release Date)\s*[:：]\s*(\d{4}/\d{1,2}/\d{1,2})")
 _SAMPLE = re.compile(r'href="([^"]+)"[^>]*data-image-slideshow="sample-images"')
@@ -111,7 +111,7 @@ def fetch_sample_video(http, fc2_id, user_agent=None):
         data = http.json(f"{BASE}/api/v2/videos/{fc2_id}/sample", headers=headers)
     except NotFound:
         return None
-    except ValueError as exc:            # 200 with an HTML age gate / maintenance page instead of JSON
+    except ValueError as exc:  # 200 with an HTML age gate / maintenance page instead of JSON
         raise FetchError(f"Sample API did not return JSON: {exc}") from exc
     path = data.get("path") if isinstance(data, dict) else None
     return path if path and data.get("code") == 200 else None

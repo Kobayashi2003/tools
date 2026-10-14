@@ -1,17 +1,19 @@
 import time
 
-import pytest
-
 from app import paipancon
 from app.net import FetchError
-from tests.conftest import FakeResponse, crawl, drain, run_job
+from tests.conftest import FakeResponse, crawl, run_job
 
 
 def test_search_groups_torrents_by_fc2_id(env):
     client, app, http = env
     crawl(client, app)
     status = client.get("/api/status").json()
-    assert status["job"]["seen"] == 3 and status["job"]["new_torrents"] == 3 and status["job"]["new_titles"] == 2
+    assert (
+        status["job"]["seen"] == 3
+        and status["job"]["new_torrents"] == 3
+        and status["job"]["new_titles"] == 2
+    )
     assert status["stats"]["titles"] == 2 and status["stats"]["torrents"] == 3
 
     listing = client.get("/api/titles").json()
@@ -50,9 +52,11 @@ def test_rate_limited_source_is_retried_alone(env):
     http.text = limited
     crawler.enrich("4802589")
     title = client.get("/api/titles/4802589").json()
-    assert title["state"] == "failed" and title["fc2_state"] == "ok" and title["pp_state"] == "error"
+    assert (
+        title["state"] == "failed" and title["fc2_state"] == "ok" and title["pp_state"] == "error"
+    )
     assert "429" in title["errors"]["pp"] and title["attempts"] == 1
-    assert title["title"] == "美巨乳&JD"          # FC2 data is kept while paipancon is retried
+    assert title["title"] == "美巨乳&JD"  # FC2 data is kept while paipancon is retried
     assert client.get("/api/status").json()["stats"]["failed"] == 1
 
     http.text = real_text
@@ -71,22 +75,31 @@ def test_new_titles_start_in_the_fc2_stage(env):
     status = client.get("/api/status").json()
     assert status["waiting"] == {"fc2": 2, "pp": 0}
     item = client.get("/api/titles").json()["items"][0]
-    assert item["state"] == "pending" and item["fc2_state"] == "" and item["title"]  # torrent name fallback
+    assert (
+        item["state"] == "pending" and item["fc2_state"] == "" and item["title"]
+    )  # torrent name fallback
 
 
 def test_filters_and_flags(env):
     client, app, _ = env
     crawl(client, app)
     assert client.get("/api/titles", params={"q": "JD"}).json()["total"] == 1
-    assert client.get("/api/titles", params={"q": "FC2-PPV-1289686"}).json()["items"][0]["fc2_id"] == "1289686"
+    assert (
+        client.get("/api/titles", params={"q": "FC2-PPV-1289686"}).json()["items"][0]["fc2_id"]
+        == "1289686"
+    )
     assert client.get("/api/titles", params={"min_seeders": 1}).json()["total"] == 1
     assert client.get("/api/titles", params={"media_only": True}).json()["total"] == 1
 
     client.post("/api/titles/4802589/flags", json={"starred": True})
     client.post("/api/titles/1289686/flags", json={"hidden": True})
-    assert [i["fc2_id"] for i in client.get("/api/titles", params={"view": "starred"}).json()["items"]] == ["4802589"]
+    assert [
+        i["fc2_id"] for i in client.get("/api/titles", params={"view": "starred"}).json()["items"]
+    ] == ["4802589"]
     assert [i["fc2_id"] for i in client.get("/api/titles").json()["items"]] == ["4802589"]
-    assert [i["fc2_id"] for i in client.get("/api/titles", params={"view": "hidden"}).json()["items"]] == ["1289686"]
+    assert [
+        i["fc2_id"] for i in client.get("/api/titles", params={"view": "hidden"}).json()["items"]
+    ] == ["1289686"]
 
     client.get("/api/titles/4802589")  # opening marks it viewed
     assert client.get("/api/titles", params={"view": "unseen"}).json()["total"] == 0
@@ -127,10 +140,17 @@ def test_media_proxy_caches_and_rejects_other_hosts(env):
     assert client.get("/media", params={"u": url}).status_code == 200
     assert http.requests.count(url) == fetched
     assert client.get("/media", params={"u": "https://example.com/a.jpg"}).status_code == 403
-    assert client.get("/media", params={"u": "https://evil.paipancon.com.example.org/a.jpg"}).status_code == 403
+    assert (
+        client.get(
+            "/media", params={"u": "https://evil.paipancon.com.example.org/a.jpg"}
+        ).status_code
+        == 403
+    )
     assert client.get("/media", params={"u": "https://evilpaipancon.com/a.jpg"}).status_code == 403
     assert client.get("/media", params={"u": "file:///C:/Windows/win.ini"}).status_code == 403
-    assert client.get("/media", params={"u": "https://paipancon.com/missing.jpg"}).status_code == 404
+    assert (
+        client.get("/media", params={"u": "https://paipancon.com/missing.jpg"}).status_code == 404
+    )
 
 
 def test_refresh_requeues_and_clears_cached_media(env):
@@ -155,12 +175,29 @@ def test_opening_a_waiting_title_moves_it_to_the_front(env):
     crawler.schedule(["1111111", "2222222", "3333333"])
     assert crawler._queues["pp"].ids() == ["1111111", "2222222", "3333333"]
 
-    store.upsert_torrents([{"view_id": 1, "fc2_id": "3333333", "name": "FC2-PPV-3333333 x", "infohash": "a",
-                            "magnet": "magnet:?", "category": "", "size_bytes": 0, "uploaded_at": 0,
-                            "seeders": 0, "leechers": 0, "downloads": 0, "flag": ""}])
+    store.upsert_torrents(
+        [
+            {
+                "view_id": 1,
+                "fc2_id": "3333333",
+                "name": "FC2-PPV-3333333 x",
+                "infohash": "a",
+                "magnet": "magnet:?",
+                "category": "",
+                "size_bytes": 0,
+                "uploaded_at": 0,
+                "seeders": 0,
+                "leechers": 0,
+                "downloads": 0,
+                "flag": "",
+            }
+        ]
+    )
     client.get("/api/titles/3333333")
     assert crawler._queues["pp"].ids() == ["3333333", "1111111", "2222222"]
-    assert client.post("/api/titles/2222222/prioritize", json={}).json() == {"queued": 0}   # moved, not duplicated
+    assert client.post("/api/titles/2222222/prioritize", json={}).json() == {
+        "queued": 0
+    }  # moved, not duplicated
     assert crawler._queues["pp"].ids() == ["2222222", "3333333", "1111111"]
 
 
@@ -190,7 +227,7 @@ def test_fetch_in_flight_during_refresh_is_discarded(env):
     started = time.monotonic()
     time.sleep(0.01)
     crawler.refresh("4802589")
-    crawler.fetch_paipancon("4802589", started)        # began before the refresh: result dropped
+    crawler.fetch_paipancon("4802589", started)  # began before the refresh: result dropped
     title = client.get("/api/titles/4802589?mark_viewed=false").json()
     assert title["pp_state"] == "" and title["fc2_state"] == ""
     crawler.fetch_paipancon("4802589", time.monotonic())
@@ -203,7 +240,7 @@ def test_idle_waits_for_items_taken_but_unfinished(env):
     assert crawler.idle()
     app.state.store.ensure_title("1111111")
     crawler.schedule(["1111111"])
-    taken = crawler._queues["fc2"].get(block=False)      # a worker took it but has not finished
+    taken = crawler._queues["fc2"].get(block=False)  # a worker took it but has not finished
     assert not crawler.idle()
     crawler._queues["fc2"].done(taken)
     assert crawler.idle()
@@ -264,7 +301,9 @@ def test_media_redirects_only_to_allowed_hosts(env):
         raise FetchError("HTTP 404", 404)
 
     http.get = get
-    assert client.get("/media", params={"u": "https://someone.blog.fc2.com/a.jpg"}).status_code == 502
+    assert (
+        client.get("/media", params={"u": "https://someone.blog.fc2.com/a.jpg"}).status_code == 502
+    )
     assert "http://127.0.0.1:18050/api/status" not in http.requests
     followed = client.get("/media", params={"u": "https://someone.blog.fc2.com/b.jpg"})
     assert followed.status_code == 200 and followed.content == b"\xff\xd8jpeg"
@@ -284,9 +323,9 @@ def test_reading_marks(env):
     marks = client.post("/api/marks", json={"fc2_id": "FC2-PPV-1289686"}).json()
     assert [m["fc2_id"] for m in marks] == ["1289686"] and marks[0]["title"] == "old"
     client.post("/api/marks", json={"fc2_id": "4802589"})
-    client.post("/api/marks", json={"fc2_id": "4802589"})              # marking twice keeps one mark
+    client.post("/api/marks", json={"fc2_id": "4802589"})  # marking twice keeps one mark
     assert [m["fc2_id"] for m in client.get("/api/marks").json()] == ["1289686", "4802589"]
-    client.post("/api/marks", json={"fc2_id": "7777777"})              # unknown titles are ignored
+    client.post("/api/marks", json={"fc2_id": "7777777"})  # unknown titles are ignored
     assert len(client.get("/api/marks").json()) == 2
     assert [m["fc2_id"] for m in client.delete("/api/marks/1289686").json()] == ["4802589"]
 
@@ -295,7 +334,9 @@ def test_title_order_matches_the_list(env):
     client, app, _ = env
     crawl(client, app)
     for sort in ("uploaded", "seeders", "id"):
-        listed = [i["fc2_id"] for i in client.get("/api/titles", params={"sort": sort}).json()["items"]]
+        listed = [
+            i["fc2_id"] for i in client.get("/api/titles", params={"sort": sort}).json()["items"]
+        ]
         assert client.get("/api/titles/order", params={"sort": sort}).json()["ids"] == listed
     client.post("/api/titles/1289686/flags", json={"hidden": True})
     assert client.get("/api/titles/order").json()["ids"] == ["4802589"]

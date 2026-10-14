@@ -1,16 +1,16 @@
 import re
 import subprocess
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional
 from urllib.parse import urlparse
 
-from ..core.cache import Cache
 from ..common import env
 from ..common.logger import Logger
+from ..core.cache import Cache
 from ..core.models import ExternalLink
 
 
-def make_link_filter(cfg: Mapping) -> Optional[Callable[[ExternalLink], bool]]:
+def make_link_filter(cfg: Mapping) -> Callable[[ExternalLink], bool] | None:
     """Link predicate built from the `links_filter` config section; None when
     the section is empty (no filtering).
 
@@ -22,9 +22,9 @@ def make_link_filter(cfg: Mapping) -> Optional[Callable[[ExternalLink], bool]]:
         reviewed_before   the review cutoff date (ISO); without it a reviewed
                           artist's links are hidden entirely
     """
-    domains = list(cfg.get('allowed_domains') or [])
-    reviewed = set(cfg.get('reviewed_artists') or [])
-    cutoff = cfg.get('reviewed_before') or ''
+    domains = list(cfg.get("allowed_domains") or [])
+    reviewed = set(cfg.get("reviewed_artists") or [])
+    cutoff = cfg.get("reviewed_before") or ""
     if not domains and not reviewed:
         return None
 
@@ -53,12 +53,15 @@ class ExternalLinksExtractor:
         self.cache = cache
         self.logger = logger
 
-    def extract_from_artist(self, artist_id: str, match: Optional[str] = None,
-                            unique: bool = True,
-                            filter_func: Optional[Callable[[ExternalLink], bool]] = None
-                            ) -> List[ExternalLink]:
-        links: Dict[str, ExternalLink] = {}
-        ordered: List[ExternalLink] = []
+    def extract_from_artist(
+        self,
+        artist_id: str,
+        match: str | None = None,
+        unique: bool = True,
+        filter_func: Callable[[ExternalLink], bool] | None = None,
+    ) -> list[ExternalLink]:
+        links: dict[str, ExternalLink] = {}
+        ordered: list[ExternalLink] = []
         for post in self.cache.load_posts(artist_id):
             if not post.content:
                 continue
@@ -66,11 +69,16 @@ class ExternalLinksExtractor:
                 if unique and url in links:
                     continue
                 scheme, netloc = self._parse(url)
-                domain = netloc[4:] if netloc.startswith('www.') else netloc
+                domain = netloc[4:] if netloc.startswith("www.") else netloc
                 link = ExternalLink(
-                    url=url, domain=domain or 'unknown', protocol=scheme,
-                    post_id=post.id, post_title=post.title, post_published=post.published,
-                    post_edited=post.edited, artist_id=artist_id,
+                    url=url,
+                    domain=domain or "unknown",
+                    protocol=scheme,
+                    post_id=post.id,
+                    post_title=post.title,
+                    post_published=post.published,
+                    post_edited=post.edited,
+                    artist_id=artist_id,
                 )
                 if filter_func and not filter_func(link):
                     continue
@@ -79,18 +87,23 @@ class ExternalLinksExtractor:
                 ordered.append(link)
         return list(links.values()) if unique else ordered
 
-    def statistics(self, links: List[ExternalLink]) -> Dict:
-        domains: Dict[str, int] = {}
+    def statistics(self, links: list[ExternalLink]) -> dict:
+        domains: dict[str, int] = {}
         posts, artists = set(), set()
         for link in links:
             domains[link.domain] = domains.get(link.domain, 0) + 1
             posts.add(link.post_id)
             artists.add(link.artist_id)
         top = dict(sorted(domains.items(), key=lambda x: x[1], reverse=True)[:10])
-        return {'total_links': len(links), 'unique_domains': len(domains),
-                'unique_posts': len(posts), 'unique_artists': len(artists), 'top_domains': top}
+        return {
+            "total_links": len(links),
+            "unique_domains": len(domains),
+            "unique_posts": len(posts),
+            "unique_artists": len(artists),
+            "top_domains": top,
+        }
 
-    def _urls(self, text: str, match: Optional[str]) -> List[str]:
+    def _urls(self, text: str, match: str | None) -> list[str]:
         urls = re.findall(self.URL_PATTERN, text)
         if match:
             try:
@@ -113,22 +126,27 @@ class ExternalLinksExtractor:
             p = urlparse(url)
             return p.scheme, p.netloc
         except ValueError:
-            m = re.match(r'(https?)://([^/?#]*)', url)
-            return (m.group(1), m.group(2)) if m else ('', '')
+            m = re.match(r"(https?)://([^/?#]*)", url)
+            return (m.group(1), m.group(2)) if m else ("", "")
 
 
 class ExternalLinksDownloader:
     """Download extracted links via external tools (Google Drive through gdown)."""
 
-    def __init__(self, logger: Logger, out_dir: str = None):
+    def __init__(self, logger: Logger, out_dir: str | None = None):
         self.logger = logger
-        self.out_dir = Path(out_dir or env.get('CLOUD_DIR', 'cloud'))
-        self.gdown = env.get('GDOWN_BIN', 'gdown')
+        self.out_dir = Path(out_dir or env.get("CLOUD_DIR", "cloud"))
+        self.gdown = env.get("GDOWN_BIN", "gdown")
 
     @staticmethod
-    def _gdrive_id(url: str) -> Optional[str]:
-        for pattern in (r"/file/d/([^/]+)", r"[?&]id=([^&]+)", r"/folders/([^/?#]+)",
-                        r"/drive/folders/([^/?#]+)", r"/embeddedfolderview\?id=([^&]+)"):
+    def _gdrive_id(url: str) -> str | None:
+        for pattern in (
+            r"/file/d/([^/]+)",
+            r"[?&]id=([^&]+)",
+            r"/folders/([^/?#]+)",
+            r"/drive/folders/([^/?#]+)",
+            r"/embeddedfolderview\?id=([^&]+)",
+        ):
             m = re.search(pattern, url)
             if m:
                 return m.group(1)
@@ -142,13 +160,19 @@ class ExternalLinksDownloader:
         base.mkdir(parents=True, exist_ok=True)
         is_folder = any(p in url for p in ("/folders/", "/drive/folders/", "embeddedfolderview"))
         if is_folder:
-            subprocess.run([self.gdown, "--folder", f"https://drive.google.com/drive/folders/{file_id}"],
-                           cwd=base, check=True)
+            subprocess.run(
+                [self.gdown, "--folder", f"https://drive.google.com/drive/folders/{file_id}"],
+                cwd=base,
+                check=True,
+            )
         else:
-            subprocess.run([self.gdown, f"https://drive.google.com/uc?export=download&id={file_id}"],
-                           cwd=base, check=True)
+            subprocess.run(
+                [self.gdown, f"https://drive.google.com/uc?export=download&id={file_id}"],
+                cwd=base,
+                check=True,
+            )
 
-    def download_gdrive_links(self, urls: List[str]):
+    def download_gdrive_links(self, urls: list[str]):
         total, ok, fail = len(urls), 0, 0
         for i, url in enumerate(urls, 1):
             print(f"[{i}/{total}] {url}")
@@ -157,7 +181,7 @@ class ExternalLinksDownloader:
                 print("  ✓ done")
                 ok += 1
             except FileNotFoundError:
-                print("  ✗ 'gdown' not installed. Run: pip install gdown")
+                print("  ✗ 'gdown' not found. Run: uv sync")
                 return
             except Exception as e:
                 print(f"  ✗ {e}")

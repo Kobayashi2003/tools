@@ -12,9 +12,9 @@ import os
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, Optional, Set
+
 
 class Unreadable(OSError):
     """The state file is there but could not be read.
@@ -26,14 +26,16 @@ class Unreadable(OSError):
 
 def guarded(method):
     """One channel's marks are read and written from more than one thread."""
+
     @functools.wraps(method)
     def run(self, *args, **kwargs):
         with self.lock:
             return method(self, *args, **kwargs)
+
     return run
 
 
-def read_channel_names(path) -> Dict[str, str]:
+def read_channel_names(path) -> dict[str, str]:
     """Every channel name this file has been told about, {id: name}.
 
     Read straight from the file rather than through a ChannelState, because the
@@ -42,7 +44,7 @@ def read_channel_names(path) -> Dict[str, str]:
     """
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return {}
     out = {}
     for cid, channel in (data.get("channels") or {}).items():
@@ -53,17 +55,17 @@ def read_channel_names(path) -> Dict[str, str]:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def _parse(value: Optional[str]) -> Optional[datetime]:
+def _parse(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
         moment = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
 class ChannelState:
@@ -81,18 +83,18 @@ class ChannelState:
         # are not being written rather than quietly losing them.
         self.trouble: str = ""
         self.name: str = ""
-        self.taken: Set[str] = set()
-        self.bookmarks: Dict[str, str] = {}
+        self.taken: set[str] = set()
+        self.bookmarks: dict[str, str] = {}
         self.history_complete: bool = False
-        self.last_sync: Optional[datetime] = None
+        self.last_sync: datetime | None = None
         # What this instance changed since it last read the file. Saving applies
         # these to whatever is on disk now, rather than overwriting it: a server
         # left running holds a snapshot from when it started, and writing that
         # back wholesale silently discards anything another run did meanwhile.
-        self._add_taken: Set[str] = set()
-        self._del_taken: Set[str] = set()
-        self._add_marks: Dict[str, str] = {}
-        self._del_marks: Set[str] = set()
+        self._add_taken: set[str] = set()
+        self._del_taken: set[str] = set()
+        self._add_marks: dict[str, str] = {}
+        self._del_marks: set[str] = set()
         self.load()
 
     # -- disk -------------------------------------------------------------
@@ -191,8 +193,10 @@ class ChannelState:
         # runs did instead of drifting further from the file.
         self.taken, self.bookmarks = taken, marks
         self.history_complete, self.last_sync = complete, latest
-        self._add_taken.clear(); self._del_taken.clear()
-        self._add_marks.clear(); self._del_marks.clear()
+        self._add_taken.clear()
+        self._del_taken.clear()
+        self._add_marks.clear()
+        self._del_marks.clear()
 
     # -- what has been downloaded -----------------------------------------
 
@@ -259,7 +263,7 @@ class ChannelState:
     # -- the fetch reach --------------------------------------------------
 
     @guarded
-    def note_sync(self, complete: Optional[bool] = None) -> None:
+    def note_sync(self, complete: bool | None = None) -> None:
         self.last_sync = _now()
         if complete is not None:
             # Only ever latched on: once the beginning has been seen, a later

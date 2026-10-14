@@ -1,7 +1,7 @@
 """Retry with capped exponential backoff. No project types."""
 
 import time
-from typing import Callable, Iterable, Optional
+from collections.abc import Callable, Iterable
 
 from .limiter import jittered
 
@@ -10,8 +10,9 @@ class Cancelled(Exception):
     """Raised when `should_stop` asks the retry loop to abort."""
 
 
-def wait_for(attempt: int, delay: float, factor: float = 2.0,
-             cap: float = 60, jitter: float = 0.0) -> float:
+def wait_for(
+    attempt: int, delay: float, factor: float = 2.0, cap: float = 60, jitter: float = 0.0
+) -> float:
     """The wait after the `attempt`-th failure (1-based), before the next try.
 
     Exposed separately so a caller that varies the ladder per failure kind can
@@ -25,17 +26,20 @@ def wait_for(attempt: int, delay: float, factor: float = 2.0,
     return jittered(base, jitter)
 
 
-def retry(func: Callable, *,
-          retry_on: Iterable[type],
-          attempts: int = 0,
-          delay: float = 5,
-          factor: float = 2.0,
-          cap: float = 60,
-          jitter: float = 0.0,
-          decide: Optional[Callable[[Exception, int], Optional[float]]] = None,
-          should_stop: Optional[Callable[[], bool]] = None,
-          on_retry: Optional[Callable[[Exception, int, float], None]] = None,
-          on_give_up: Optional[Callable[[Exception, int], None]] = None):
+def retry(
+    func: Callable,
+    *,
+    retry_on: Iterable[type[Exception]],
+    attempts: int = 0,
+    delay: float = 5,
+    factor: float = 2.0,
+    cap: float = 60,
+    jitter: float = 0.0,
+    decide: Callable[[Exception, int], float | None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    on_retry: Callable[[Exception, int, float], None] | None = None,
+    on_give_up: Callable[[Exception, int], None] | None = None,
+):
     """Call `func` until it succeeds.
 
     By default: `attempts=0` retries forever, a positive value re-raises after
@@ -60,7 +64,7 @@ def retry(func: Callable, *,
             return func()
         except retry_on as e:
             if should_stop and should_stop():
-                raise Cancelled()
+                raise Cancelled() from e
             if decide is not None:
                 slept = decide(e, attempt)
                 if slept is None:
@@ -78,7 +82,7 @@ def retry(func: Callable, *,
             _sleep(slept, should_stop)
 
 
-def _sleep(seconds: float, should_stop: Optional[Callable[[], bool]]):
+def _sleep(seconds: float, should_stop: Callable[[], bool] | None):
     """Sleep in slices so a minute-long backoff still stops on request."""
     if not should_stop:
         time.sleep(seconds)

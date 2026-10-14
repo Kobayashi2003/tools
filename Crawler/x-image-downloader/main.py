@@ -5,15 +5,15 @@ Scrapes a user's timeline with Playwright and downloads full-resolution images,
 skipping reposts/ads and de-duplicating via a JSON log. Site: https://x.com
 """
 
-import os
-import re
-import json
-import random
 import asyncio
+import json
+import os
+import random
+import re
 from datetime import datetime
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from playwright.async_api import async_playwright, expect
 
 USER_AGENT = (
@@ -24,6 +24,7 @@ USER_AGENT = (
 
 # ---- helpers ----
 
+
 def sanitize_filename(name):
     name = re.sub(r'[\\/:*?"<>|]', "_", name)
     return re.sub(r"\s+", " ", name).strip(" .") or "_"
@@ -31,7 +32,7 @@ def sanitize_filename(name):
 
 def load_cookies(cookies_path):
     """Load Playwright cookies from a browser-export JSON file, normalizing sameSite."""
-    with open(cookies_path, "r", encoding="utf-8") as f:
+    with open(cookies_path, encoding="utf-8") as f:
         cookies = json.load(f)
 
     valid = {"strict": "Strict", "lax": "Lax", "none": "None"}
@@ -51,7 +52,7 @@ def load_cookies(cookies_path):
 
 def read_log(log_path):
     if os.path.exists(log_path):
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -67,6 +68,7 @@ async def _remove_article(article):
 
 # ---- scraping / download ----
 
+
 async def download_images(publish_images, author, publish_time, save_path):
     save_folder = os.path.join(save_path, sanitize_filename(author))
     os.makedirs(save_folder, exist_ok=True)
@@ -74,8 +76,8 @@ async def download_images(publish_images, author, publish_time, save_path):
 
     async with httpx.AsyncClient() as client:
         for image in publish_images:
-            image = image[:image.rfind("?")]
-            image_name = image[image.rfind("/") + 1:]
+            image = image[: image.rfind("?")]
+            image_name = image[image.rfind("/") + 1 :]
             image_url = image + "?format=jpg&name=orig"
             save_name = f"{sanitize_filename(author)}_{date}_{image_name}.jpg"
             response = await client.get(image_url)
@@ -106,19 +108,29 @@ async def scrape_timeline(context, url, cookies_path, save_path, log_path):
                     raise ValueError("This is an advertisement.")
 
                 time_element = soup.find("time")
+                link = time_element.find_parent() if isinstance(time_element, Tag) else None
+                if not isinstance(time_element, Tag) or link is None:
+                    raise ValueError("Article has no timestamp link.")
                 publish_time = time_element.get("datetime")
-                publish_url = "https://x.com" + time_element.find_parent().get("href")
+                publish_url = f"https://x.com{link.get('href')}"
 
                 tweet_text = soup.find("div", attrs={"data-testid": "tweetText"})
                 publish_content = tweet_text.get_text() if tweet_text else ""
 
                 photos = soup.find_all("div", attrs={"data-testid": "tweetPhoto"})
-                publish_images = [img.get("src") for photo in photos for img in photo.find_all("img")]
+                publish_images = [
+                    img.get("src") for photo in photos for img in photo.find_all("img")
+                ]
 
-                name_spans = soup.find("div", attrs={"data-testid": "User-Name"}).find_all("span")
+                user_name = soup.find("div", attrs={"data-testid": "User-Name"})
+                if not isinstance(user_name, Tag):
+                    raise ValueError("Article has no author.")
+                name_spans = user_name.find_all("span")
                 author = name_spans[0].get_text() + name_spans[-2].get_text()
 
-                print(f"Article: {publish_url} | {author} | {publish_time} | images: {len(publish_images)}")
+                print(
+                    f"Article: {publish_url} | {author} | {publish_time} | images: {len(publish_images)}"
+                )
 
                 log_data = read_log(log_path)
                 if publish_url in log_data:
@@ -147,8 +159,9 @@ async def scrape_timeline(context, url, cookies_path, save_path, log_path):
             await asyncio.sleep(random.randint(5, 10))
 
 
-async def run(urls, cookies_path="cookies.json", save_path="images", log_path="log.json",
-              headless=False):
+async def run(
+    urls, cookies_path="cookies.json", save_path="images", log_path="log.json", headless=False
+):
     if not os.path.exists(cookies_path):
         raise FileNotFoundError(f"cookies file not found: {cookies_path}")
     os.makedirs(save_path, exist_ok=True)
@@ -158,27 +171,38 @@ async def run(urls, cookies_path="cookies.json", save_path="images", log_path="l
         browser = await p.chromium.launch(headless=headless)
         context = await browser.new_context()
         try:
-            await asyncio.gather(*(
-                scrape_timeline(context, url, cookies_path, save_path, log_path) for url in urls))
+            await asyncio.gather(
+                *(scrape_timeline(context, url, cookies_path, save_path, log_path) for url in urls)
+            )
         finally:
             await browser.close()
 
 
 # ---- CLI ----
 
+
 def main(argv=None):
     import argparse
 
     parser = argparse.ArgumentParser(description="X (Twitter) timeline image downloader")
-    parser.add_argument("urls", nargs="+", help="Target user timeline URL(s), e.g. https://x.com/<user>")
+    parser.add_argument(
+        "urls", nargs="+", help="Target user timeline URL(s), e.g. https://x.com/<user>"
+    )
     parser.add_argument("-c", "--cookies", default="cookies.json", help="Path to cookies.json")
     parser.add_argument("-o", "--output", default="images", help="Output directory")
     parser.add_argument("-l", "--log", default="log.json", help="Path to the dedup log file")
     parser.add_argument("--headless", action="store_true", help="Run the browser headless")
     args = parser.parse_args(argv)
 
-    asyncio.run(run(args.urls, cookies_path=args.cookies, save_path=args.output,
-                    log_path=args.log, headless=args.headless))
+    asyncio.run(
+        run(
+            args.urls,
+            cookies_path=args.cookies,
+            save_path=args.output,
+            log_path=args.log,
+            headless=args.headless,
+        )
+    )
 
 
 if __name__ == "__main__":

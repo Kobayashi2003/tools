@@ -5,7 +5,7 @@ const DEFAULTS = {
 };
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.get(DEFAULTS, (stored) => {
+  chrome.storage.sync.get(DEFAULTS, stored => {
     chrome.storage.sync.set({ ...DEFAULTS, ...stored });
   });
 });

@@ -12,7 +12,7 @@ the bot's reply comes back over the gateway, which is `gateway.py`'s job.
 """
 
 import time
-from typing import Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 import requests
 
@@ -48,15 +48,17 @@ class Discord:
     def __init__(self, config):
         self.config = config
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": config.token,
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": config.channel_url(),
-            "Origin": "https://discord.com",
-            "X-Discord-Locale": "en-US",
-        })
+        self.session.headers.update(
+            {
+                "Authorization": config.token,
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": config.channel_url(),
+                "Origin": "https://discord.com",
+                "X-Discord-Locale": "en-US",
+            }
+        )
         if config.proxy:
             self.session.proxies = {"http": config.proxy, "https": config.proxy}
 
@@ -67,18 +69,18 @@ class Discord:
         last_error = None
         for attempt in range(1, max(1, self.config.retry) + 1):
             try:
-                response = self.session.request(
-                    method, url, timeout=self.config.timeout, **kwargs)
+                response = self.session.request(method, url, timeout=self.config.timeout, **kwargs)
             except Exception as exc:
                 last_error = exc
-                time.sleep(min(2 ** attempt, 10))
+                time.sleep(min(2**attempt, 10))
                 continue
 
             if response.status_code == 401:
                 raise AuthRequired(
                     f"Discord rejected the token (401){_why(response)}. It changes "
                     f"whenever you log out or change your password -- read a fresh "
-                    f"one and update TMW_TOKEN in .env.")
+                    f"one and update TMW_TOKEN in .env."
+                )
             if response.status_code == 403:
                 # Say what Discord said. A 403 here can mean the account cannot
                 # see the channel, but it can equally mean the credential is an
@@ -87,7 +89,8 @@ class Discord:
                 # someone looking in the wrong place.
                 raise NoAccess(
                     f"Discord refused the request (403){_why(response)}. "
-                    f"Run `python main.py --doctor` to see which step fails.")
+                    f"Run `uv run python main.py --doctor` to see which step fails."
+                )
             if response.status_code == 429:
                 # Discord says exactly how long to wait; guessing is worse -- but
                 # an edge can answer 429 with HTML, and a rate limit must not
@@ -101,22 +104,25 @@ class Discord:
                 continue
             if 500 <= response.status_code < 600:
                 last_error = f"HTTP {response.status_code}"
-                time.sleep(min(2 ** attempt, 10))
+                time.sleep(min(2**attempt, 10))
                 continue
             return response
 
-        raise RuntimeError(f"{method} {url} failed after {self.config.retry} attempts: {last_error}")
+        raise RuntimeError(
+            f"{method} {url} failed after {self.config.retry} attempts: {last_error}"
+        )
 
     # -- history ----------------------------------------------------------
 
-    def _page(self, before: str = "", after: str = "", limit: int = 100) -> List[dict]:
-        params = {"limit": max(1, min(limit, 100))}
+    def _page(self, before: str = "", after: str = "", limit: int = 100) -> list[dict]:
+        params: dict[str, int | str] = {"limit": max(1, min(limit, 100))}
         if before:
             params["before"] = before
         if after:
             params["after"] = after
         response = self._request(
-            "GET", f"/channels/{self.config.channel_id}/messages", params=params)
+            "GET", f"/channels/{self.config.channel_id}/messages", params=params
+        )
         if not response.ok:
             raise RuntimeError(f"messages: HTTP {response.status_code} {response.text[:200]}")
         return response.json()
@@ -125,8 +131,7 @@ class Discord:
     def _size(self) -> int:
         return max(1, min(int(self.config.page_size), 100))
 
-    def newer_than(self, message_id: str, max_messages: int = 0,
-                   on_page=None) -> List[dict]:
+    def newer_than(self, message_id: str, max_messages: int = 0, on_page=None) -> list[dict]:
         """Everything posted after `message_id`, oldest first.
 
         `after` returns the oldest slice of what is newer, so walking forward
@@ -137,7 +142,7 @@ class Discord:
         `on_page` may return False to call the walk off; what was collected so
         far is still returned, so a stopped crawl keeps what it read.
         """
-        collected: List[dict] = []
+        collected: list[dict] = []
         cursor = message_id
         while True:
             want = self._size
@@ -158,8 +163,9 @@ class Discord:
         collected.sort(key=lambda m: int(m["id"]))
         return collected
 
-    def walk_back(self, before: str = "", floor_id: str = "",
-                  max_messages: int = 0, on_page=None) -> Tuple[List[dict], bool]:
+    def walk_back(
+        self, before: str = "", floor_id: str = "", max_messages: int = 0, on_page=None
+    ) -> tuple[list[dict], bool]:
         """Page backwards from `before` (or the newest) until a `floor_id`, a
         `max_messages` budget, or the channel runs out.
 
@@ -168,7 +174,7 @@ class Discord:
         know the archive is complete. `on_page` may return False to call the
         walk off, which ends it without claiming the beginning was reached.
         """
-        collected: List[dict] = []
+        collected: list[dict] = []
         cursor = before
         exhausted = False
 
@@ -203,14 +209,15 @@ class Discord:
 
     # -- links ------------------------------------------------------------
 
-    def refresh_urls(self, urls: Iterable[str]) -> Dict[str, str]:
+    def refresh_urls(self, urls: Iterable[str]) -> dict[str, str]:
         """Re-sign expired attachment links. Returns {old url: new url}."""
         pending = [u for u in dict.fromkeys(urls) if u]
-        mapping: Dict[str, str] = {}
+        mapping: dict[str, str] = {}
         for start in range(0, len(pending), REFRESH_BATCH):
-            batch = pending[start:start + REFRESH_BATCH]
-            response = self._request("POST", "/attachments/refresh-urls",
-                                     json={"attachment_urls": batch})
+            batch = pending[start : start + REFRESH_BATCH]
+            response = self._request(
+                "POST", "/attachments/refresh-urls", json={"attachment_urls": batch}
+            )
             if not response.ok:
                 # A stale link still points at the right file; the download just
                 # fails. Better to hand back what we have than to lose the page.
@@ -236,9 +243,13 @@ class Discord:
         for channel in response.json() or []:
             if channel.get("type") not in (0, 5):
                 continue
-            out.append({"id": str(channel.get("id")),
-                        "name": channel.get("name") or "",
-                        "position": channel.get("position", 0)})
+            out.append(
+                {
+                    "id": str(channel.get("id")),
+                    "name": channel.get("name") or "",
+                    "position": channel.get("position", 0),
+                }
+            )
         return out
 
     # -- interactions -----------------------------------------------------
@@ -253,10 +264,10 @@ class Discord:
         response = self._request("POST", "/interactions", json=body)
         if not response.ok:
             raise RuntimeError(
-                f"the button was refused: HTTP {response.status_code}"
-                f"{_why(response)}")
+                f"the button was refused: HTTP {response.status_code}{_why(response)}"
+            )
 
-    def whoami(self) -> Optional[dict]:
+    def whoami(self) -> dict | None:
         response = self._request("GET", "/users/@me")
         return response.json() if response.ok else None
 
@@ -264,8 +275,7 @@ class Discord:
         """One request that reports instead of raising -- for `--doctor`."""
         url = path if path.startswith("http") else f"{API_BASE}{path}"
         try:
-            response = self.session.request(
-                method, url, timeout=self.config.timeout, **kwargs)
+            response = self.session.request(method, url, timeout=self.config.timeout, **kwargs)
         except Exception as exc:
             return None, f"{type(exc).__name__}: {exc}", None
         try:

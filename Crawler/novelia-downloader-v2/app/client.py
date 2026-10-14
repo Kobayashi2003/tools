@@ -9,7 +9,8 @@ import re
 import threading
 import time
 import zipfile
-from datetime import datetime, timedelta, timezone
+import zlib
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -38,7 +39,15 @@ class TransientError(RuntimeError):
     """A failure that may succeed later: network errors, server errors, interrupted transfers."""
 
 
-class IncompleteTransfer(TransientError):
+class NetworkError(TransientError):
+    """The connection itself failed; many in a row usually mean the network is down."""
+
+
+class ServerError(TransientError):
+    """Novelia kept answering 5xx. For one volume this is often a persistent generation bug."""
+
+
+class IncompleteTransfer(NetworkError):
     pass
 
 
@@ -58,16 +67,34 @@ def component(text, limit=65):
 
 
 def validate_epub(path):
+    """Accept what e-readers open. Uploads are often rebuilt by tools such as calibre, which can
+    leave an empty mimetype entry or a bad checksum on a directory entry; neither affects content."""
     try:
         with zipfile.ZipFile(path) as z:
-            if z.read("mimetype").strip() != b"application/epub+zip":
-                raise ValueError("The response is not an EPUB.")
-            if "META-INF/container.xml" not in z.namelist() or not any(n.endswith(".opf") for n in z.namelist()):
+            names = z.namelist()
+            mimetype = z.read("mimetype").strip() if "mimetype" in names else b""
+            if mimetype and b"epub" not in mimetype:
+                raise ValueError("The file is not an EPUB.")
+            if "META-INF/container.xml" not in names or not any(n.endswith(".opf") for n in names):
                 raise ValueError("EPUB package metadata is missing.")
-            if z.testzip():
-                raise ValueError("EPUB archive is corrupt.")
-    except (zipfile.BadZipFile, KeyError):
-        raise ValueError("The response is not a valid EPUB.") from None
+            for info in z.infolist():
+                if not info.is_dir():
+                    with z.open(info) as entry:  # reading to the end checks the CRC
+                        while entry.read(1 << 20):
+                            pass
+    except zipfile.BadZipFile, zlib.error, EOFError:
+        raise ValueError(
+            "Novelia's copy of this volume is not a valid EPUB (damaged upload)."
+        ) from None
+
+
+def validate_text(path):
+    if not path.stat().st_size:
+        raise ValueError("Novelia's copy of this volume is empty.")
+
+
+def validator(destination):
+    return validate_text if destination.suffix.lower() == ".txt" else validate_epub
 
 
 def retry_after(value, limit=86400):
@@ -79,8 +106,8 @@ def retry_after(value, limit=86400):
         seconds = float(value)
     except ValueError:
         try:
-            seconds = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
-        except (TypeError, ValueError):
+            seconds = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
+        except TypeError, ValueError:
             return None
     return min(limit, max(0.0, seconds))
 
@@ -149,9 +176,13 @@ class Client:
         self.downloads = 0
         self.rest_due = False
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-                                    "Accept": "application/json, text/plain, */*"})
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+            }
+        )
         token = os.environ.get("NOVELIA_TOKEN", "").strip()
         token_path = Path(os.environ.get("NOVELIA_TOKEN_FILE", "token.txt"))
         if not token and token_path.is_file():
@@ -174,27 +205,33 @@ class Client:
         """Sleep while publishing the reason, so long pauses are visible in the task list."""
         if seconds <= 0:
             return
-        visible = self.on_wait and seconds >= 2
-        if visible:
-            self.on_wait(datetime.now(timezone.utc) + timedelta(seconds=seconds), reason)
+        on_wait = self.on_wait if seconds >= 2 else None
+        if on_wait:
+            on_wait(datetime.now(UTC) + timedelta(seconds=seconds), reason)
         try:
             self.sleep(seconds)
         finally:
-            if visible:
-                self.on_wait(None, None)
+            if on_wait:
+                on_wait(None, None)
 
     def deferral(self, cooling):
         if self.interactive:
-            return Deferred(f"Novelia is rate limiting requests; try again in about {math.ceil(cooling)} s.",
-                            datetime.now(timezone.utc) + timedelta(seconds=cooling))
+            return Deferred(
+                f"Novelia is rate limiting requests; try again in about {math.ceil(cooling)} s.",
+                datetime.now(UTC) + timedelta(seconds=cooling),
+            )
         # Never wake before the site's own cooldown (e.g. a long Retry-After) has passed.
         seconds = max(self.config.rate_limit_pause * 60, cooling)
-        return Deferred(f"Novelia kept refusing requests for {self.config.rate_limit_patience:g} min; "
-                        f"pausing the task for {math.ceil(seconds / 60)} min.",
-                        datetime.now(timezone.utc) + timedelta(seconds=seconds))
+        return Deferred(
+            f"Novelia kept refusing requests for {self.config.rate_limit_patience:g} min; "
+            f"pausing the task for {math.ceil(seconds / 60)} min.",
+            datetime.now(UTC) + timedelta(seconds=seconds),
+        )
 
     def get(self, path, **kwargs):
-        patience = INTERACTIVE_PATIENCE if self.interactive else self.config.rate_limit_patience * 60
+        patience = (
+            INTERACTIVE_PATIENCE if self.interactive else self.config.rate_limit_patience * 60
+        )
         limited = 0.0  # time this request has spent cooling down after rate limits
         failures = 0
         if self.rest_due:
@@ -207,22 +244,33 @@ class Client:
                     raise self.deferral(cooling)
                 self.wait(cooling, "Novelia is rate limiting requests; backing off")
                 limited += cooling
-            wait = self.throttle.reserve(self.config, INTERACTIVE_PATIENCE if self.interactive else None)
+            wait = self.throttle.reserve(
+                self.config, INTERACTIVE_PATIENCE if self.interactive else None
+            )
             if wait is None:
-                raise Deferred("Novelia requests are being slowed down; try again shortly.",
-                               datetime.now(timezone.utc) + timedelta(seconds=INTERACTIVE_PATIENCE))
+                raise Deferred(
+                    "Novelia requests are being slowed down; try again shortly.",
+                    datetime.now(UTC) + timedelta(seconds=INTERACTIVE_PATIENCE),
+                )
             self.sleep(wait)
             if self.throttle.cooling():
                 continue  # another request was rate limited while this one waited for its slot
             try:
-                response = self.session.get(SITE + path, timeout=(self.config.connect_timeout, self.config.timeout),
-                                            **kwargs)
-            except requests.RequestException as exc:  # includes failures while reading a non-streamed body
+                response = self.session.get(
+                    SITE + path,
+                    timeout=(self.config.connect_timeout, self.config.timeout),
+                    **kwargs,
+                )
+            except requests.RequestException as exc:  # also covers reading a non-streamed body
                 # Request exceptions can embed credentials from a proxy URL; keep diagnostics generic.
                 failures += 1
                 if failures >= self.config.retries:
-                    raise TransientError(f"Network {type(exc).__name__} after {failures} attempts") from None
-                self.wait(backoff_delay(self.config, failures), f"Network {type(exc).__name__}; retrying")
+                    raise NetworkError(
+                        f"Network {type(exc).__name__} after {failures} attempts"
+                    ) from None
+                self.wait(
+                    backoff_delay(self.config, failures), f"Network {type(exc).__name__}; retrying"
+                )
                 continue
             code = response.status_code
             if code < 400:
@@ -234,14 +282,21 @@ class Client:
                 self.throttle.limited(self.config, hint)
                 continue
             if code in (401, 403):
-                raise PermissionError(f"HTTP {code}: access was refused. Check the login token or network access.")
+                raise PermissionError(
+                    f"HTTP {code}: access was refused. Check the login token or network access."
+                )
             if code >= 500 or code == 408:
                 failures += 1
                 if failures >= self.config.retries:
-                    raise TransientError(f"HTTP {code} after {failures} attempts")
-                self.wait(max(hint or 0, backoff_delay(self.config, failures)), f"HTTP {code}; retrying")
+                    raise ServerError(f"HTTP {code} after {failures} attempts")
+                self.wait(
+                    max(hint or 0, backoff_delay(self.config, failures)), f"HTTP {code}; retrying"
+                )
                 continue
-            raise Rejected(f"HTTP {code}: " + ("not found on Novelia." if code == 404 else "Novelia rejected the request."))
+            raise Rejected(
+                f"HTTP {code}: "
+                + ("not found on Novelia." if code == 404 else "Novelia rejected the request.")
+            )
 
     def json(self, path, params=None):
         with self.get(path, params=params) as response:
@@ -255,9 +310,18 @@ class Client:
         return payload
 
     def listing(self, page, category, query=""):
-        result = self.json("/api/wenku", {"page": page - 1, "pageSize": self.config.page_size,
-                                          "query": query, "level": category})
-        if not isinstance(result.get("items"), list) or not isinstance(result.get("pageNumber"), int):
+        result = self.json(
+            "/api/wenku",
+            {
+                "page": page - 1,
+                "pageSize": self.config.page_size,
+                "query": query,
+                "level": category,
+            },
+        )
+        if not isinstance(result.get("items"), list) or not isinstance(
+            result.get("pageNumber"), int
+        ):
             raise ValueError("Unexpected catalog response; task checkpoint has not advanced.")
         return result
 
@@ -269,9 +333,11 @@ class Client:
             raise ValueError("Unexpected work metadata; existing records have been preserved.")
         return data
 
-    def transfer(self, path, temp, params):
+    def transfer(self, path, temp, params, validate):
         with self.get(path, params=params, stream=True) as response, temp.open("wb") as out:
             expected = response.headers.get("Content-Length")
+            if expected == "0":
+                raise ValueError("Novelia's copy of this volume is empty.")
             size = 0
             digest = hashlib.sha256()
             for chunk in response.iter_content(65536):
@@ -286,7 +352,7 @@ class Client:
                 raise IncompleteTransfer("Download was truncated.")
             verified_length = bool(expected and not response.headers.get("Content-Encoding"))
         try:
-            validate_epub(temp)
+            validate(temp)
         except ValueError as exc:
             if verified_length:
                 raise  # the complete file arrived and is not an EPUB: retrying will not help
@@ -297,33 +363,51 @@ class Client:
     def download(self, path, destination, params=None):
         destination.parent.mkdir(parents=True, exist_ok=True)
         temp = destination.with_suffix(destination.suffix + ".part")
+        validate = validator(destination)
         try:
             for attempt in range(1, self.config.retries + 1):
                 try:
-                    size, digest = self.transfer(path, temp, params)
+                    size, digest = self.transfer(path, temp, params, validate)
                     break
                 except (requests.RequestException, IncompleteTransfer) as exc:
                     detail = str(exc) if isinstance(exc, IncompleteTransfer) else type(exc).__name__
                     if attempt >= self.config.retries:
-                        raise TransientError(f"Transfer failed after {attempt} attempts: {detail}") from None
-                    self.wait(backoff_delay(self.config, attempt), f"Transfer interrupted ({detail}); retrying")
+                        raise NetworkError(
+                            f"Transfer failed after {attempt} attempts: {detail}"
+                        ) from None
+                    self.wait(
+                        backoff_delay(self.config, attempt),
+                        f"Transfer interrupted ({detail}); retrying",
+                    )
+            else:
+                raise TransientError("Transfer not attempted: retries is 0")
             self.check()
             temp.replace(destination)
         finally:
             temp.unlink(missing_ok=True)
         # The rest happens before the next request, so the caller can record this file first.
         self.downloads += 1
-        self.rest_due = bool(self.config.rest_every and self.downloads % self.config.rest_every == 0)
+        self.rest_due = bool(
+            self.config.rest_every and self.downloads % self.config.rest_every == 0
+        )
         return size, digest
 
     def source(self, key, volume, destination, original=False):
         parts = key.split("/", 1)
-        params = [("mode", self.config.source_mode), ("translationsMode", self.config.translations_mode),
-                  ("filename", "download.epub")]
+        # Text volumes come back as text from the same endpoints (bilingual lines interleaved),
+        # whatever the filename parameter says.
+        params = [
+            ("mode", self.config.source_mode),
+            ("translationsMode", self.config.translations_mode),
+            ("filename", "download.epub"),
+        ]
         params.extend(("translations", t) for t in self.config.translations)
         if parts[0] == "wenku":
-            path = f"/files-wenku/{parts[1]}/{quote(volume, safe='')}" if original else (
-                f"/api/wenku/{parts[1]}/file/{quote(volume, safe='')}")
+            path = (
+                f"/files-wenku/{parts[1]}/{quote(volume, safe='')}"
+                if original
+                else (f"/api/wenku/{parts[1]}/file/{quote(volume, safe='')}")
+            )
             if original:
                 params = None
         else:

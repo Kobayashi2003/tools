@@ -34,6 +34,8 @@ export function enhanceSelect(select) {
   const options = () => [...list.children];
 
   function sync() {
+    button.disabled = select.disabled;
+    button.title = select.title;
     label.textContent = select.selectedOptions[0]?.textContent ?? '';
     list.replaceChildren(...[...select.options].map((option, i) => {
       const li = document.createElement('li');
@@ -56,7 +58,7 @@ export function enhanceSelect(select) {
   }
 
   function open() {
-    if (!list.hidden) return;
+    if (select.disabled || !list.hidden) return;
     list.hidden = false;
     button.setAttribute('aria-expanded', 'true');
     // Open upwards when there is no room below.
@@ -74,6 +76,7 @@ export function enhanceSelect(select) {
   }
 
   function choose(i) {
+    if (select.disabled) return;
     const changed = select.selectedIndex !== i;
     select.selectedIndex = i;
     sync();

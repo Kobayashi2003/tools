@@ -1,4 +1,12 @@
 .claude/
 .vscode/
 
+# Python
+.venv/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Written by start.ps1 / gateway.ps1 while running
+.running.json

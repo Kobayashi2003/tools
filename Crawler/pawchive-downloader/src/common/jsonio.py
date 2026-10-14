@@ -19,12 +19,12 @@ class CorruptJSON(Exception):
         self.path = Path(path)
 
 
-def read_json(path, default: Any = None) -> Any:
+def read_json(path, default: Any | None = None) -> Any:
     """Parse `path`. A missing file yields `default`; a corrupt one raises."""
     path = Path(path)
     if not path.exists():
         return default
-    text = path.read_text(encoding='utf-8')
+    text = path.read_text(encoding="utf-8")
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
@@ -37,7 +37,7 @@ def write_json(path, data: Any):
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.parent / f".{path.name}.{uuid.uuid4().hex[:8]}.tmp"
     try:
-        temp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+        temp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(temp, path)
     except BaseException:
         temp.unlink(missing_ok=True)

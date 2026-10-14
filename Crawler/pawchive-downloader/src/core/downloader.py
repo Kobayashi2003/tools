@@ -1,7 +1,6 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import requests
 
@@ -12,8 +11,14 @@ from ..common.notifier import Notifier
 from .api import API, PermanentAPIError
 from .cache import Cache
 from .deferrals import Deferrals
-from .files import (distinct, entries_of, entries_of_parts, extract_files,
-                    get_config_value, unusable_files)
+from .files import (
+    distinct,
+    entries_of,
+    entries_of_parts,
+    extract_files,
+    get_config_value,
+    unusable_files,
+)
 from .formatter import Formatter
 from .models import Artist, Config, DownloadResult, Post
 from .storage import Storage
@@ -22,9 +27,16 @@ from .storage import Storage
 class Downloader:
     """Drives the fetch -> cache -> download pipeline for artists."""
 
-    def __init__(self, config: Config, logger: Logger, storage: Storage, cache: Cache,
-                 api: API, notifier: Optional[Notifier] = None,
-                 deferrals: Optional[Deferrals] = None):
+    def __init__(
+        self,
+        config: Config,
+        logger: Logger,
+        storage: Storage,
+        cache: Cache,
+        api: API,
+        notifier: Notifier | None = None,
+        deferrals: Deferrals | None = None,
+    ):
         self.config = config
         self.logger = logger
         self.storage = storage
@@ -32,10 +44,10 @@ class Downloader:
         self.api = api
         self.notifier = notifier or Notifier(enabled=False)
         self.deferrals = deferrals or Deferrals(
-            Path(config.data_dir) / 'not_found.json',
-            first_days=getattr(config, 'not_found_retry_days', 1.0),
-            backoff=getattr(config, 'not_found_retry_backoff', 2.0),
-            cap_days=getattr(config, 'not_found_retry_cap_days', 30.0),
+            Path(config.data_dir) / "not_found.json",
+            first_days=getattr(config, "not_found_retry_days", 1.0),
+            backoff=getattr(config, "not_found_retry_backoff", 2.0),
+            cap_days=getattr(config, "not_found_retry_cap_days", 30.0),
             logger=logger,
         )
         self._cancel_lock = threading.Lock()
@@ -51,8 +63,10 @@ class Downloader:
         """
         if isinstance(e, PermanentAPIError):
             return True
-        return (isinstance(e, requests.exceptions.HTTPError)
-                and getattr(getattr(e, 'response', None), 'status_code', None) == 404)
+        return (
+            isinstance(e, requests.exceptions.HTTPError)
+            and getattr(getattr(e, "response", None), "status_code", None) == 404
+        )
 
     # ==================== Cancellation ====================
     # A cancelled id stays in `_cancelled` until its own run clears it on exit,
@@ -94,13 +108,14 @@ class Downloader:
             return True
         except QuotaExceeded as e:
             if quota.mark_reported():
-                self.logger.downloader_quota_paused(error=str(e), level='error')
+                self.logger.downloader_quota_paused(error=str(e), level="error")
             return False
 
     # ==================== Cache refresh ====================
 
-    def update_posts(self, artist: Artist, detect_edits: bool = False,
-                     recover_lost: bool = False) -> Dict[str, int]:
+    def update_posts(
+        self, artist: Artist, detect_edits: bool = False, recover_lost: bool = False
+    ) -> dict[str, int]:
         """Refresh the cached post list; returns counts keyed
         `new`/`edited`/`lost`/`recovered`.
 
@@ -110,7 +125,7 @@ class Downloader:
 
         `recover_lost` (from `sync-lost`) reclaims restored posts; see `_apply_lost`.
         """
-        empty = {'new': 0, 'edited': 0, 'lost': 0, 'recovered': 0}
+        empty = {"new": 0, "edited": 0, "lost": 0, "recovered": 0}
         if self.is_cancelled(artist.id) or artist.completed or artist.ignore:
             return empty
 
@@ -120,16 +135,24 @@ class Downloader:
             # Gone upstream. Leave the cache untouched -- what we already have
             # stays downloadable, and a later run picks it up if it returns.
             self.logger.downloader_creator_unavailable(
-                artist=artist.display_name(), error=str(e), level='error')
+                artist=artist.display_name(), error=str(e), level="error"
+            )
             return empty
 
         cached_posts = self.cache.load_posts(artist.id, apply_filters=False)
         cached_profile = self.cache.load_profile(artist.id)
 
-        if (getattr(self.config, 'trust_updated_timestamp', False)
-                and not detect_edits and not recover_lost):
-            unchanged = bool(cached_posts and cached_profile and cached_profile.updated
-                             and cached_profile.updated == profile.get('updated'))
+        if (
+            getattr(self.config, "trust_updated_timestamp", False)
+            and not detect_edits
+            and not recover_lost
+        ):
+            unchanged = bool(
+                cached_posts
+                and cached_profile
+                and cached_profile.updated
+                and cached_profile.updated == profile.get("updated")
+            )
             if unchanged:
                 self.logger.downloader_no_new(artist=artist.display_name())
                 return empty
@@ -138,29 +161,34 @@ class Downloader:
             by_id = self._fetch_index(artist)
         except PermanentAPIError as e:
             self.logger.downloader_creator_unavailable(
-                artist=artist.display_name(), error=str(e), level='error')
+                artist=artist.display_name(), error=str(e), level="error"
+            )
             return empty
 
         # No post_count exists, so a shortfall is the only truncation signal.
         # Don't accept it first time: refetch and keep whichever scan saw more.
         if cached_posts and len(by_id) < len(cached_posts):
             self.logger.downloader_list_shortfall(
-                artist=artist.display_name(), fetched=len(by_id),
-                cached=len(cached_posts), level='warning')
+                artist=artist.display_name(),
+                fetched=len(by_id),
+                cached=len(cached_posts),
+                level="warning",
+            )
             retry = self._fetch_index(artist)
             if len(retry) > len(by_id):
                 self.logger.downloader_shortfall_recovered(
-                    artist=artist.display_name(), was=len(by_id), now=len(retry), level='warning')
+                    artist=artist.display_name(), was=len(by_id), now=len(retry), level="warning"
+                )
                 by_id = retry
 
         api_ids = set(by_id)
         existing = {str(p.id): p for p in cached_posts}
         is_new_artist = not cached_posts
-        merged: List[Post] = []
+        merged: list[Post] = []
         new_count = edited_count = lost_count = recovered_count = 0
 
         for data in by_id.values():
-            post = existing.get(str(data['id']))
+            post = existing.get(str(data["id"]))
             if post is None:
                 post = self._post_from_data(data, artist)
                 # Only on first add; an existing artist must download backfill.
@@ -171,9 +199,9 @@ class Downloader:
             elif self._refresh(post, data, detect_edits):
                 edited_count += 1
             change = self._apply_lost(post, data, recover_lost)
-            if change == 'lost':
+            if change == "lost":
                 lost_count += 1
-            elif change == 'recovered':
+            elif change == "recovered":
                 recovered_count += 1
             merged.append(post)
 
@@ -182,22 +210,32 @@ class Downloader:
         if missing:
             merged.extend(missing)
             self.logger.downloader_list_incomplete(
-                artist=artist.display_name(), missing=len(missing), level='warning')
+                artist=artist.display_name(), missing=len(missing), level="warning"
+            )
 
         self.cache.save_posts(artist.id, merged)
         self.cache.save_profile(artist.id, profile)
 
         if new_count or edited_count or missing or lost_count or recovered_count:
             self.logger.downloader_cached(
-                artist=artist.display_name(), total=len(merged), new=new_count,
-                edited=edited_count, lost=lost_count, recovered=recovered_count)
+                artist=artist.display_name(),
+                total=len(merged),
+                new=new_count,
+                edited=edited_count,
+                lost=lost_count,
+                recovered=recovered_count,
+            )
         else:
             self.logger.downloader_no_new(artist=artist.display_name())
-        return {'new': new_count, 'edited': edited_count,
-                'lost': lost_count, 'recovered': recovered_count}
+        return {
+            "new": new_count,
+            "edited": edited_count,
+            "lost": lost_count,
+            "recovered": recovered_count,
+        }
 
     @staticmethod
-    def _apply_lost(post: Post, data: Dict, recover_lost: bool) -> Optional[str]:
+    def _apply_lost(post: Post, data: dict, recover_lost: bool) -> str | None:
         """Reconcile `post.lost` with the server's `has_full`.
 
         Returns 'lost' when a post is newly marked, 'recovered' when un-marked,
@@ -209,45 +247,46 @@ class Downloader:
             post.lost = False
             return None
         # Absent key -> treat as available: never invent a loss from missing data.
-        has_full = data.get('has_full', True)
+        has_full = data.get("has_full", True)
         if not has_full:
             if not post.lost:
                 post.lost = True
-                post.failed_files = []   # a lost post is not a failed one
-                return 'lost'
+                post.failed_files = []  # a lost post is not a failed one
+                return "lost"
         elif post.lost and recover_lost:
             post.lost = False
-            return 'recovered'
+            return "recovered"
         return None
 
-    def _fetch_index(self, artist: Artist) -> Dict[str, Dict]:
+    def _fetch_index(self, artist: Artist) -> dict[str, dict]:
         """The creator's whole list, de-duped by id, first-seen order kept."""
         raw = self.api.get_all_posts(artist.service, artist.user_id)
-        by_id: Dict[str, Dict] = {}
+        by_id: dict[str, dict] = {}
         for item in raw:
-            by_id.setdefault(str(item.get('id')), item)
+            by_id.setdefault(str(item.get("id")), item)
         duplicates = len(raw) - len(by_id)
         if duplicates:
             self.logger.downloader_list_deduped(
-                artist=artist.display_name(), duplicates=duplicates, level='warning')
+                artist=artist.display_name(), duplicates=duplicates, level="warning"
+            )
         return by_id
 
     @staticmethod
-    def _post_from_data(data: Dict, artist: Artist) -> Post:
+    def _post_from_data(data: dict, artist: Artist) -> Post:
         return Post(
-            id=str(data['id']),
-            user=str(data.get('user', artist.user_id)),
-            service=data.get('service', artist.service),
-            title=data.get('title', ''),
-            content=data.get('content', ''),
-            published=data.get('published') or '',
-            added=data.get('added') or '',
-            edited=data.get('edited'),
-            file=data.get('file') or None,
-            attachments=data.get('attachments') or [],
+            id=str(data["id"]),
+            user=str(data.get("user", artist.user_id)),
+            service=data.get("service", artist.service),
+            title=data.get("title", ""),
+            content=data.get("content", ""),
+            published=data.get("published") or "",
+            added=data.get("added") or "",
+            edited=data.get("edited"),
+            file=data.get("file") or None,
+            attachments=data.get("attachments") or [],
         )
 
-    def _refresh(self, post: Post, data: Dict, detect_edits: bool) -> bool:
+    def _refresh(self, post: Post, data: dict, detect_edits: bool) -> bool:
         """Update a cached post from the list; True if it needs re-downloading.
 
         Paths are always refreshed: a re-scrape rewrites every content-hash path
@@ -258,20 +297,20 @@ class Downloader:
         and counting it twice re-flags a post that is already complete. A
         same-count replacement is caught by `detect_edits` via `edited`.
         """
-        remote = distinct(entries_of_parts(data.get('file') or None,
-                                           data.get('attachments') or []))
+        remote = distinct(entries_of_parts(data.get("file") or None, data.get("attachments") or []))
         local = distinct(entries_of(post))
 
         if local and not remote:
             # One bad response must never erase a post's files.
-            self.logger.downloader_empty_file_set(post_id=post.id, level='warning')
+            self.logger.downloader_empty_file_set(post_id=post.id, level="warning")
             return False
 
         if len(remote) < len(local):
             # Forgetting a file we never fetched would lose it silently;
             # `detect_edits` is the explicit way to accept an upstream removal.
             self.logger.downloader_fewer_files(
-                post_id=post.id, had=len(local), now=len(remote), level='warning')
+                post_id=post.id, had=len(local), now=len(remote), level="warning"
+            )
             if not detect_edits:
                 return False
 
@@ -279,21 +318,21 @@ class Downloader:
 
         # Pawchive returns a null `edited` on many imported posts: a missing
         # field, not an edit. It must neither re-download nor erase what we know.
-        remote_edited = data.get('edited') or ''
-        edited_changed = bool(remote_edited) and remote_edited != (post.edited or '')
+        remote_edited = data.get("edited") or ""
+        edited_changed = bool(remote_edited) and remote_edited != (post.edited or "")
 
-        post.file = data.get('file') or None
-        post.attachments = data.get('attachments') or []
-        post.content = data.get('content', post.content)
-        post.title = data.get('title', post.title)
+        post.file = data.get("file") or None
+        post.attachments = data.get("attachments") or []
+        post.content = data.get("content", post.content)
+        post.title = data.get("title", post.title)
         if remote_edited:
-            post.edited = data['edited']
+            post.edited = data["edited"]
         # Pawchive can serve a post before `published` is filled in and set it on
         # a later scrape; adopt a present value, never null out one we have.
-        if data.get('published'):
-            post.published = data['published']
-        if data.get('added'):
-            post.added = data['added']
+        if data.get("published"):
+            post.published = data["published"]
+        if data.get("added"):
+            post.added = data["added"]
 
         if post.done and (has_more_files or (detect_edits and edited_changed)):
             post.done = False
@@ -303,16 +342,23 @@ class Downloader:
 
     # ==================== Download ====================
 
-    def download_artist(self, artist: Artist, from_date: Optional[str] = None,
-                        until_date: Optional[str] = None, lost: bool = False,
-                        pending: bool = False, failed: bool = False) -> DownloadResult:
+    def download_artist(
+        self,
+        artist: Artist,
+        from_date: str | None = None,
+        until_date: str | None = None,
+        lost: bool = False,
+        pending: bool = False,
+        failed: bool = False,
+    ) -> DownloadResult:
         try:
             if self.is_cancelled(artist.id):
                 return DownloadResult(artist.id, success=True)
             if artist.completed or artist.ignore:
                 self.logger.downloader_skipped(
                     artist=artist.display_name(),
-                    status='completed' if artist.completed else 'ignored')
+                    status="completed" if artist.completed else "ignored",
+                )
                 return DownloadResult(artist.id, success=True)
             # Checked before the sync too: pausing means making no requests at
             # all, not making the cheap ones and failing the expensive ones.
@@ -328,7 +374,8 @@ class Downloader:
                 posts = [p for p in self.cache.load_posts(artist.id) if not p.done]
             elif from_date or until_date:
                 posts = [
-                    p for p in self.cache.load_posts(artist.id)
+                    p
+                    for p in self.cache.load_posts(artist.id)
                     if (not from_date or p.published > from_date)
                     and (not until_date or p.published <= until_date)
                 ]
@@ -356,13 +403,14 @@ class Downloader:
             return DownloadResult(artist.id, success=True)
         except Exception as e:
             self.logger.downloader_artist_failed(
-                artist=artist.display_name(), error=str(e), level='error')
+                artist=artist.display_name(), error=str(e), level="error"
+            )
             return DownloadResult(artist.id, success=False)
         finally:
             # Only the run itself clears its flag -- see Cancellation above.
             self.uncancel(artist.id)
 
-    def _download_posts(self, artist: Artist, posts: List[Post]) -> DownloadResult:
+    def _download_posts(self, artist: Artist, posts: list[Post]) -> DownloadResult:
         self.logger.downloader_processing(artist=artist.display_name(), count=len(posts))
         # Resolved once per run, not per post: it reads the artists/ tree for
         # `{group}`, and every post of a run shares the same directory.
@@ -376,11 +424,16 @@ class Downloader:
             try:
                 ok = self._download_post(artist, post, artist_dir)
                 if ok:
-                    self.cache.update_post(artist.id, post.id, done=True, failed_files=[],
-                                           content=(post.content or None))
+                    self.cache.update_post(
+                        artist.id,
+                        post.id,
+                        done=True,
+                        failed_files=[],
+                        content=(post.content or None),
+                    )
                 return ok
             except Exception as e:
-                self.logger.downloader_post_error(post_id=post.id, error=str(e), level='error')
+                self.logger.downloader_post_error(post_id=post.id, error=str(e), level="error")
                 return False
 
         with ThreadPoolExecutor(max_workers=self.config.max_concurrent_posts) as executor:
@@ -393,31 +446,39 @@ class Downloader:
 
         skipped = self.deferrals.take_skipped()
         self.logger.downloader_completed(
-            artist=artist.display_name(), succeeded=downloaded, failed=failed,
-            **({'deferred': skipped} if skipped else {}))
-        return DownloadResult(artist.id, success=(failed == 0),
-                              posts_downloaded=downloaded, posts_failed=failed)
+            artist=artist.display_name(),
+            succeeded=downloaded,
+            failed=failed,
+            **({"deferred": skipped} if skipped else {}),
+        )
+        return DownloadResult(
+            artist.id, success=(failed == 0), posts_downloaded=downloaded, posts_failed=failed
+        )
 
     def _download_post(self, artist: Artist, post: Post, artist_dir: Path) -> bool:
-        cv = lambda k: get_config_value(artist, self.config, k)
-        save_content = cv('save_content')
+        def cv(k):
+            return get_config_value(artist, self.config, k)
+
+        save_content = cv("save_content")
 
         files = extract_files(post)
         # Reported, not dropped: the post stays undone and shows in `list-failed`.
         unusable = unusable_files(post)
         if unusable:
             self.logger.downloader_file_unusable(
-                post_id=post.id, count=len(unusable), sample=';'.join(unusable[:3]), level='warning')
+                post_id=post.id, count=len(unusable), sample=";".join(unusable[:3]), level="warning"
+            )
 
-        if not files and not unusable and not cv('save_empty_posts') and not save_content:
+        if not files and not unusable and not cv("save_empty_posts") and not save_content:
             return True
 
-        save_dir = (artist_dir
-                    / Formatter.post_folder(post, cv('post_folder_template'), cv('date_format')))
+        save_dir = artist_dir / Formatter.post_folder(
+            post, cv("post_folder_template"), cv("date_format")
+        )
         save_dir.mkdir(parents=True, exist_ok=True)
 
         if save_content and post.content:
-            (save_dir / "content.txt").write_text(post.content, encoding='utf-8', errors='ignore')
+            (save_dir / "content.txt").write_text(post.content, encoding="utf-8", errors="ignore")
 
         if not files:
             # A lost post forced through `download-lost` stays lost on failure,
@@ -427,26 +488,32 @@ class Downloader:
             return not unusable
 
         # Two files resolving to one name would race on the same target path.
-        names = unique_names(Formatter.file_names(
-            [f['name'] for f in files], cv('file_template'),
-            cv('rename_images_only'), self.config.image_extensions))
+        names = unique_names(
+            Formatter.file_names(
+                [f["name"] for f in files],
+                cv("file_template"),
+                cv("rename_images_only"),
+                self.config.image_extensions,
+            )
+        )
 
-        failed_files: List[str] = list(unusable)
+        failed_files: list[str] = list(unusable)
 
         def dl(pair):
             file, name = pair
             if self.is_cancelled(artist.id):
                 return (False, name)
-            path = file['path']
+            path = file["path"]
             # A file the host answered 404 for recently is not asked about again
             # until its deferral is up -- see `deferrals.py`. Counted, not logged:
             # a run can skip thousands, and the count is reported once below.
             if not self.deferrals.due(path):
                 return (False, name)
             try:
-                url = self.api.file_url(path, file['name'])
+                url = self.api.file_url(path, file["name"])
                 self.api.download_file_until_success(
-                    url, str(save_dir / name), on_progress=self.notifier.on_download_progress)
+                    url, str(save_dir / name), on_progress=self.notifier.on_download_progress
+                )
                 self.logger.downloader_file_ok(file=name)
                 if self.deferrals.clear(path):
                     # Proof the 404 was lateness, not absence. Worth a line.
@@ -462,14 +529,17 @@ class Downloader:
                 if self._is_not_found(e):
                     entry = self.deferrals.miss(path, name) or {}
                     self.logger.downloader_file_absent(
-                        file=name, misses=entry.get('misses'),
-                        retry_in_days=entry.get('wait_days'), level='warning')
+                        file=name,
+                        misses=entry.get("misses"),
+                        retry_in_days=entry.get("wait_days"),
+                        level="warning",
+                    )
                 else:
-                    self.logger.downloader_file_failed(file=name, error=str(e), level='warning')
+                    self.logger.downloader_file_failed(file=name, error=str(e), level="warning")
                 return (False, name)
 
         with ThreadPoolExecutor(max_workers=self.config.max_concurrent_files) as executor:
-            futures = [executor.submit(dl, pair) for pair in zip(files, names)]
+            futures = [executor.submit(dl, pair) for pair in zip(files, names, strict=False)]
             for future in as_completed(futures):
                 ok, name = future.result()
                 if not ok:
@@ -485,10 +555,15 @@ class Downloader:
     # ==================== Helpers ====================
 
     def _artist_dir(self, artist: Artist) -> Path:
-        cv = lambda k: get_config_value(artist, self.config, k)
-        return Formatter.artist_dir(cv('download_dir'), artist,
-                                    cv('artist_folder_template'),
-                                    self.storage.artist_group(artist.id))
+        def cv(k):
+            return get_config_value(artist, self.config, k)
+
+        return Formatter.artist_dir(
+            cv("download_dir"),
+            artist,
+            cv("artist_folder_template"),
+            self.storage.artist_group(artist.id),
+        )
 
     def _sweep_partials(self, artist_dir: Path):
         """Delete `.part` files left by an earlier run.
@@ -500,14 +575,14 @@ class Downloader:
         """
         if not artist_dir.is_dir():
             return
-        for leftover in artist_dir.rglob('.*.part'):
+        for leftover in artist_dir.rglob(".*.part"):
             try:
                 leftover.unlink()
                 self.logger.downloader_swept_partial(file=leftover.name)
             except OSError:
                 pass
 
-    def _calc_last_date(self, artist: Artist) -> Optional[str]:
+    def _calc_last_date(self, artist: Artist) -> str | None:
         """Advance last_date over the run of oldest->newest posts that are settled.
 
         A filtered-out post is intentionally skipped, so it never blocks; but it
@@ -515,8 +590,9 @@ class Downloader:
         post counts as settled: the server has no files, so it would otherwise
         stall the watermark forever behind content that cannot be fetched.
         """
-        posts = sorted(self.cache.load_posts(artist.id, apply_filters=False),
-                       key=lambda p: p.published or "")
+        posts = sorted(
+            self.cache.load_posts(artist.id, apply_filters=False), key=lambda p: p.published or ""
+        )
         visible = {p.id for p in self.cache.load_posts(artist.id)}
         start = artist.last_date or ""
         new_last = start

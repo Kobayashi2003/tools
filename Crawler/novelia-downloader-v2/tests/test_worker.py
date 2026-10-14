@@ -1,9 +1,9 @@
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.client import Deferred, Rejected
+from app.client import Deferred, NetworkError, Rejected, ServerError
 from app.database import Database
 from app.schema import JobRequest, Settings
 from app.worker import window_opens
@@ -143,7 +143,11 @@ def test_recovery_and_schedule_do_not_duplicate_running_sweep(system):
 def test_range_and_volume_selection(system):
     db, worker, upstream = system
     upstream.pages = {1: [], 2: [KEY], 3: [KEY]}
-    upstream.works[KEY]["volumeJp"] = [{"volumeId": "v10.epub"}, {"volumeId": "v2.epub"}, {"volumeId": "v1.epub"}]
+    upstream.works[KEY]["volumeJp"] = [
+        {"volumeId": "v10.epub"},
+        {"volumeId": "v2.epub"},
+        {"volumeId": "v1.epub"},
+    ]
     run(db, worker, kind="range", start_page=2, end_page=2, volumes="2")
     assert upstream.listed == [(2, 1)]
     assert [d[1] for d in upstream.downloads] == ["v2.epub"]
@@ -162,7 +166,11 @@ def test_changed_source_invalidates_converted_output(system):
 def test_web_manual_and_chinese_uploads(system):
     db, worker, upstream = system
     web = "alphapolis/159124863-713069479"
-    upstream.works[web] = {"titleJp": "Web novel", "toc": [{"titleJp": "Chapter", "chapterId": "1"}], "jp": 1}
+    upstream.works[web] = {
+        "titleJp": "Web novel",
+        "toc": [{"titleJp": "Chapter", "chapterId": "1"}],
+        "jp": 1,
+    }
     upstream.works[KEY]["volumeZh"] = ["chinese.epub"]
     run(db, worker, kind="manual", keys=[KEY, web])
     assert len(db.rows("SELECT * FROM files")) == 3
@@ -242,7 +250,7 @@ def test_retry_selected_targets_only(system):
 def test_rate_limit_pause_requeues_and_resumes_later(system):
     db, worker, upstream = system
     add_volumes(upstream, "volume2.epub")
-    later = datetime.now(timezone.utc) + timedelta(minutes=30)
+    later = datetime.now(UTC) + timedelta(minutes=30)
     upstream.raise_on["volume2.epub"] = Deferred("Rate limited.", later)
     job = run(db, worker, kind="manual", keys=[KEY])
     assert job["status"] == "queued" and job["resume_at"] and job["pauses"] == 1
@@ -259,7 +267,7 @@ def test_rate_limit_pause_requeues_and_resumes_later(system):
 def test_repeated_rate_limit_pauses_give_up(system):
     db, worker, upstream = system
     configure(db, max_pauses=1)
-    upstream.raise_on["volume1.epub"] = Deferred("Rate limited.", datetime.now(timezone.utc))
+    upstream.raise_on["volume1.epub"] = Deferred("Rate limited.", datetime.now(UTC))
     job = run(db, worker, kind="manual", keys=[KEY])
     assert job["status"] == "queued"
     worker.run_job(job["id"])
@@ -270,16 +278,18 @@ def test_repeated_rate_limit_pauses_give_up(system):
 def test_active_hours_window():
     config = Settings(active_hours=True, active_start="23:00", active_end="06:00")
     noon = datetime(2026, 1, 1, 12, 0).astimezone()
-    assert window_opens(config, noon).hour == 23
+    opens = window_opens(config, noon)
+    assert opens is not None and opens.hour == 23
     assert window_opens(config, noon.replace(hour=2)) is None
     assert window_opens(Settings(), noon) is None
     office = Settings(active_hours=True, active_start="09:00", active_end="17:00")
-    assert window_opens(office, noon.replace(hour=18)).day == 2
+    opens = window_opens(office, noon.replace(hour=18))
+    assert opens is not None and opens.day == 2
 
 
 def test_outside_active_hours_defers_without_counting_a_pause(system, monkeypatch):
     db, worker, upstream = system
-    opens = datetime.now(timezone.utc) + timedelta(hours=3)
+    opens = datetime.now(UTC) + timedelta(hours=3)
     monkeypatch.setattr("app.worker.window_opens", lambda config: opens)
     job = run(db, worker, kind="manual", keys=[KEY])
     assert job["status"] == "queued" and job["pauses"] == 0 and not upstream.downloads
@@ -287,7 +297,9 @@ def test_outside_active_hours_defers_without_counting_a_pause(system, monkeypatc
 
 def test_start_now_overrides_active_hours(system, monkeypatch):
     db, worker, upstream = system
-    monkeypatch.setattr("app.worker.window_opens", lambda config: datetime.now(timezone.utc) + timedelta(hours=3))
+    monkeypatch.setattr(
+        "app.worker.window_opens", lambda config: datetime.now(UTC) + timedelta(hours=3)
+    )
     job = run(db, worker, kind="manual", keys=[KEY])
     assert job["status"] == "queued"
     db.resume(job["id"])
@@ -301,7 +313,9 @@ def test_retry_rounds_are_not_restarted_by_an_automatic_pause(system):
     job = run(db, worker, kind="manual", keys=[KEY])
     assert job["retry_round"] == 2 and len(upstream.waits) == 2
     db.execute("UPDATE job_items SET status='pending'")
-    db.execute("UPDATE jobs SET status='queued' WHERE id=?", (job["id"],))  # as after an automatic pause
+    db.execute(
+        "UPDATE jobs SET status='queued' WHERE id=?", (job["id"],)
+    )  # as after an automatic pause
     worker.run_job(job["id"])
     assert len(upstream.waits) == 2
     db.retry(job["id"])  # a manual retry grants fresh rounds
@@ -327,11 +341,129 @@ def test_pacing_follows_current_settings_but_content_is_snapshotted(system):
 def test_existing_database_gains_new_columns(tmp_path):
     path = tmp_path / "old.sqlite3"
     with sqlite3.connect(path) as conn:
-        conn.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL, "
-                     "request TEXT NOT NULL, config TEXT NOT NULL, cursor INTEGER NOT NULL)")
-        conn.execute("CREATE TABLE job_items (job_id INTEGER NOT NULL, target TEXT NOT NULL, "
-                     "status TEXT NOT NULL DEFAULT 'pending', error TEXT, PRIMARY KEY(job_id, target))")
+        conn.execute(
+            "CREATE TABLE jobs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL, "
+            "request TEXT NOT NULL, config TEXT NOT NULL, cursor INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE job_items (job_id INTEGER NOT NULL, target TEXT NOT NULL, "
+            "status TEXT NOT NULL DEFAULT 'pending', error TEXT, PRIMARY KEY(job_id, target))"
+        )
     conn.close()
     db = Database(path)
     assert {"resume_at", "pauses"} <= {r["name"] for r in db.rows("PRAGMA table_info(jobs)")}
     assert {"attempts", "parts"} <= {r["name"] for r in db.rows("PRAGMA table_info(job_items)")}
+
+
+def test_text_volumes_are_saved_and_their_japanese_text_is_the_original(system):
+    db, worker, upstream = system
+    configure(db, auto_convert=True)
+    upstream.works[KEY]["volumeJp"] = [{"volumeId": "volume1.txt"}]
+    assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed"
+    file = db.row("SELECT * FROM files")
+    assert file["raw_path"].endswith("[jp-zh].txt") and file["ja_path"].endswith("[ja].txt")
+    assert Path(file["ja_path"]).read_text(encoding="utf-8") == "日本語\n"
+    assert file["verification"] == "original"
+    run(db, worker, kind="convert")
+    assert len(upstream.downloads) == 2  # the Japanese text is not fetched again
+
+
+def test_original_is_kept_when_bilingual_build_fails(system):
+    db, worker, upstream = system
+    upstream.bilingual_errors["volume1.epub"] = ServerError("HTTP 500 after 3 attempts")
+    assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed"
+    file = db.row("SELECT * FROM files")
+    assert file["mode"] == "jp-original" and file["ja_path"] == file["raw_path"]
+    assert upstream.downloads == [(KEY, "volume1.epub", True)]
+    run(db, worker, kind="incremental")
+    assert len(upstream.downloads) == 1  # unchanged volume: no repeated bilingual attempts
+    assert run(db, worker, kind="convert")["status"] == "completed"
+    upstream.bilingual_errors.clear()
+    upstream.works[KEY]["volumeJp"][0]["sakura"] += 1
+    run(db, worker, kind="incremental")
+    assert [r["mode"] for r in db.rows("SELECT mode FROM files")] == ["jp-zh"]
+    assert not Path(file["raw_path"]).exists()
+
+
+def test_original_fallback_can_be_turned_off(system):
+    db, worker, upstream = system
+    configure(db, original_fallback=False)
+    upstream.bilingual_errors["volume1.epub"] = Rejected("HTTP 404: not found on Novelia.")
+    assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed_with_errors"
+    assert not db.rows("SELECT * FROM files")
+
+
+def test_network_outage_pauses_instead_of_failing_every_item(system):
+    db, worker, upstream = system
+    configure(db, network_streak=3, retry_rounds=0)
+    keys = [f"wenku/{i:024x}" for i in range(1, 6)]
+    for key in keys:
+        upstream.works[key] = {
+            **upstream.works[KEY],
+            "volumeJp": [{"volumeId": f"{key[-3:]}.epub"}],
+        }
+        upstream.raise_on[f"{key[-3:]}.epub"] = NetworkError("Network SSLError after 3 attempts")
+    job = run(db, worker, kind="manual", keys=keys)
+    assert job["status"] == "queued" and job["resume_at"] and "network" in job["wait_reason"]
+    statuses = [r["status"] for r in db.rows("SELECT status FROM job_items ORDER BY rowid")]
+    assert statuses == ["pending"] * 5  # the three that failed went back in the queue
+    upstream.raise_on.clear()
+    db.resume(job["id"])
+    worker.run_job(job["id"])
+    assert db.job(job["id"])["status"] == "completed"
+
+
+def test_permanent_failures_do_not_count_as_a_network_outage(system):
+    db, worker, upstream = system
+    configure(db, network_streak=2, retry_rounds=0)
+    keys = [f"wenku/{i:024x}" for i in range(1, 4)]
+    for key in keys:
+        upstream.works[key] = {
+            **upstream.works[KEY],
+            "volumeJp": [{"volumeId": f"{key[-3:]}.epub"}],
+        }
+        upstream.raise_on[f"{key[-3:]}.epub"] = ValueError("Novelia's copy is damaged.")
+    assert run(db, worker, kind="manual", keys=keys)["status"] == "completed_with_errors"
+
+
+def test_missing_download_drive_pauses_the_task(system, tmp_path):
+    db, worker, upstream = system
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x")
+    worker.root = blocker / "downloads"  # cannot be created, like a disconnected drive
+    job = run(db, worker, kind="manual", keys=[KEY])
+    assert job["status"] == "queued" and "unavailable" in job["wait_reason"] and job["pauses"] == 0
+    assert db.row("SELECT status FROM job_items")["status"] == "pending"
+
+
+def test_failed_items_can_be_retried_while_the_task_runs(system):
+    db, worker, upstream = system
+    configure(db, retry_rounds=0)
+    other = "wenku/688da4c4c923db0b7aa9943f"
+    upstream.works[other] = {**upstream.works[KEY], "volumeJp": [{"volumeId": "other.epub"}]}
+    upstream.fail_volume = "volume1.epub"
+    job_id = db.create_job(JobRequest(kind="manual", keys=[KEY, other]))
+    real_source = upstream.client
+
+    def client(config, check, on_wait=None):
+        fake = real_source(config, check, on_wait)
+        original = fake.source
+
+        def source(key, volume, destination, original_file=False, **kwargs):
+            if (
+                volume == "other.epub"
+                and db.row("SELECT status FROM job_items WHERE target=?", (KEY,))["status"]
+                == "failed"
+            ):
+                upstream.fail_volume = None
+                assert db.retry(job_id) == 1  # the user clicks Retry while #1 is running
+                assert db.job(job_id)["status"] == "running"
+            return original(key, volume, destination, kwargs.get("original", original_file))
+
+        fake.source = source
+        return fake
+
+    worker.client_factory = client
+    worker.run_job(job_id)
+    assert db.job(job_id)["status"] == "completed"
+    assert {r["status"] for r in db.rows("SELECT status FROM job_items")} == {"done"}

@@ -5,22 +5,22 @@ Downloads albums (MP3/FLAC), booklet images and multi-CD layouts. Scraping is
 driven by Selenium; file downloads run concurrently. Site: https://downloads.khinsider.com
 """
 
+import argparse
 import os
 import re
 import sys
-import time
-import argparse
 import threading
-from dataclasses import dataclass, field
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Literal
-from urllib.parse import urlparse
+from typing import Literal
+from urllib.parse import unquote, urlparse
 
 import requests
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 
@@ -38,6 +38,7 @@ def _print(*args, **kwargs):
 
 
 # ---- config & models ----
+
 
 @dataclass
 class Config:
@@ -71,14 +72,15 @@ class BookletImage:
 @dataclass
 class AlbumInfo:
     name: str
-    tracks: List[TrackInfo] = field(default_factory=list)
-    booklet_images: List[BookletImage] = field(default_factory=list)
+    tracks: list[TrackInfo] = field(default_factory=list)
+    booklet_images: list[BookletImage] = field(default_factory=list)
 
 
 # ---- helpers ----
 
+
 def sanitize_filename(name: str) -> str:
-    name = requests.utils.unquote(name)
+    name = unquote(name)
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
     name = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", name)
     name = re.sub(r"\s+", " ", name).strip(" .")
@@ -152,6 +154,7 @@ def _setup_firefox(config: Config):
 
 # ---- scraping ----
 
+
 def scrape_album(driver, url: str, config: Config) -> AlbumInfo:
     driver.get(url)
     time.sleep(config.page_delay)
@@ -162,7 +165,7 @@ def scrape_album(driver, url: str, config: Config) -> AlbumInfo:
     )
 
 
-def scrape_download_urls(driver, url: str, config: Config) -> List[str]:
+def scrape_download_urls(driver, url: str, config: Config) -> list[str]:
     driver.get(url)
     time.sleep(config.page_delay)
     return _get_download_urls(driver, config.audio_format)
@@ -183,7 +186,7 @@ def _has_cd_column(table) -> bool:
         return False
 
 
-def _get_tracks(driver) -> List[TrackInfo]:
+def _get_tracks(driver) -> list[TrackInfo]:
     tracks = []
     try:
         table = driver.find_element(By.ID, "songlist")
@@ -215,13 +218,15 @@ def _get_tracks(driver) -> List[TrackInfo]:
                 except Exception:
                     duration = duration_cell.text.strip()
 
-                tracks.append(TrackInfo(
-                    cd_number=cd_number,
-                    track_number=track_number,
-                    title=link.text.strip(),
-                    song_page_url=song_url,
-                    duration=duration,
-                ))
+                tracks.append(
+                    TrackInfo(
+                        cd_number=cd_number,
+                        track_number=track_number,
+                        title=link.text.strip(),
+                        song_page_url=song_url,
+                        duration=duration,
+                    )
+                )
             except Exception as e:
                 print(f"Error parsing track row: {e}")
     except Exception as e:
@@ -236,7 +241,7 @@ def _is_audio_url(url: str, audio_format: str) -> bool:
     return f".{audio_format}" in url_lower
 
 
-def _get_download_urls(driver, audio_format: str) -> List[str]:
+def _get_download_urls(driver, audio_format: str) -> list[str]:
     urls, seen = [], set()
 
     def add(href: str):
@@ -272,15 +277,16 @@ def _get_download_urls(driver, audio_format: str) -> List[str]:
     return urls
 
 
-def _get_booklet_images(driver) -> List[BookletImage]:
+def _get_booklet_images(driver) -> list[BookletImage]:
     images = []
     try:
         for div in driver.find_elements(By.CLASS_NAME, "albumImage"):
             try:
                 full_url = div.find_element(By.TAG_NAME, "a").get_attribute("href")
                 if full_url:
-                    images.append(BookletImage(url=full_url,
-                                               filename=urlparse(full_url).path.split("/")[-1]))
+                    images.append(
+                        BookletImage(url=full_url, filename=urlparse(full_url).path.split("/")[-1])
+                    )
             except Exception as e:
                 print(f"Error processing booklet image: {e}")
 
@@ -297,6 +303,7 @@ def _get_booklet_images(driver) -> List[BookletImage]:
 
 
 # ---- download ----
+
 
 def _retry_call(fn, label: str):
     """Retry fn() until it returns a truthy value. Only KeyboardInterrupt stops it."""
@@ -344,7 +351,9 @@ def _track_filepath(output_dir, album_name, cd_number, fmt, filename, total_cds)
 
 
 def _booklet_filepath(output_dir, album_name, filename) -> Path:
-    return Path(output_dir) / sanitize_filename(album_name) / "Booklet" / sanitize_filename(filename)
+    return (
+        Path(output_dir) / sanitize_filename(album_name) / "Booklet" / sanitize_filename(filename)
+    )
 
 
 def _download_booklets(config: Config, album: AlbumInfo):
@@ -392,8 +401,9 @@ def _download_tracks(config: Config, driver, album: AlbumInfo):
     def download_task(track: TrackInfo, file_url: str) -> bool:
         fmt = "mp3" if ".mp3" in file_url.lower() else "flac"
         filename = f"{track.track_number:02d}. {sanitize_filename(track.title)}.{fmt}"
-        filepath = _track_filepath(config.output_dir, album.name, track.cd_number,
-                                   fmt, filename, total_cds)
+        filepath = _track_filepath(
+            config.output_dir, album.name, track.cd_number, fmt, filename, total_cds
+        )
         session = create_session(config.user_agent)
         if config.retry:
             _retry_call(lambda: _save_file(file_url, filepath, session), f"track {filename}")
@@ -417,8 +427,11 @@ def _download_tracks(config: Config, driver, album: AlbumInfo):
         for cd_number in sorted(cd_tracks):
             for track in cd_tracks[cd_number]:
                 current += 1
-                label = (f"CD{track.cd_number}-{track.track_number:02d}. {track.title}"
-                         if total_cds > 1 else f"{track.track_number:02d}. {track.title}")
+                label = (
+                    f"CD{track.cd_number}-{track.track_number:02d}. {track.title}"
+                    if total_cds > 1
+                    else f"{track.track_number:02d}. {track.title}"
+                )
                 _print(f"Scraping {current}/{total_tracks}: {label}")
                 try:
                     if config.retry:
@@ -432,7 +445,7 @@ def _download_tracks(config: Config, driver, album: AlbumInfo):
                                 _print(f"Error getting URLs for track {current}: {e}, retrying...")
                     else:
                         urls = scrape_download_urls(driver, track.song_page_url, config)
-                    for url in (urls or []):
+                    for url in urls or []:
                         futures[executor.submit(download_task, track, url)] = (track, url)
                     time.sleep(config.page_delay)
                 except Exception as e:
@@ -475,18 +488,33 @@ def download_album(config: Config, album_url: str):
 
 # ---- CLI ----
 
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="KHInsider video game music downloader")
     parser.add_argument("url", nargs="+", help="Album URL(s) to download")
     parser.add_argument("-o", "--output", default="downloads", help="Output directory")
-    parser.add_argument("-f", "--format", choices=["mp3", "flac", "both"], default="both",
-                        help="Audio format to download")
-    parser.add_argument("-b", "--browser", choices=["chrome", "edge", "firefox", "auto"],
-                        default="auto", help="Browser to use")
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["mp3", "flac", "both"],
+        default="both",
+        help="Audio format to download",
+    )
+    parser.add_argument(
+        "-b",
+        "--browser",
+        choices=["chrome", "edge", "firefox", "auto"],
+        default="auto",
+        help="Browser to use",
+    )
     parser.add_argument("--headless", action="store_true", help="Run browser headless")
     parser.add_argument("--no-booklet", action="store_true", help="Skip booklet images")
-    parser.add_argument("--retry", action="store_true", help="Retry each resource until it succeeds")
-    parser.add_argument("-w", "--workers", type=int, default=4, help="Max concurrent download threads")
+    parser.add_argument(
+        "--retry", action="store_true", help="Retry each resource until it succeeds"
+    )
+    parser.add_argument(
+        "-w", "--workers", type=int, default=4, help="Max concurrent download threads"
+    )
     args = parser.parse_args(argv)
 
     config = Config(

@@ -1,12 +1,22 @@
+import struct
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+import zipfile
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from app.client import Client, Deferred, Rejected, Throttle, TransientError, retry_after
+from app.client import (
+    Client,
+    Deferred,
+    Rejected,
+    Throttle,
+    TransientError,
+    retry_after,
+    validate_epub,
+)
 from app.schema import Settings
 from tests.conftest import epub
 
@@ -25,19 +35,28 @@ def http_client(tmp_path, monkeypatch):
                 self.end_headers()
                 return
             if self.path in ("/denied", "/missing", "/broken", "/limited"):
-                self.send_response({"/denied": 403, "/missing": 404, "/broken": 500, "/limited": 429}[self.path])
+                self.send_response(
+                    {"/denied": 403, "/missing": 404, "/broken": 500, "/limited": 429}[self.path]
+                )
                 self.end_headers()
                 return
-            payload = b"<html>Not a book</html>" if self.path == "/invalid" else book
+            bodies: dict[str, bytes] = {
+                "/invalid": b"<html>Not a book</html>",
+                "/empty": b"",
+                "/text": "日本語\n中文\n".encode(),
+            }
+            payload = bodies.get(self.path, book)
             self.send_response(200)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             if self.path == "/truncated" and hits.count(self.path) == 1:
-                self.wfile.write(payload[:100])  # connection closes before Content-Length is reached
+                self.wfile.write(
+                    payload[:100]
+                )  # connection closes before Content-Length is reached
                 return
             self.wfile.write(payload)
 
-        def log_message(self, *_):
+        def log_message(self, format, *args):
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -45,8 +64,10 @@ def http_client(tmp_path, monkeypatch):
     thread.start()
     monkeypatch.setattr("app.client.SITE", f"http://127.0.0.1:{server.server_port}")
     clock = [1000.0]  # sleeping advances a fake clock instead of real time
-    client = Client(Settings(request_delay=0.2, retries=2, rate_limit_patience=1),
-                    throttle=Throttle(clock=lambda: clock[0]))
+    client = Client(
+        Settings(request_delay=0.2, retries=2, rate_limit_patience=1),
+        throttle=Throttle(clock=lambda: clock[0]),
+    )
 
     def sleep(seconds):
         clock[0] += seconds
@@ -74,7 +95,7 @@ def test_bad_payload_preserves_previous_source(http_client):
     client, _, root = http_client
     target = root / "out.epub"
     target.write_bytes(b"previous")
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         client.download("/invalid", target)
     assert target.read_bytes() == b"previous"
     assert not target.with_suffix(".epub.part").exists()
@@ -87,11 +108,14 @@ def test_access_refusal_is_not_retried(http_client):
     assert hits == ["/denied"]
 
 
-def test_volume_url_encodes_path_and_repeats_translation_parameters(tmp_path):
+def test_volume_url_encodes_path_and_repeats_translation_parameters(tmp_path, monkeypatch):
     from urllib.parse import urlencode
+
     client = Client(Settings())
     captured = []
-    client.download = lambda path, dest, params: captured.append((path, params))
+    monkeypatch.setattr(
+        client, "download", lambda path, dest, params: captured.append((path, params))
+    )
     client.source("wenku/688da4c4c923db0b7aa9943e", "volume 1/2.epub", tmp_path / "out")
     path, params = captured[0]
     assert path.endswith("volume%201%2F2.epub")
@@ -114,7 +138,7 @@ def test_persistent_rate_limit_defers_instead_of_failing(http_client, monkeypatc
     client, hits, _ = http_client
     with pytest.raises(Deferred) as caught:
         client.get("/limited")
-    assert caught.value.counts and caught.value.until > datetime.now(timezone.utc)
+    assert caught.value.counts and caught.value.until > datetime.now(UTC)
     assert 1 < len(hits) < 20
 
 
@@ -148,7 +172,7 @@ def test_pause_lasts_at_least_as_long_as_the_sites_cooldown(http_client):
     client.throttle.limited(client.config, hint=7200)
     with pytest.raises(Deferred) as caught:
         client.get("/ok")
-    assert caught.value.until - datetime.now(timezone.utc) > timedelta(minutes=119)
+    assert caught.value.until - datetime.now(UTC) > timedelta(minutes=119)
 
 
 def test_rest_happens_before_the_next_request_not_inside_download(http_client):
@@ -183,5 +207,60 @@ def test_interactive_requests_do_not_wait_for_a_long_slot():
 def test_retry_after_accepts_seconds_and_dates():
     assert retry_after("12") == 12
     assert retry_after("") is None and retry_after("soon") is None
-    later = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=90), usegmt=True)
-    assert 80 < retry_after(later) <= 90
+    later = format_datetime(datetime.now(UTC) + timedelta(seconds=90), usegmt=True)
+    seconds = retry_after(later)
+    assert seconds is not None and 80 < seconds <= 90
+
+
+def test_empty_upstream_file_is_permanent_and_not_retried(http_client):
+    client, hits, root = http_client
+    with pytest.raises(ValueError, match="empty"):
+        client.download("/empty", root / "out.epub")
+    assert hits.count("/empty") == 1
+
+
+def test_text_volumes_are_validated_as_text(http_client):
+    client, _, root = http_client
+    size, _ = client.download("/text", root / "out.txt")
+    assert (root / "out.txt").read_text(encoding="utf-8") == "日本語\n中文\n" and size > 0
+
+
+def rebuild(source, target, change):
+    """Copy an EPUB, letting `change(name, data)` return replacement bytes."""
+    with zipfile.ZipFile(source) as old, zipfile.ZipFile(target, "w") as new:
+        for info in old.infolist():
+            new.writestr(info, change(info.filename, old.read(info)))
+        if "META-INF/" not in old.namelist():
+            new.writestr("META-INF/", b"")
+    return target
+
+
+def test_validation_accepts_what_readers_open_and_rejects_damage(tmp_path):
+    book = epub(tmp_path / "book.epub")
+    empty_mimetype = rebuild(book, tmp_path / "a.epub", lambda n, d: b"" if n == "mimetype" else d)
+    validate_epub(empty_mimetype)
+    # A bad checksum on a directory entry (as some tools write) does not matter.
+    directory = rebuild(book, tmp_path / "b.epub", lambda n, d: d)
+    data = bytearray(directory.read_bytes())
+    # (signature, CRC offset, name-length offset, name offset) of local and central headers
+    for signature, crc_at, length_at, name_at in (
+        (b"PK\x03\x04", 14, 26, 30),
+        (b"PK\x01\x02", 16, 28, 46),
+    ):
+        at = data.find(signature)
+        while at != -1:
+            (length,) = struct.unpack_from("<H", data, at + length_at)
+            if data[at + name_at : at + name_at + length] == b"META-INF/":
+                struct.pack_into("<I", data, at + crc_at, 0xDEADBEEF)
+            at = data.find(signature, at + 4)
+    directory.write_bytes(bytes(data))
+    with zipfile.ZipFile(directory) as check:
+        assert check.testzip() == "META-INF/"  # the old validator rejected this file
+    validate_epub(directory)
+    # Damaged content is still rejected.
+    damaged = bytearray(book.read_bytes())
+    chapter = damaged.find(b"OPS/chapter.xhtml") + len(b"OPS/chapter.xhtml")
+    damaged[chapter + 5] ^= 0xFF
+    (tmp_path / "c.epub").write_bytes(bytes(damaged))
+    with pytest.raises(ValueError, match="not a valid EPUB"):
+        validate_epub(tmp_path / "c.epub")

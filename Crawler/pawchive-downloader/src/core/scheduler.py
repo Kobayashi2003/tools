@@ -3,7 +3,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from queue import Empty, Queue
-from typing import Dict, List, Optional
 
 from ..common.logger import Logger
 from .downloader import Downloader
@@ -19,8 +18,14 @@ class Scheduler:
     One artist is never queued twice concurrently, whatever the task type.
     """
 
-    def __init__(self, storage: Storage, downloader: Downloader, logger: Logger,
-                 global_timer: Optional[Dict], max_workers: int = 3):
+    def __init__(
+        self,
+        storage: Storage,
+        downloader: Downloader,
+        logger: Logger,
+        global_timer: dict | None,
+        max_workers: int = 3,
+    ):
         self.storage = storage
         self.downloader = downloader
         self.logger = logger
@@ -28,14 +33,14 @@ class Scheduler:
         self.max_workers = max_workers
 
         self.running = False
-        self._thread: Optional[threading.Thread] = None
-        self._executor: Optional[ThreadPoolExecutor] = None
-        self._next_runs: Dict[str, datetime] = {}
+        self._thread: threading.Thread | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        self._next_runs: dict[str, datetime] = {}
 
-        self.queue: "Queue[DownloadTask]" = Queue()
+        self.queue: Queue[DownloadTask] = Queue()
         self.queued: set = set()
-        self.active: Dict[str, DownloadTask] = {}
-        self.completed: List[DownloadTask] = []
+        self.active: dict[str, DownloadTask] = {}
+        self.completed: list[DownloadTask] = []
         self.lock = threading.Lock()
         self._cancelling = False
 
@@ -67,7 +72,7 @@ class Scheduler:
 
     CANCEL_TIMEOUT = 30
 
-    def _drain_queue(self, artist_id: Optional[str] = None):
+    def _drain_queue(self, artist_id: str | None = None):
         """Remove one queued task, or all of them. Caller holds the lock."""
         kept = []
         while True:
@@ -81,9 +86,10 @@ class Scheduler:
             self.queue.put(task)
         self.queued = set(kept)
 
-    def _await_exit(self, artist_ids: List[str]) -> List[str]:
+    def _await_exit(self, artist_ids: list[str]) -> list[str]:
         """Wait for these artists to leave `active`; returns those still running."""
         deadline = time.time() + self.CANCEL_TIMEOUT
+        remaining = list(artist_ids)
         while time.time() < deadline:
             with self.lock:
                 remaining = [a for a in artist_ids if a in self.active]
@@ -92,21 +98,21 @@ class Scheduler:
             time.sleep(0.1)
         return remaining
 
-    def cancel(self, artist_id: str) -> Optional[str]:
+    def cancel(self, artist_id: str) -> str | None:
         """Cancel one artist. Returns 'queued', 'running', or None if neither."""
         with self.lock:
             if any(t.artist_id == artist_id for t in self.queued):
                 self._drain_queue(artist_id)
-                self.logger.scheduler_cancelled(artist_id=artist_id, state='queued')
-                return 'queued'
+                self.logger.scheduler_cancelled(artist_id=artist_id, state="queued")
+                return "queued"
             if artist_id not in self.active:
                 return None
 
         self.downloader.cancel(artist_id)
         if self._await_exit([artist_id]):
-            self.logger.scheduler_cancel_timeout(artist_id=artist_id, level='warning')
-        self.logger.scheduler_cancelled(artist_id=artist_id, state='running')
-        return 'running'
+            self.logger.scheduler_cancel_timeout(artist_id=artist_id, level="warning")
+        self.logger.scheduler_cancelled(artist_id=artist_id, state="running")
+        return "running"
 
     def cancel_all(self) -> int:
         """Cancel every queued and running download. Returns how many were running."""
@@ -122,7 +128,7 @@ class Scheduler:
             try:
                 stuck = self._await_exit(active)
                 if stuck:
-                    self.logger.scheduler_cancel_timeout(remaining=len(stuck), level='warning')
+                    self.logger.scheduler_cancel_timeout(remaining=len(stuck), level="warning")
             finally:
                 self.downloader.resume_requests()
             self.logger.scheduler_cancelled_all(running=len(active))
@@ -135,27 +141,46 @@ class Scheduler:
     # Which posts a download covers is carried as flags on the task, so one pair
     # of methods serves the plain queue and every subset (lost/pending/failed).
 
-    def queue_manual(self, artist_id: str, from_date: str = None, until_date: str = None,
-                     lost: bool = False, pending: bool = False, failed: bool = False) -> bool:
-        return self._add(DownloadTask(artist_id, from_date, until_date, lost=lost,
-                                      pending=pending, failed=failed,
-                                      task_type=TaskType.MANUAL))
+    def queue_manual(
+        self,
+        artist_id: str,
+        from_date: str | None = None,
+        until_date: str | None = None,
+        lost: bool = False,
+        pending: bool = False,
+        failed: bool = False,
+    ) -> bool:
+        return self._add(
+            DownloadTask(
+                artist_id,
+                from_date,
+                until_date,
+                lost=lost,
+                pending=pending,
+                failed=failed,
+                task_type=TaskType.MANUAL,
+            )
+        )
 
-    def queue_batch(self, artist_ids: List[str], lost: bool = False,
-                    pending: bool = False, failed: bool = False) -> int:
-        return sum(self.queue_manual(aid, lost=lost, pending=pending, failed=failed)
-                   for aid in artist_ids)
+    def queue_batch(
+        self, artist_ids: list[str], lost: bool = False, pending: bool = False, failed: bool = False
+    ) -> int:
+        return sum(
+            self.queue_manual(aid, lost=lost, pending=pending, failed=failed) for aid in artist_ids
+        )
 
     def queue_sync(self, artist_id: str, deep: bool = False, lost: bool = False) -> bool:
         """Queue a post-list refresh. A sync and a download write the same
         cache, so the one-task-per-artist rule has to cover both.
 
         `lost` reclaims lost posts the server has restored."""
-        return self._add(DownloadTask(artist_id, deep=deep, recover_lost=lost,
-                                      task_type=TaskType.SYNC))
+        return self._add(
+            DownloadTask(artist_id, deep=deep, recover_lost=lost, task_type=TaskType.SYNC)
+        )
 
-    def queue_sync_batch(self, artist_ids: List[str], deep: bool = False,
-                         lost: bool = False) -> int:
+    def queue_sync_batch(
+        self, artist_ids: list[str], deep: bool = False, lost: bool = False
+    ) -> int:
         return sum(self.queue_sync(aid, deep, lost) for aid in artist_ids)
 
     def _add(self, task: DownloadTask) -> bool:
@@ -171,16 +196,19 @@ class Scheduler:
 
     # ==================== Status ====================
 
-    def status(self) -> Dict[str, int]:
+    def status(self) -> dict[str, int]:
         with self.lock:
-            return {'queued': self.queue.qsize(), 'running': len(self.active),
-                    'completed': len(self.completed)}
+            return {
+                "queued": self.queue.qsize(),
+                "running": len(self.active),
+                "completed": len(self.completed),
+            }
 
-    def list_active(self) -> List[DownloadTask]:
+    def list_active(self) -> list[DownloadTask]:
         with self.lock:
             return list(self.active.values())
 
-    def list_queued(self) -> List[DownloadTask]:
+    def list_queued(self) -> list[DownloadTask]:
         with self.lock:
             return list(self.queue.queue)
 
@@ -193,19 +221,25 @@ class Scheduler:
                 self._process()
                 time.sleep(1)
             except Exception as e:
-                self.logger.scheduler_error(error=str(e), level='error')
+                self.logger.scheduler_error(error=str(e), level="error")
                 time.sleep(5)
 
     def _process(self):
+        executor = self._executor
         with self.lock:
             # Starting a task mid-cancel would meet the request abort and finish
             # as a no-op that looks successful.
-            if self._cancelling or len(self.active) >= self.max_workers or self.queue.empty():
+            if (
+                executor is None
+                or self._cancelling
+                or len(self.active) >= self.max_workers
+                or self.queue.empty()
+            ):
                 return
             task = self.queue.get_nowait()
             self.queued.discard(task)
             self.active[task.artist_id] = task
-        future = self._executor.submit(self._execute, task)
+        future = executor.submit(self._execute, task)
         future.add_done_callback(lambda f: self._finish(task))
 
     def _execute(self, task: DownloadTask):
@@ -218,26 +252,32 @@ class Scheduler:
             if task.task_type == TaskType.SYNC:
                 # Outcome goes on the task: nobody is waiting at the prompt.
                 counts = self.downloader.update_posts(
-                    artist, detect_edits=task.deep, recover_lost=task.recover_lost)
+                    artist, detect_edits=task.deep, recover_lost=task.recover_lost
+                )
                 task.note = self._sync_note(counts, task)
             else:
                 self.downloader.download_artist(
-                    artist, task.from_date, task.until_date, lost=task.lost,
-                    pending=task.pending, failed=task.failed)
+                    artist,
+                    task.from_date,
+                    task.until_date,
+                    lost=task.lost,
+                    pending=task.pending,
+                    failed=task.failed,
+                )
             task.status = TaskStatus.COMPLETED
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error = str(e)
-            self.logger.scheduler_task_failed(artist_id=task.artist_id, error=str(e), level='error')
+            self.logger.scheduler_task_failed(artist_id=task.artist_id, error=str(e), level="error")
         finally:
             task.finished_at = datetime.now()
 
     @staticmethod
-    def _sync_note(counts: Dict[str, int], task: DownloadTask) -> str:
+    def _sync_note(counts: dict[str, int], task: DownloadTask) -> str:
         parts = [f"{counts['new']} new"]
         if task.deep:
             parts.append(f"{counts['edited']} edited")
-        if counts['lost']:
+        if counts["lost"]:
             parts.append(f"{counts['lost']} now lost")
         if task.recover_lost:
             parts.append(f"{counts['recovered']} recovered")
@@ -259,7 +299,7 @@ class Scheduler:
             if timer and self._due(artist.id, timer):
                 self._add(DownloadTask(artist.id, task_type=TaskType.SCHEDULED))
 
-    def _due(self, artist_id: str, timer: Dict) -> bool:
+    def _due(self, artist_id: str, timer: dict) -> bool:
         now = datetime.now()
         if artist_id not in self._next_runs:
             self._next_runs[artist_id] = self._next(timer, now)
@@ -270,7 +310,7 @@ class Scheduler:
         return False
 
     @staticmethod
-    def _next(timer: Dict, frm: datetime) -> datetime:
+    def _next(timer: dict, frm: datetime) -> datetime:
         hour, minute = map(int, timer.get("time", "00:00").split(":"))
         nxt = frm.replace(hour=hour, minute=minute, second=0, microsecond=0)
         kind = timer.get("type", "daily")
@@ -283,6 +323,9 @@ class Scheduler:
         elif kind == "monthly":
             nxt = nxt.replace(day=timer.get("day", 1))
             if nxt <= frm:
-                nxt = (nxt.replace(year=frm.year + 1, month=1) if frm.month == 12
-                       else nxt.replace(month=frm.month + 1))
+                nxt = (
+                    nxt.replace(year=frm.year + 1, month=1)
+                    if frm.month == 12
+                    else nxt.replace(month=frm.month + 1)
+                )
         return nxt

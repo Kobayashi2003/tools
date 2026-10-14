@@ -20,8 +20,8 @@ function labelFor(e) {
 function paint(cfg) {
   toggle.checked = cfg.enabled;
   const t = cfg.trigger || DEFAULTS.trigger;
-  keyBtns.forEach((b) =>
-    b.classList.toggle('active', t.type === 'modifier' && b.dataset.key === t.value)
+  keyBtns.forEach(b =>
+    b.classList.toggle('active', t.type === 'modifier' && b.dataset.key === t.value),
   );
   currentKey.textContent = t.label;
   keyName.textContent = t.label;
@@ -33,7 +33,7 @@ toggle.addEventListener('change', () => {
   chrome.storage.sync.set({ enabled: toggle.checked });
 });
 
-keyBtns.forEach((btn) => {
+keyBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     const value = btn.dataset.key;
     const trigger = { type: 'modifier', value, label: MOD_LABEL[value] };
@@ -56,7 +56,7 @@ recordBtn.addEventListener('click', () => {
   recordBtn.textContent = recording ? 'Press any key…' : 'Record a custom key…';
 });
 
-window.addEventListener('keydown', (e) => {
+window.addEventListener('keydown', e => {
   if (!recording) return;
   e.preventDefault();
   if (e.key === 'Escape') {

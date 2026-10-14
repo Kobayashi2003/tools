@@ -88,11 +88,25 @@ SORTS = {
 }
 VIEWS = ("all", "unseen", "starred", "hidden")
 SOURCES = ("fc2", "pp")
-STATE_SQL = ("state = CASE WHEN fc2_state = 'error' OR pp_state = 'error' THEN 'failed' "
-             "WHEN fc2_state = '' OR pp_state = '' THEN 'pending' ELSE 'done' END")
+STATE_SQL = (
+    "state = CASE WHEN fc2_state = 'error' OR pp_state = 'error' THEN 'failed' "
+    "WHEN fc2_state = '' OR pp_state = '' THEN 'pending' ELSE 'done' END"
+)
 JSON_FIELDS = ("tags", "samples", "clips")
-TORRENT_FIELDS = ("view_id", "fc2_id", "name", "infohash", "magnet", "category", "size_bytes",
-                  "uploaded_at", "seeders", "leechers", "downloads", "flag")
+TORRENT_FIELDS = (
+    "view_id",
+    "fc2_id",
+    "name",
+    "infohash",
+    "magnet",
+    "category",
+    "size_bytes",
+    "uploaded_at",
+    "seeders",
+    "leechers",
+    "downloads",
+    "flag",
+)
 
 
 def _now():
@@ -129,7 +143,9 @@ class Store:
                 row = item.to_dict() if hasattr(item, "to_dict") else dict(item)
                 if not row.get("fc2_id"):
                     continue
-                known = self._db.execute("SELECT 1 FROM torrents WHERE view_id = ?", (row["view_id"],)).fetchone()
+                known = self._db.execute(
+                    "SELECT 1 FROM torrents WHERE view_id = ?", (row["view_id"],)
+                ).fetchone()
                 values = [row[f] for f in TORRENT_FIELDS]
                 self._db.execute(
                     f"INSERT INTO torrents ({', '.join(TORRENT_FIELDS)}, seen_at) "
@@ -137,19 +153,31 @@ class Store:
                     "ON CONFLICT(view_id) DO UPDATE SET name=excluded.name, seeders=excluded.seeders, "
                     "leechers=excluded.leechers, downloads=excluded.downloads, flag=excluded.flag, "
                     "magnet=excluded.magnet, seen_at=excluded.seen_at",
-                    values + [now])
+                    values + [now],
+                )
                 new_torrents += not known
-                new_titles += self._db.execute("INSERT OR IGNORE INTO titles (fc2_id, added_at) VALUES (?, ?)",
-                                               (row["fc2_id"], now)).rowcount
+                new_titles += self._db.execute(
+                    "INSERT OR IGNORE INTO titles (fc2_id, added_at) VALUES (?, ?)",
+                    (row["fc2_id"], now),
+                ).rowcount
                 if row["fc2_id"] not in ids:
                     ids.append(row["fc2_id"])
             self._db.commit()
             pending = set()
             if ids:
                 marks = ",".join("?" * len(ids))
-                pending = {r[0] for r in self._db.execute(
-                    f"SELECT fc2_id FROM titles WHERE state != 'done' AND fc2_id IN ({marks})", ids)}
-        return {"ids": [i for i in ids if i in pending], "new_torrents": new_torrents, "new_titles": new_titles}
+                pending = {
+                    r[0]
+                    for r in self._db.execute(
+                        f"SELECT fc2_id FROM titles WHERE state != 'done' AND fc2_id IN ({marks})",
+                        ids,
+                    )
+                }
+        return {
+            "ids": [i for i in ids if i in pending],
+            "new_torrents": new_torrents,
+            "new_titles": new_titles,
+        }
 
     # --- crawl progress (key/value) -----------------------------------------------------
 
@@ -160,8 +188,11 @@ class Store:
 
     def set_meta(self, key, value):
         with self._lock:
-            self._db.execute("INSERT INTO meta (key, value) VALUES (?, ?) "
-                             "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps(value)))
+            self._db.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, json.dumps(value)),
+            )
             self._db.commit()
 
     def max_fc2_id(self):
@@ -171,7 +202,9 @@ class Store:
 
     def ensure_title(self, fc2_id):
         with self._lock:
-            self._db.execute("INSERT OR IGNORE INTO titles (fc2_id, added_at) VALUES (?, ?)", (fc2_id, _now()))
+            self._db.execute(
+                "INSERT OR IGNORE INTO titles (fc2_id, added_at) VALUES (?, ?)", (fc2_id, _now())
+            )
             self._db.commit()
 
     def save_source(self, fc2_id, source, fields, error=""):
@@ -182,7 +215,9 @@ class Store:
                 fields[key] = json.dumps(fields[key], ensure_ascii=False)
         fields["fetched_at"] = _now()
         with self._lock:
-            row = self._db.execute("SELECT errors FROM titles WHERE fc2_id = ?", (fc2_id,)).fetchone()
+            row = self._db.execute(
+                "SELECT errors FROM titles WHERE fc2_id = ?", (fc2_id,)
+            ).fetchone()
             if row is None:
                 return
             errors = json.loads(row["errors"] or "{}")
@@ -193,7 +228,10 @@ class Store:
             fields["errors"] = json.dumps(errors, ensure_ascii=False)
             assignments = ", ".join(f"{k} = ?" for k in fields)
             bump = ", attempts = attempts + 1" if error else ""
-            self._db.execute(f"UPDATE titles SET {assignments}{bump} WHERE fc2_id = ?", [*fields.values(), fc2_id])
+            self._db.execute(
+                f"UPDATE titles SET {assignments}{bump} WHERE fc2_id = ?",
+                [*fields.values(), fc2_id],
+            )
             self._db.execute(f"UPDATE titles SET {STATE_SQL} WHERE fc2_id = ?", (fc2_id,))
             self._db.commit()
 
@@ -201,12 +239,16 @@ class Store:
         """Mark sources as unfetched: all of them (refresh) or only those that errored (retry)."""
         with self._lock:
             if everything:
-                self._db.execute("UPDATE titles SET fc2_state = '', pp_state = '', errors = '{}' WHERE fc2_id = ?",
-                                 (fc2_id,))
+                self._db.execute(
+                    "UPDATE titles SET fc2_state = '', pp_state = '', errors = '{}' WHERE fc2_id = ?",
+                    (fc2_id,),
+                )
             else:
                 for source in SOURCES:
-                    self._db.execute(f"UPDATE titles SET {source}_state = '' WHERE fc2_id = ? AND {source}_state = 'error'",
-                                     (fc2_id,))
+                    self._db.execute(
+                        f"UPDATE titles SET {source}_state = '' WHERE fc2_id = ? AND {source}_state = 'error'",
+                        (fc2_id,),
+                    )
             if reset_attempts:
                 self._db.execute("UPDATE titles SET attempts = 0 WHERE fc2_id = ?", (fc2_id,))
             self._db.execute(f"UPDATE titles SET {STATE_SQL} WHERE fc2_id = ?", (fc2_id,))
@@ -215,9 +257,13 @@ class Store:
     def set_flags(self, fc2_id, starred=None, hidden=None):
         with self._lock:
             if starred is not None:
-                self._db.execute("UPDATE titles SET starred = ? WHERE fc2_id = ?", (int(starred), fc2_id))
+                self._db.execute(
+                    "UPDATE titles SET starred = ? WHERE fc2_id = ?", (int(starred), fc2_id)
+                )
             if hidden is not None:
-                self._db.execute("UPDATE titles SET hidden = ? WHERE fc2_id = ?", (int(hidden), fc2_id))
+                self._db.execute(
+                    "UPDATE titles SET hidden = ? WHERE fc2_id = ?", (int(hidden), fc2_id)
+                )
             self._db.commit()
 
     def mark_viewed(self, fc2_id):
@@ -229,8 +275,14 @@ class Store:
         with self._lock:
             self._db.execute(
                 "UPDATE torrents SET files = ?, description = ?, risky = ?, detail_at = ? WHERE view_id = ?",
-                (json.dumps(detail["files"], ensure_ascii=False), detail["description"],
-                 int(detail["risky"]), _now(), view_id))
+                (
+                    json.dumps(detail["files"], ensure_ascii=False),
+                    detail["description"],
+                    int(detail["risky"]),
+                    _now(),
+                    view_id,
+                ),
+            )
             self._db.commit()
 
     # --- reads --------------------------------------------------------------------------
@@ -242,7 +294,9 @@ class Store:
         marks = ",".join("?" * len(fc2_ids))
         with self._lock:
             rows = self._db.execute(
-                f"SELECT fc2_id, fc2_state, pp_state FROM titles WHERE fc2_id IN ({marks})", list(fc2_ids)).fetchall()
+                f"SELECT fc2_id, fc2_state, pp_state FROM titles WHERE fc2_id IN ({marks})",
+                list(fc2_ids),
+            ).fetchall()
         stages = {}
         for row in rows:
             if row["fc2_state"] == "":
@@ -253,8 +307,12 @@ class Store:
 
     def unfinished_ids(self):
         with self._lock:
-            return [r[0] for r in self._db.execute(
-                "SELECT fc2_id FROM titles WHERE fc2_state = '' OR pp_state = '' ORDER BY added_at DESC")]
+            return [
+                r[0]
+                for r in self._db.execute(
+                    "SELECT fc2_id FROM titles WHERE fc2_state = '' OR pp_state = '' ORDER BY added_at DESC"
+                )
+            ]
 
     def failed_ids(self, max_attempts=None):
         sql = "SELECT fc2_id FROM titles WHERE state = 'failed'"
@@ -270,12 +328,19 @@ class Store:
             return []
         marks = ",".join("?" * len(view_ids))
         with self._lock:
-            return [r[0] for r in self._db.execute(
-                f"SELECT view_id FROM torrents WHERE detail_at IS NULL AND view_id IN ({marks})", list(view_ids))]
+            return [
+                r[0]
+                for r in self._db.execute(
+                    f"SELECT view_id FROM torrents WHERE detail_at IS NULL AND view_id IN ({marks})",
+                    list(view_ids),
+                )
+            ]
 
     def torrent(self, view_id):
         with self._lock:
-            row = self._db.execute("SELECT * FROM torrents WHERE view_id = ?", (view_id,)).fetchone()
+            row = self._db.execute(
+                "SELECT * FROM torrents WHERE view_id = ?", (view_id,)
+            ).fetchone()
         return self._torrent_dict(row) if row else None
 
     def title(self, fc2_id):
@@ -285,7 +350,8 @@ class Store:
                 return None
             torrents = self._db.execute(
                 "SELECT * FROM torrents WHERE fc2_id = ? ORDER BY seeders DESC, uploaded_at DESC",
-                (fc2_id,)).fetchall()
+                (fc2_id,),
+            ).fetchall()
         item = self._title_dict(row)
         item["torrents"] = [self._torrent_dict(t) for t in torrents]
         if not item["title"] and item["torrents"]:
@@ -316,8 +382,10 @@ class Store:
                 args.append(fc2_id)
             else:
                 like = f"%{q}%"
-                where.append("(t.title LIKE ? OR t.seller LIKE ? OR t.tags LIKE ? OR EXISTS "
-                             "(SELECT 1 FROM torrents x WHERE x.fc2_id = t.fc2_id AND x.name LIKE ?))")
+                where.append(
+                    "(t.title LIKE ? OR t.seller LIKE ? OR t.tags LIKE ? OR EXISTS "
+                    "(SELECT 1 FROM torrents x WHERE x.fc2_id = t.fc2_id AND x.name LIKE ?))"
+                )
                 args += [like] * 4
         clause = " AND ".join(where) or "1"
         # One pass over torrents: per-title aggregates plus the best-seeded torrent's name and magnet.
@@ -326,11 +394,14 @@ class Store:
             "MAX(uploaded_at) OVER w AS uploaded_at, MAX(size_bytes) OVER w AS size_bytes, "
             "MAX(COALESCE(risky, 0)) OVER w AS risky, name AS best_name, magnet AS best_magnet, "
             "ROW_NUMBER() OVER (PARTITION BY fc2_id ORDER BY seeders DESC, view_id DESC) AS rank "
-            "FROM torrents WINDOW w AS (PARTITION BY fc2_id)")
+            "FROM torrents WINDOW w AS (PARTITION BY fc2_id)"
+        )
         base = f"FROM titles t JOIN ({per_title}) a ON a.fc2_id = t.fc2_id AND a.rank = 1 WHERE {clause}"
         # The count needs only the aggregates the filters use, not the ranked window.
-        count_base = (f"FROM titles t JOIN (SELECT fc2_id, MAX(seeders) AS seeders FROM torrents GROUP BY fc2_id) a "
-                      f"ON a.fc2_id = t.fc2_id WHERE {clause}")
+        count_base = (
+            f"FROM titles t JOIN (SELECT fc2_id, MAX(seeders) AS seeders FROM torrents GROUP BY fc2_id) a "
+            f"ON a.fc2_id = t.fc2_id WHERE {clause}"
+        )
         order = f"{SORTS.get(sort, SORTS['uploaded'])}, t.fc2_id DESC"
         return base, count_base, args, order
 
@@ -338,10 +409,13 @@ class Store:
         """Every FC2 id of a view in display order (used to find where a mark sits)."""
         base, _, args, order = self._filtered(q, view, sort, min_seeders, media)
         with self._lock:
-            return [r[0] for r in self._db.execute(f"SELECT t.fc2_id {base} ORDER BY {order}", args)]
+            return [
+                r[0] for r in self._db.execute(f"SELECT t.fc2_id {base} ORDER BY {order}", args)
+            ]
 
-    def list_titles(self, q="", view="all", sort="uploaded", min_seeders=0, media=False,
-                    offset=0, limit=60):
+    def list_titles(
+        self, q="", view="all", sort="uploaded", min_seeders=0, media=False, offset=0, limit=60
+    ):
         base, count_base, args, order = self._filtered(q, view, sort, min_seeders, media)
         with self._lock:
             total = self._db.execute(f"SELECT COUNT(*) {count_base}", args).fetchone()[0]
@@ -349,13 +423,19 @@ class Store:
                 "SELECT t.*, a.torrent_count, a.seeders AS best_seeders, a.uploaded_at AS last_upload, "
                 "a.size_bytes AS max_size, a.risky AS any_risky, a.best_name, a.best_magnet "
                 f"{base} ORDER BY {order} LIMIT ? OFFSET ?",
-                args + [int(limit), int(offset)]).fetchall()
+                args + [int(limit), int(offset)],
+            ).fetchall()
         items = []
         for row in rows:
             item = self._title_dict(row)
             item.update(
-                torrent_count=row["torrent_count"], seeders=row["best_seeders"], uploaded_at=row["last_upload"],
-                size_bytes=row["max_size"], risky=bool(row["any_risky"]), magnet=row["best_magnet"])
+                torrent_count=row["torrent_count"],
+                seeders=row["best_seeders"],
+                uploaded_at=row["last_upload"],
+                size_bytes=row["max_size"],
+                risky=bool(row["any_risky"]),
+                magnet=row["best_magnet"],
+            )
             if not item["title"]:
                 item["title"] = strip_code(row["best_name"] or "")
             items.append(item)
@@ -368,15 +448,27 @@ class Store:
             rows = self._db.execute(
                 "SELECT m.fc2_id, m.created_at, t.title, t.cover, t.fetched_at, "
                 "(SELECT x.name FROM torrents x WHERE x.fc2_id = m.fc2_id ORDER BY x.seeders DESC LIMIT 1) AS best_name "
-                "FROM marks m JOIN titles t ON t.fc2_id = m.fc2_id ORDER BY m.created_at").fetchall()
-        return [{"fc2_id": r["fc2_id"], "created_at": r["created_at"], "cover": r["cover"], "fetched_at": r["fetched_at"],
-                 "title": r["title"] or strip_code(r["best_name"] or "")} for r in rows]
+                "FROM marks m JOIN titles t ON t.fc2_id = m.fc2_id ORDER BY m.created_at"
+            ).fetchall()
+        return [
+            {
+                "fc2_id": r["fc2_id"],
+                "created_at": r["created_at"],
+                "cover": r["cover"],
+                "fetched_at": r["fetched_at"],
+                "title": r["title"] or strip_code(r["best_name"] or ""),
+            }
+            for r in rows
+        ]
 
     def set_mark(self, fc2_id, marked):
         with self._lock:
             if marked:
-                self._db.execute("INSERT OR IGNORE INTO marks (fc2_id, created_at) "
-                                 "SELECT fc2_id, ? FROM titles WHERE fc2_id = ?", (_now(), fc2_id))
+                self._db.execute(
+                    "INSERT OR IGNORE INTO marks (fc2_id, created_at) "
+                    "SELECT fc2_id, ? FROM titles WHERE fc2_id = ?",
+                    (_now(), fc2_id),
+                )
             else:
                 self._db.execute("DELETE FROM marks WHERE fc2_id = ?", (fc2_id,))
             self._db.commit()
@@ -384,19 +476,44 @@ class Store:
     def stats(self):
         with self._lock:
             row = self._db.execute(
-                "SELECT COUNT(*), SUM(state = 'pending'), SUM(state = 'failed'), SUM(starred) FROM titles").fetchone()
+                "SELECT COUNT(*), SUM(state = 'pending'), SUM(state = 'failed'), SUM(starred) FROM titles"
+            ).fetchone()
             torrents = self._db.execute("SELECT COUNT(*) FROM torrents").fetchone()[0]
-        return {"titles": row[0] or 0, "pending": row[1] or 0, "failed": row[2] or 0,
-                "starred": row[3] or 0, "torrents": torrents}
+        return {
+            "titles": row[0] or 0,
+            "pending": row[1] or 0,
+            "failed": row[2] or 0,
+            "starred": row[3] or 0,
+            "torrents": torrents,
+        }
 
     # --- helpers ------------------------------------------------------------------------
 
     @staticmethod
     def _title_dict(row):
-        item = {k: row[k] for k in (
-            "fc2_id", "state", "title", "seller", "seller_url", "released", "duration", "rating", "reviews",
-            "cover", "cover_full", "grid", "fc2_state", "pp_state", "attempts", "added_at", "fetched_at",
-            "viewed_at")}
+        item = {
+            k: row[k]
+            for k in (
+                "fc2_id",
+                "state",
+                "title",
+                "seller",
+                "seller_url",
+                "released",
+                "duration",
+                "rating",
+                "reviews",
+                "cover",
+                "cover_full",
+                "grid",
+                "fc2_state",
+                "pp_state",
+                "attempts",
+                "added_at",
+                "fetched_at",
+                "viewed_at",
+            )
+        }
         for key in JSON_FIELDS:
             item[key] = json.loads(row[key] or "[]")
         item["errors"] = json.loads(row["errors"] or "{}")

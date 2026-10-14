@@ -6,11 +6,11 @@ const DEFAULTS = {
 };
 
 let cfg = { ...DEFAULTS };
-let keyHeld = false;        // tracks a held custom (non-modifier) trigger key
-let highlighted = null;     // element currently outlined
-const undoStack = [];       // { node, parent, next } records for Ctrl/Cmd+Z
+let keyHeld = false; // tracks a held custom (non-modifier) trigger key
+let highlighted = null; // element currently outlined
+const undoStack = []; // { node, parent, next } records for Ctrl/Cmd+Z
 
-chrome.storage.sync.get(DEFAULTS, (stored) => {
+chrome.storage.sync.get(DEFAULTS, stored => {
   cfg = { ...DEFAULTS, ...stored };
 });
 
@@ -41,9 +41,7 @@ function isArmed(e) {
 // --- highlight -------------------------------------------------------------
 
 function isDeletable(el) {
-  return el instanceof Element &&
-    el !== document.documentElement &&
-    el !== document.body;
+  return el instanceof Element && el !== document.documentElement && el !== document.body;
 }
 
 function setHighlight(el) {
@@ -85,45 +83,65 @@ function restoreLast() {
 
 // --- listeners (capture phase, so we beat page handlers) --------------------
 
-document.addEventListener('mousemove', (e) => {
-  if (!isArmed(e)) {
-    clearHighlight();
-    return;
-  }
-  setHighlight(e.target);
-}, true);
+document.addEventListener(
+  'mousemove',
+  e => {
+    if (!isArmed(e)) {
+      clearHighlight();
+      return;
+    }
+    setHighlight(e.target);
+  },
+  true,
+);
 
-document.addEventListener('mousedown', (e) => {
-  if (e.button !== 0 || !isArmed(e)) return;
-  // Suppress focus, text selection, drag and Alt/Shift/Ctrl-click browser actions.
-  e.preventDefault();
-  e.stopPropagation();
-}, true);
-
-document.addEventListener('click', (e) => {
-  if (e.button !== 0 || !isArmed(e)) return;
-  e.preventDefault();
-  e.stopPropagation();
-  removeElement(e.target);
-}, true);
-
-window.addEventListener('keydown', (e) => {
-  if (cfg.trigger.type === 'key' && e.code === cfg.trigger.value) keyHeld = true;
-
-  // Undo last deletion with Ctrl+Z / Cmd+Z.
-  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ' && undoStack.length) {
+document.addEventListener(
+  'mousedown',
+  e => {
+    if (e.button !== 0 || !isArmed(e)) return;
+    // Suppress focus, text selection, drag and Alt/Shift/Ctrl-click browser actions.
     e.preventDefault();
     e.stopPropagation();
-    restoreLast();
-  }
-}, true);
+  },
+  true,
+);
 
-window.addEventListener('keyup', (e) => {
-  if (cfg.trigger.type === 'key' && e.code === cfg.trigger.value) {
-    keyHeld = false;
-    clearHighlight();
-  }
-}, true);
+document.addEventListener(
+  'click',
+  e => {
+    if (e.button !== 0 || !isArmed(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    removeElement(e.target);
+  },
+  true,
+);
+
+window.addEventListener(
+  'keydown',
+  e => {
+    if (cfg.trigger.type === 'key' && e.code === cfg.trigger.value) keyHeld = true;
+
+    // Undo last deletion with Ctrl+Z / Cmd+Z.
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ' && undoStack.length) {
+      e.preventDefault();
+      e.stopPropagation();
+      restoreLast();
+    }
+  },
+  true,
+);
+
+window.addEventListener(
+  'keyup',
+  e => {
+    if (cfg.trigger.type === 'key' && e.code === cfg.trigger.value) {
+      keyHeld = false;
+      clearHighlight();
+    }
+  },
+  true,
+);
 
 // Releasing focus (tab switch, devtools) must disarm a held key.
 window.addEventListener('blur', () => {

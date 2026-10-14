@@ -4,7 +4,6 @@ import json
 import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import List, Optional
 
 DEFAULT_MIRROR = "https://annas-archive.gl"
 
@@ -16,7 +15,14 @@ USER_AGENT = (
 # Best format first. Anything not listed sorts after everything listed, so a new
 # exotic extension never outranks an epub.
 DEFAULT_FORMAT_PRIORITY = [
-    "epub", "azw3", "mobi", "fb2", "djvu", "cbz", "cbr", "pdf",
+    "epub",
+    "azw3",
+    "mobi",
+    "fb2",
+    "djvu",
+    "cbz",
+    "cbr",
+    "pdf",
 ]
 
 # Ranking keys applied in order, best first. See volumes.sort_key().
@@ -28,31 +34,42 @@ class Config:
     mirror: str = DEFAULT_MIRROR
     output_dir: str = "downloads"
     pages: int = 1
-    language: str = ""            # AA `lang` filter, e.g. "en", "zh", "ja"
-    extension: str = ""           # AA `ext` filter; usually better left empty
+    language: str = ""
+    """AA `lang` filter, e.g. "en", "zh", "ja"."""
+    extension: str = ""
+    """AA `ext` filter; usually better left empty."""
     content: str = "book_fiction,book_nonfiction,book_unknown"
-    sort: str = ""                # AA `sort`; "" = most relevant
-    rank: List[str] = field(default_factory=lambda: list(DEFAULT_RANK))
-    format_priority: List[str] = field(default_factory=lambda: list(DEFAULT_FORMAT_PRIORITY))
-    volume_from: str = "auto"     # auto | title | publisher | filename
-    volume_regex: str = ""        # user override, one capturing group
-    strict: bool = True           # drop hits that miss a query token
-    partial: bool = False         # include the site's "partial matches" (they
-                                  # ignore the language/format filters)
-    precise_date: bool = False    # fetch each candidate's "date open sourced"
-    backend: str = "auto"         # auto | member | libgen | browser
-    secret_key: str = ""          # Anna's Archive membership key
-    browser: str = "auto"         # chrome | edge | firefox | auto
+    sort: str = ""
+    """AA `sort`; "" means most relevant."""
+    rank: list[str] = field(default_factory=lambda: list(DEFAULT_RANK))
+    format_priority: list[str] = field(default_factory=lambda: list(DEFAULT_FORMAT_PRIORITY))
+    volume_from: str = "auto"
+    """auto | title | publisher | filename"""
+    volume_regex: str = ""
+    """User override, with one capturing group."""
+    strict: bool = True
+    """Drop hits that miss a query token."""
+    partial: bool = False
+    """Include the site's "partial matches", which ignore the language/format filters."""
+    precise_date: bool = False
+    """Fetch each candidate's "date open sourced"."""
+    backend: str = "auto"
+    """auto | member | libgen | browser"""
+    secret_key: str = ""
+    """Anna's Archive membership key."""
+    browser: str = "auto"
+    """chrome | edge | firefox | auto"""
     headless: bool = False
     workers: int = 3
     timeout: int = 60
     retry: int = 3
     proxy: str = ""
     cookies_file: str = "cookies.json"
-    max_alternates: int = 4       # extra candidates kept per volume, for --pick
+    max_alternates: int = 4
+    """Extra candidates kept per volume, for --pick."""
 
     @classmethod
-    def load(cls, path: Optional[str] = None) -> "Config":
+    def load(cls, path: str | None = None) -> Config:
         """Defaults, overlaid with config.json, overlaid with ANNAS_* env vars."""
         config = cls()
         config_path = Path(path or "config.json")
@@ -85,10 +102,12 @@ class Config:
             setattr(config, f.name, value)
 
         # Proxies are usually already in the environment; honour them.
-        config.proxy = config.proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+        config.proxy = (
+            config.proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+        )
         return config
 
-    def apply_args(self, args) -> "Config":
+    def apply_args(self, args) -> Config:
         """Overlay non-None argparse values. CLI wins over file and env."""
         for f in fields(self):
             value = getattr(args, f.name, None)

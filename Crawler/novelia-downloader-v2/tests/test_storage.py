@@ -87,19 +87,33 @@ def test_migration_and_persistence(library):
 def test_no_migration_keeps_old_files_accessible(library):
     client, db, source, root = library
     target = root / "new"
-    assert client.put("/api/storage", json={"directory": str(target), "migrate": False}).status_code == 200
+    assert (
+        client.put("/api/storage", json={"directory": str(target), "migrate": False}).status_code
+        == 200
+    )
     assert source.exists()
     assert client.get("/api/files/1/raw").content == b"source"
-    assert client.put("/api/storage", json={"directory": str(root / "third"), "migrate": True}).json()["migrated"] == 1
+    assert (
+        client.put("/api/storage", json={"directory": str(root / "third"), "migrate": True}).json()[
+            "migrated"
+        ]
+        == 1
+    )
     assert not source.exists()
     # Returning to a previously used directory is supported too.
-    assert client.put("/api/storage", json={"directory": str(root / "downloads"), "migrate": True}).json()["migrated"] == 1
+    assert (
+        client.put(
+            "/api/storage", json={"directory": str(root / "downloads"), "migrate": True}
+        ).json()["migrated"]
+        == 1
+    )
     assert source.exists()
 
 
 def test_new_downloads_use_changed_directory(system, tmp_path):
     from app.schema import JobRequest
     from app.storage import Storage
+
     db, worker, upstream = system
     target = tmp_path / "changed"
     Storage(db, worker).change_directory(str(target), False)
@@ -116,8 +130,10 @@ def test_conflicts_and_failed_copy_preserve_sources(library, monkeypatch):
     assert client.put("/api/storage", json={"directory": str(target)}).status_code == 400
     assert dest.read_bytes() == b"existing" and source.exists()
     dest.unlink()
+
     def fail(*args):
         raise OSError("Disk full")
+
     monkeypatch.setattr("app.storage.shutil.copyfileobj", fail)
     assert client.put("/api/storage", json={"directory": str(target)}).status_code == 400
     assert not dest.exists() and source.exists()
@@ -131,7 +147,10 @@ def test_boundaries_and_busy_tasks(library):
     outside = root / "secret.epub"
     outside.write_bytes(b"secret")
     db.execute("UPDATE files SET reference_path=?", (str(outside),))
-    assert client.post("/api/library/remove", json={"keys": [KEY], "delete_files": True}).status_code == 400
+    assert (
+        client.post("/api/library/remove", json={"keys": [KEY], "delete_files": True}).status_code
+        == 400
+    )
     assert outside.exists() and source.exists()
     client.post("/api/jobs", json={"kind": "full"})
     assert client.post("/api/library/remove", json={"keys": [KEY]}).status_code == 409

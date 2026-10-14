@@ -23,10 +23,10 @@ import threading
 import time
 import unicodedata
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
 
 import requests
 
@@ -38,8 +38,7 @@ CHUNK = 256 * 1024
 # Windows keeps a short list of characters a name may not contain, and a name
 # may not end in a dot or a space either.
 FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-RESERVED = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4",
-            "lpt1", "lpt2", "lpt3"}
+RESERVED = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "lpt1", "lpt2", "lpt3"}
 
 
 def safe_name(text: str, fallback: str = "untitled", limit: int = 110) -> str:
@@ -69,7 +68,8 @@ class Transfer:
     index: int = 0
     size: int = 0
     got: int = 0
-    state: str = "queued"        # queued active done held failed cancelled
+    state: str = "queued"
+    """queued | active | done | held | failed | cancelled"""
     error: str = ""
     path: str = ""
 
@@ -99,15 +99,18 @@ class Task:
     message_id: str
     title: str
     club: str
-    force: bool = False          # press again even for a job already on disk
-    state: str = "queued"        # queued opening working done failed cancelled
+    force: bool = False
+    """Press again even for a job already on disk."""
+    state: str = "queued"
+    """queued | opening | working | done | failed | cancelled"""
     error: str = ""
-    note: str = ""               # what the bot said, for an external job
-    links: List[str] = field(default_factory=list)
-    transfers: List[Transfer] = field(default_factory=list)
+    note: str = ""
+    """What the bot said, for an external job."""
+    links: list[str] = field(default_factory=list)
+    transfers: list[Transfer] = field(default_factory=list)
     folder: str = ""
     queued_at: float = field(default_factory=time.time)
-    finished_at: Optional[float] = None
+    finished_at: float | None = None
 
     @property
     def active(self) -> bool:
@@ -139,8 +142,13 @@ class Task:
 class Downloads:
     """One queue for the whole run, shared by every channel on the page."""
 
-    def __init__(self, config, ledger, open_job: Callable[[Task], Claim],
-                 on_finish: Optional[Callable[[Task], None]] = None):
+    def __init__(
+        self,
+        config,
+        ledger,
+        open_job: Callable[[Task], Claim],
+        on_finish: Callable[[Task], None] | None = None,
+    ):
         self.config = config
         self.ledger = ledger
         # Press the button for this task and hand back a live claim. Supplied
@@ -152,38 +160,37 @@ class Downloads:
         self.on_finish = on_finish or (lambda task: None)
 
         self.lock = threading.RLock()
-        self.tasks: Dict[str, Task] = {}
+        self.tasks: dict[str, Task] = {}
         self.pending: deque = deque()
         self._wake = threading.Event()
-        self._worker: Optional[threading.Thread] = None
+        self._worker: threading.Thread | None = None
         self._stop = False
         self.last_error = ""
-        self._plain: Optional[requests.Session] = None
+        self._plain: requests.Session | None = None
 
     # -- queueing ---------------------------------------------------------
 
     def folder_for(self, title: str, club: str, job: str) -> Path:
         """`downloads/<club>/<title>`. The club keeps the four channels apart,
         and the title is the folder because a job is one release."""
-        return (self.config.download_path / safe_name(club or "recommendations")
-                / safe_name(title, job))
+        return (
+            self.config.download_path / safe_name(club or "recommendations") / safe_name(title, job)
+        )
 
-    def queue(self, job: str, message_id: str, title: str, club: str,
-              force: bool = False) -> Task:
+    def queue(self, job: str, message_id: str, title: str, club: str, force: bool = False) -> Task:
         """Put a job in the queue, or hand back the one already there."""
         with self.lock:
             held = self.tasks.get(job)
             if held is not None and held.active:
                 return held
-            task = Task(job=job, message_id=str(message_id), title=title,
-                        club=club, force=force)
+            task = Task(job=job, message_id=str(message_id), title=title, club=club, force=force)
             task.folder = str(self.folder_for(title, club, job))
             self.tasks[job] = task
             self.pending.append(job)
         self._ensure_worker()
         return task
 
-    def requeue(self, job: str) -> Optional[Task]:
+    def requeue(self, job: str) -> Task | None:
         """Try a failed job again, from wherever its files got to."""
         with self.lock:
             task = self.tasks.get(job)
@@ -204,8 +211,7 @@ class Downloads:
         with self.lock:
             if self._worker is None or not self._worker.is_alive():
                 self._stop = False
-                self._worker = threading.Thread(target=self._run, daemon=True,
-                                                name="downloads")
+                self._worker = threading.Thread(target=self._run, daemon=True, name="downloads")
                 self._worker.start()
         self._wake.set()
 
@@ -226,7 +232,7 @@ class Downloads:
             "error": self.last_error,
         }
 
-    def task(self, job: str) -> Optional[Task]:
+    def task(self, job: str) -> Task | None:
         return self.tasks.get(job)
 
     def cancel(self, job: str) -> None:
@@ -247,7 +253,7 @@ class Downloads:
 
     # -- the work ---------------------------------------------------------
 
-    def _next(self) -> Optional[Task]:
+    def _next(self) -> Task | None:
         with self.lock:
             while self.pending:
                 task = self.tasks.get(self.pending.popleft())
@@ -276,7 +282,7 @@ class Downloads:
             try:
                 self.on_finish(task)
             except Exception:
-                pass          # a tick is not worth losing the queue over
+                pass  # a tick is not worth losing the queue over
 
     def _do(self, task: Task) -> None:
         if task.state == "cancelled":
@@ -284,7 +290,7 @@ class Downloads:
         if self._already(task):
             return
         task.state = "opening"
-        claim = self.open_job(task)          # presses the button
+        claim = self.open_job(task)  # presses the button
         task.note = claim.note
         task.links = list(claim.links)
         if claim.title:
@@ -295,8 +301,11 @@ class Downloads:
             # An external job on a host with no direct form: the link is the
             # answer, and opening it is the reader's job, not ours.
             task.state = "done" if claim.links else "failed"
-            task.error = "" if claim.links else (
-                claim.note and "the bot gave no link" or "the bot said nothing")
+            task.error = (
+                ""
+                if claim.links
+                else (claim.note and "the bot gave no link" or "the bot said nothing")
+            )
             task.finished_at = time.time()
             return
 
@@ -304,9 +313,16 @@ class Downloads:
         task.transfers = []
         for file in claim.files:
             target = folder / safe_name(file.name, f"{task.job}-{file.index}")
-            task.transfers.append(Transfer(
-                key=f"{task.job}:{file.index}", name=file.name, url=file.url,
-                index=file.index, size=file.size, path=str(target)))
+            task.transfers.append(
+                Transfer(
+                    key=f"{task.job}:{file.index}",
+                    name=file.name,
+                    url=file.url,
+                    index=file.index,
+                    size=file.size,
+                    path=str(target),
+                )
+            )
 
         task.state = "working"
         for transfer in task.transfers:
@@ -343,11 +359,17 @@ class Downloads:
         task.folder = record.get("dir") or task.folder
         task.title = record.get("title") or task.title
         task.transfers = [
-            Transfer(key=f"{task.job}:{i}", name=file.get("name", ""),
-                     index=i, size=int(file.get("size") or 0),
-                     got=int(file.get("size") or 0), state="held",
-                     path=file.get("path", ""))
-            for i, file in enumerate(record["files"])]
+            Transfer(
+                key=f"{task.job}:{i}",
+                name=file.get("name", ""),
+                index=i,
+                size=int(file.get("size") or 0),
+                got=int(file.get("size") or 0),
+                state="held",
+                path=file.get("path", ""),
+            )
+            for i, file in enumerate(record["files"])
+        ]
         task.state = "done"
         task.note = "already on disk"
         task.finished_at = time.time()
@@ -374,7 +396,7 @@ class Downloads:
                 transfer.size = disk
                 return True
         if not transfer.size:
-            return True                       # nothing to compare it against
+            return True  # nothing to compare it against
         slack = max(1024, transfer.size * 0.001)
         return abs(disk - transfer.size) <= slack
 
@@ -405,7 +427,7 @@ class Downloads:
                 if attempt >= max(1, self.config.retry):
                     break
                 transfer.error = f"{_plainly(exc)} — trying again ({attempt})"
-                time.sleep(min(2 ** attempt, 20))
+                time.sleep(min(2**attempt, 20))
         raise RuntimeError(_plainly(last) if last else "the transfer failed")
 
     def _attempt(self, task: Task, transfer: Transfer, claim: Claim) -> None:
@@ -418,10 +440,13 @@ class Downloads:
 
         have = part.stat().st_size if part.exists() else 0
         session = claim.session or self._session()
-        response = session.get(transfer.url,
-                               headers={"Range": f"bytes={have}-"} if have else {},
-                               stream=True, timeout=self._timeout,
-                               allow_redirects=True)
+        response = session.get(
+            transfer.url,
+            headers={"Range": f"bytes={have}-"} if have else {},
+            stream=True,
+            timeout=self._timeout,
+            allow_redirects=True,
+        )
 
         if have and response.status_code == 200:
             # The server ignored the range and is sending the lot: start again
@@ -456,12 +481,19 @@ class Downloads:
         self._note(task, transfer)
 
     def _note(self, task: Task, transfer: Transfer) -> None:
-        self.ledger.record(task.job, task.title, Path(task.folder), [{
-            "name": transfer.name,
-            "size": transfer.size,
-            "path": transfer.path,
-            "at": datetime.now(timezone.utc).isoformat(),
-        }])
+        self.ledger.record(
+            task.job,
+            task.title,
+            Path(task.folder),
+            [
+                {
+                    "name": transfer.name,
+                    "size": transfer.size,
+                    "path": transfer.path,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+            ],
+        )
 
     @property
     def _timeout(self):

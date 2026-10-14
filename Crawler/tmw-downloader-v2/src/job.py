@@ -16,8 +16,7 @@ feed's lock for a page or two, so the page it is running behind stays answerable
 """
 
 import threading
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from .config import parse_history
 from .models import snowflake_time
@@ -41,19 +40,19 @@ class FetchJob:
         # A date floor has to go back to `backfill` on every pass; a plain count
         # is this job's own budget, and the passes are drawn from it.
         self.floor_spec = self.spec if floor is not None else ""
-        self.total: Optional[int] = count
+        self.total: int | None = count
 
         self.fetched = 0
         self.added = 0
-        self.edge: Optional[datetime] = None   # the oldest (or newest) id reached
-        self.done = False                      # the channel had no more to give
+        self.edge: datetime | None = None  # the oldest (or newest) id reached
+        self.done = False  # the channel had no more to give
         self.error = ""
-        self.started_at = datetime.now(timezone.utc)
-        self.finished_at: Optional[datetime] = None
+        self.started_at = datetime.now(UTC)
+        self.finished_at: datetime | None = None
 
-        self._base = 0                         # messages fetched before this pass
+        self._base = 0  # messages fetched before this pass
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     # -- state ------------------------------------------------------------
 
@@ -83,15 +82,16 @@ class FetchJob:
 
     # -- running ----------------------------------------------------------
 
-    def start(self) -> "FetchJob":
+    def start(self) -> FetchJob:
         if self.active:
             return self
-        self._thread = threading.Thread(target=self._run, daemon=True,
-                                        name=f"fetch-{self.feed.config.channel_id}")
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name=f"fetch-{self.feed.config.channel_id}"
+        )
         self._thread.start()
         return self
 
-    def stop(self) -> "FetchJob":
+    def stop(self) -> FetchJob:
         self._stop.set()
         return self
 
@@ -104,8 +104,7 @@ class FetchJob:
     def _pass(self, step: int) -> dict:
         if self.direction == "newer":
             return self.feed.sync(limit=step, on_progress=self._page_seen)
-        return self.feed.backfill(spec=self.floor_spec, limit=step,
-                                  on_progress=self._page_seen)
+        return self.feed.backfill(spec=self.floor_spec, limit=step, on_progress=self._page_seen)
 
     def _run(self) -> None:
         remaining = self.total
@@ -140,7 +139,7 @@ class FetchJob:
         except Exception as exc:
             self.error = f"{type(exc).__name__}: {exc}"
         finally:
-            self.finished_at = datetime.now(timezone.utc)
+            self.finished_at = datetime.now(UTC)
             try:
                 self.feed.flush()
             except Exception as exc:

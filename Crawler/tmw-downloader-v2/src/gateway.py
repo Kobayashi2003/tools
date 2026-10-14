@@ -21,7 +21,6 @@ import json
 import random
 import threading
 import time
-from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import websocket
@@ -54,13 +53,13 @@ class Gateway:
         self.user: dict = {}
         self.error: str = ""
 
-        self._ws: Optional[websocket.WebSocketApp] = None
-        self._thread: Optional[threading.Thread] = None
-        self._beat: Optional[threading.Thread] = None
+        self._ws: websocket.WebSocketApp | None = None
+        self._thread: threading.Thread | None = None
+        self._beat: threading.Thread | None = None
         self._closing = False
-        self._seq: Optional[int] = None
+        self._seq: int | None = None
         # nonce -> {"event": Event, "reply": dict, "error": str}
-        self._waiting: Dict[str, dict] = {}
+        self._waiting: dict[str, dict] = {}
         # Presses are paced against the wall clock, not against each other, so
         # two tabs asking at once still queue politely.
         self._last_press = 0.0
@@ -90,8 +89,7 @@ class Gateway:
                     self.ready.clear()
                     self.error = ""
                     self._closing = False
-                    self._thread = threading.Thread(target=self._run, daemon=True,
-                                                    name="gateway")
+                    self._thread = threading.Thread(target=self._run, daemon=True, name="gateway")
                     self._thread.start()
             if self.ready.wait(timeout):
                 return
@@ -106,7 +104,7 @@ class Gateway:
             with self.lock:
                 self._thread = None
             if attempt < attempts:
-                time.sleep(min(2 ** attempt, 15))
+                time.sleep(min(2**attempt, 15))
         raise GatewayError(f"could not reach Discord's gateway: {why}")
 
     def _identify(self) -> dict:
@@ -116,16 +114,22 @@ class Gateway:
                 "token": self.config.token,
                 "capabilities": 161789,
                 "properties": {
-                    "os": "Windows", "browser": "Chrome", "device": "",
-                    "system_locale": "en-US", "browser_user_agent": USER_AGENT,
-                    "browser_version": "131.0.0.0", "os_version": "10",
-                    "referrer": "", "referring_domain": "",
-                    "referrer_current": "", "referring_domain_current": "",
-                    "release_channel": "stable", "client_build_number": 361274,
+                    "os": "Windows",
+                    "browser": "Chrome",
+                    "device": "",
+                    "system_locale": "en-US",
+                    "browser_user_agent": USER_AGENT,
+                    "browser_version": "131.0.0.0",
+                    "os_version": "10",
+                    "referrer": "",
+                    "referring_domain": "",
+                    "referrer_current": "",
+                    "referring_domain_current": "",
+                    "release_channel": "stable",
+                    "client_build_number": 361274,
                     "client_event_source": None,
                 },
-                "presence": {"status": "unknown", "since": 0,
-                             "activities": [], "afk": False},
+                "presence": {"status": "unknown", "since": 0, "activities": [], "afk": False},
                 "compress": False,
                 "client_state": {"guild_versions": {}},
             },
@@ -147,14 +151,17 @@ class Gateway:
         # http, socks5, socks5h -- the last two need `python-socks` installed,
         # and say so plainly if it is not.
         scheme = (proxy.scheme or "http").lower()
-        args = {"http_proxy_host": proxy.hostname,
-                "http_proxy_port": proxy.port,
-                "proxy_type": "http" if scheme in ("http", "https") else scheme}
+        args = {
+            "http_proxy_host": proxy.hostname,
+            "http_proxy_port": proxy.port,
+            "proxy_type": "http" if scheme in ("http", "https") else scheme,
+        }
         if proxy.username:
             args["http_proxy_auth"] = (proxy.username, proxy.password or "")
         if self.config.no_proxy:
-            args["http_no_proxy"] = [h.strip() for h in self.config.no_proxy.split(",")
-                                     if h.strip()]
+            args["http_no_proxy"] = [
+                h.strip() for h in self.config.no_proxy.split(",") if h.strip()
+            ]
         return args
 
     def _run(self) -> None:
@@ -197,8 +204,9 @@ class Gateway:
     def _on_close(self, _ws, code, _reason) -> None:
         self.ready.clear()
         if code in FATAL_CLOSE:
-            self.error = (f"Discord closed the connection ({code}); the token is "
-                          f"not valid for the gateway")
+            self.error = (
+                f"Discord closed the connection ({code}); the token is not valid for the gateway"
+            )
 
     def _on_message(self, _ws, raw) -> None:
         try:
@@ -211,12 +219,13 @@ class Gateway:
 
         if op == 10:
             every = (data or {}).get("heartbeat_interval", 41250) / 1000
-            self._beat = threading.Thread(target=self._heartbeat, args=(every,),
-                                          daemon=True, name="gateway-beat")
+            self._beat = threading.Thread(
+                target=self._heartbeat, args=(every,), daemon=True, name="gateway-beat"
+            )
             self._beat.start()
             self._send(self._identify())
             return
-        if op == 9:                      # invalid session: nothing to resume
+        if op == 9:  # invalid session: nothing to resume
             self.error = "Discord rejected the session"
             self.ready.clear()
             return
@@ -232,8 +241,7 @@ class Gateway:
             self._deliver((data or {}).get("nonce"), data)
             return
         if kind == "INTERACTION_FAILURE":
-            self._fail((data or {}).get("nonce"),
-                       "the bot refused the press")
+            self._fail((data or {}).get("nonce"), "the bot refused the press")
             return
         if kind == "GUILD_MEMBERS_CHUNK":
             self._deliver((data or {}).get("nonce"), data)
@@ -283,8 +291,15 @@ class Gateway:
 
     # -- the two things this exists for -----------------------------------
 
-    def press(self, client, guild_id: str, channel_id: str, message_id: str,
-              custom_id: str, application_id: str) -> dict:
+    def press(
+        self,
+        client,
+        guild_id: str,
+        channel_id: str,
+        message_id: str,
+        custom_id: str,
+        application_id: str,
+    ) -> dict:
         """Press a button on a message and return what the bot says back.
 
         `client` is the REST side: the press itself is an ordinary authenticated
@@ -305,28 +320,28 @@ class Gateway:
         nonce = _nonce()
         slot = self._slot(nonce)
         try:
-            client.interact({
-                "type": 3,
-                "nonce": nonce,
-                "guild_id": str(guild_id),
-                "channel_id": str(channel_id),
-                "message_flags": 0,
-                "message_id": str(message_id),
-                "application_id": str(application_id),
-                "session_id": self.session_id,
-                "data": {"component_type": 2, "custom_id": custom_id},
-            })
+            client.interact(
+                {
+                    "type": 3,
+                    "nonce": nonce,
+                    "guild_id": str(guild_id),
+                    "channel_id": str(channel_id),
+                    "message_flags": 0,
+                    "message_id": str(message_id),
+                    "application_id": str(application_id),
+                    "session_id": self.session_id,
+                    "data": {"component_type": 2, "custom_id": custom_id},
+                }
+            )
             if not slot["event"].wait(self.config.press_wait):
-                raise GatewayError(
-                    f"the bot did not answer within {self.config.press_wait:.0f}s")
+                raise GatewayError(f"the bot did not answer within {self.config.press_wait:.0f}s")
             if slot["error"]:
                 raise GatewayError(slot["error"])
             return slot["reply"] or {}
         finally:
             self._forget(nonce)
 
-    def members(self, guild_id: str, user_ids: List[str],
-                timeout: float = 15.0) -> Dict[str, str]:
+    def members(self, guild_id: str, user_ids: list[str], timeout: float = 15.0) -> dict[str, str]:
         """Resolve user ids to display names, {id: name}.
 
         `/users/{id}` answers 401 to an account token, so this is the way a
@@ -337,21 +352,22 @@ class Gateway:
         if not wanted:
             return {}
         self.ensure()
-        found: Dict[str, str] = {}
+        found: dict[str, str] = {}
         for start in range(0, len(wanted), 100):
-            batch = wanted[start:start + 100]
-            nonce = _nonce()[:24]     # Discord rejects a nonce over 32 chars
+            batch = wanted[start : start + 100]
+            nonce = _nonce()[:24]  # Discord rejects a nonce over 32 chars
             slot = self._slot(nonce)
             try:
-                self._send({"op": 8, "d": {"guild_id": str(guild_id),
-                                           "user_ids": batch,
-                                           "nonce": nonce}})
+                self._send(
+                    {"op": 8, "d": {"guild_id": str(guild_id), "user_ids": batch, "nonce": nonce}}
+                )
                 if not slot["event"].wait(timeout):
                     continue
                 for member in (slot["reply"] or {}).get("members") or []:
                     user = member.get("user") or {}
-                    name = (member.get("nick") or user.get("global_name")
-                            or user.get("username") or "")
+                    name = (
+                        member.get("nick") or user.get("global_name") or user.get("username") or ""
+                    )
                     if user.get("id") and name:
                         found[str(user["id"])] = name
             finally:

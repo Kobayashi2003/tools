@@ -22,15 +22,15 @@ class Logger:
         self.logger.propagate = False
 
         formatter = logging.Formatter(
-            '%(asctime)s [%(levelname)s] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
 
         handler = RotatingFileHandler(
             self.log_dir / datetime.now().strftime("%Y-%m-%d.log"),
             maxBytes=10 * 1024 * 1024,
             backupCount=5,
-            encoding='utf-8',
+            encoding="utf-8",
         )
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
@@ -54,26 +54,28 @@ class Logger:
 
     @staticmethod
     def _normalize(value) -> str:
-        text = str(value).replace('\n', ' ').replace('\r', ' ')
-        while '  ' in text:
-            text = text.replace('  ', ' ')
+        text = str(value).replace("\n", " ").replace("\r", " ")
+        while "  " in text:
+            text = text.replace("  ", " ")
         return text.strip()
 
     def __getattr__(self, attr: str):
-        if attr.startswith('_') or '_' not in attr:
+        if attr.startswith("_") or "_" not in attr:
             raise AttributeError(attr)
 
-        module, action = attr.split('_', 1)
+        module, action = attr.split("_", 1)
 
         def _event(*args, **kwargs):
-            level = kwargs.pop('level', 'info')
+            level = kwargs.pop("level", "info")
             parts = [self._normalize(a) for a in args]
             if kwargs:
-                parts.append(', '.join(f"{k}={self._normalize(v)}" for k, v in kwargs.items()))
-            message = ' | '.join(p for p in parts if p)
+                parts.append(", ".join(f"{k}={self._normalize(v)}" for k, v in kwargs.items()))
+            message = " | ".join(p for p in parts if p)
             line = f"[{module.upper()}] {action}"
             if message:
                 line += f" - {message}"
-            getattr(self.logger, level if level in ('info', 'warning', 'error', 'debug') else 'info')(line)
+            getattr(
+                self.logger, level if level in ("info", "warning", "error", "debug") else "info"
+            )(line)
 
         return _event

@@ -2,7 +2,7 @@
 
 import json
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import uvicorn
@@ -21,38 +21,115 @@ def main():
         for index in range(8):
             key = f"wenku/{index + 1:024x}"
             title = "Japanese library " + str(index + 1)
-            data = {"title": title, "titleZh": "Local preview", "authors": ["Example author"],
-                    "introduction": "A long introduction for testing expansion. " * 20,
-                    "volumeJp": [{"volumeId": "Volume 1.epub"}, {"volumeId": "Volume 2.epub"}]}
+            data = {
+                "title": title,
+                "titleZh": "Local preview",
+                "authors": ["Example author"],
+                "introduction": "A long introduction for testing expansion. " * 20,
+                "volumeJp": [{"volumeId": "Volume 1.epub"}, {"volumeId": "Volume 2.epub"}],
+            }
             db.save_work(key, data, 1)
             catalog.append({"id": key.split("/")[1], **data})
             if index < 4:
                 source = epub(root / "books" / str(index) / "source.epub")
-                db.save_file(key, "Volume 1.epub", "jp-zh", "hash", source, source.stat().st_size, "digest")
+                db.save_file(
+                    key, "Volume 1.epub", "jp-zh", "hash", source, source.stat().st_size, "digest"
+                )
                 if index == 3:
                     source.unlink()
         for status in ("completed", "completed_with_errors", "failed", "interrupted"):
-            job_id = db.create_job(JobRequest(kind="manual", keys=["wenku/000000000000000000000001"]))
+            job_id = db.create_job(
+                JobRequest(kind="manual", keys=["wenku/000000000000000000000001"])
+            )
             db.add_targets(job_id, ["wenku/000000000000000000000001"])
-            db.execute("UPDATE jobs SET status=?,listing_done=1,error=? WHERE id=?",
-                       (status, "Example error" if status == "failed" else None, job_id))
-            db.execute("UPDATE job_items SET status=? WHERE job_id=?", ("done" if status == "completed" else "failed", job_id))
+            db.execute(
+                "UPDATE jobs SET status=?,listing_done=1,error=? WHERE id=?",
+                (status, "Example error" if status == "failed" else None, job_id),
+            )
+            db.execute(
+                "UPDATE job_items SET status=? WHERE job_id=?",
+                ("done" if status == "completed" else "failed", job_id),
+            )
             db.log(job_id, "UI fixture log")
             if status == "completed_with_errors":
-                db.execute("UPDATE job_items SET retryable=1,attempts=3,error=?,parts=? WHERE job_id=?",
-                           ("1 of 2 volume(s) failed. Volume 2.epub: HTTP 503 after 3 attempts",
-                            json.dumps({"done": ["Volume 1.epub"],
-                                        "failed": {"Volume 2.epub": "HTTP 503 after 3 attempts"}}), job_id))
+                db.execute(
+                    "UPDATE job_items SET retryable=1,attempts=3,error=?,parts=? WHERE job_id=?",
+                    (
+                        "1 of 2 volume(s) failed. Volume 2.epub: HTTP 503 after 3 attempts",
+                        json.dumps(
+                            {
+                                "done": ["Volume 1.epub"],
+                                "failed": {"Volume 2.epub": "HTTP 503 after 3 attempts"},
+                            }
+                        ),
+                        job_id,
+                    ),
+                )
+        running = db.create_job(JobRequest(kind="full"))
+        keys = [f"wenku/{index + 1:024x}" for index in range(3)]
+        db.add_targets(running, keys)
+        db.execute("UPDATE jobs SET status='running',listing_done=1 WHERE id=?", (running,))
+        for key, retryable, error in (
+            (keys[0], 1, "Network SSLError after 3 attempts"),
+            (keys[1], 0, "HTTP 404: not found on Novelia."),
+        ):
+            db.execute(
+                "UPDATE job_items SET status='failed',retryable=?,error=?,attempts=1 "
+                "WHERE job_id=? AND target=?",
+                (retryable, error, running, key),
+            )
+        db.execute(
+            "UPDATE job_items SET status='running' WHERE job_id=? AND target=?", (running, keys[2])
+        )
+        start = datetime.now(UTC) - timedelta(days=1, minutes=5)
+        for index in range(400):
+            key = f"wenku/{index + 10:024x}"
+            lines = [("info", f"Checking {key}")]
+            if index % 3:
+                lines.append(
+                    (
+                        "info",
+                        f"Downloaded ソードアート・オンライン 第{index}巻.epub ({1800 + index * 37} KB).",
+                    )
+                )
+            else:
+                lines.append(("info", f"Unchanged: 魔女の旅々{index:02d}GAノベル.epub"))
+            if index % 41 == 0:
+                lines.append(
+                    ("warning", f"{key}: category changed; excluded from light novel downloads.")
+                )
+            if index % 57 == 0:
+                lines.append(
+                    (
+                        "error",
+                        f"{key}: 1 of 2 volume(s) failed. 第二巻.epub: Network SSLError after 3 attempts",
+                    )
+                )
+            for level, message in lines:
+                stamp = (start + timedelta(minutes=index * 4)).isoformat(timespec="seconds")
+                db.execute(
+                    "INSERT INTO logs(job_id,created_at,level,message) VALUES (?,?,?,?)",
+                    (running, stamp, level, message),
+                )
         paused = db.create_job(JobRequest(kind="incremental"))
-        db.defer(paused, datetime.now(timezone.utc) + timedelta(minutes=25),
-                 "Novelia kept refusing requests for 10 min; pausing the task for 30 min.", 1)
+        db.defer(
+            paused,
+            datetime.now(UTC) + timedelta(minutes=25),
+            "Novelia kept refusing requests for 10 min; pausing the task for 30 min.",
+            1,
+        )
 
         class CatalogClient:
             def __init__(self, config, **_):
                 pass
 
             def listing(self, page, category, query):
-                return {"items": [item for item in catalog if query.casefold() in item["title"].casefold()], "pageNumber": 3}
+                return {
+                    "items": [
+                        item for item in catalog if query.casefold() in item["title"].casefold()
+                    ],
+                    "pageNumber": 3,
+                }
 
             def close(self):
                 pass

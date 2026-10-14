@@ -10,8 +10,8 @@ import json
 import time
 from pathlib import Path
 
-import aiohttp
 import aiofiles
+import aiohttp
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -20,6 +20,7 @@ USER_AGENT = (
 
 
 # ---- helpers ----
+
 
 def load_cookies(cookies_file):
     """Load cookies from a JSON file (browser-export list or simple dict). Returns a dict or None."""
@@ -53,8 +54,10 @@ def image_url(base_url, page_num, ext):
 
 # ---- download ----
 
-async def download_image(session, base_url, ext, download_dir, page_num, semaphore,
-                         timeout=30, retry_times=3):
+
+async def download_image(
+    session, base_url, ext, download_dir, page_num, semaphore, timeout=30, retry_times=3
+):
     async with semaphore:
         url = image_url(base_url, page_num, ext)
         filename = f"{page_num}.{ext}"
@@ -67,7 +70,9 @@ async def download_image(session, base_url, ext, download_dir, page_num, semapho
         for attempt in range(retry_times):
             try:
                 print(f"Downloading: {url}")
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as response:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as response:
                     if response.status == 429:
                         print("Rate limited, waiting 10s...")
                         await asyncio.sleep(10)
@@ -89,13 +94,25 @@ async def download_image(session, base_url, ext, download_dir, page_num, semapho
         return False
 
 
-async def download_range(base_url, start_page, end_page, ext="jpg", download_dir="downloads",
-                         cookies=None, max_concurrent=5, delay=1, batch_size=5, batch_delay=1):
+async def download_range(
+    base_url,
+    start_page,
+    end_page,
+    ext="jpg",
+    download_dir="downloads",
+    cookies=None,
+    max_concurrent=5,
+    delay=1,
+    batch_size=5,
+    batch_delay=1,
+):
     download_dir = Path(download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Pages {start_page}-{end_page} | dir: {download_dir} | "
-          f"concurrency: {max_concurrent} | batch: {batch_size}")
+    print(
+        f"Pages {start_page}-{end_page} | dir: {download_dir} | "
+        f"concurrency: {max_concurrent} | batch: {batch_size}"
+    )
     print("-" * 50)
 
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -104,8 +121,12 @@ async def download_range(base_url, start_page, end_page, ext="jpg", download_dir
         "Accept": "image/jpeg,image/webp,image/apng,image/*,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    connector = aiohttp.TCPConnector(limit=max_concurrent, limit_per_host=max_concurrent,
-                                     keepalive_timeout=60, enable_cleanup_closed=True)
+    connector = aiohttp.TCPConnector(
+        limit=max_concurrent,
+        limit_per_host=max_concurrent,
+        keepalive_timeout=60,
+        enable_cleanup_closed=True,
+    )
 
     cookie_jar = None
     if cookies:
@@ -115,10 +136,11 @@ async def download_range(base_url, start_page, end_page, ext="jpg", download_dir
     all_pages = list(range(start_page, end_page + 1))
     total_success = 0
 
-    async with aiohttp.ClientSession(headers=headers, connector=connector,
-                                     cookie_jar=cookie_jar) as session:
+    async with aiohttp.ClientSession(
+        headers=headers, connector=connector, cookie_jar=cookie_jar
+    ) as session:
         for i in range(0, len(all_pages), batch_size):
-            batch = all_pages[i:i + batch_size]
+            batch = all_pages[i : i + batch_size]
             batch_num = i // batch_size + 1
             total_batches = (len(all_pages) + batch_size - 1) // batch_size
             print(f"\nBatch {batch_num}/{total_batches} (pages {batch[0]}-{batch[-1]})")
@@ -127,8 +149,11 @@ async def download_range(base_url, start_page, end_page, ext="jpg", download_dir
             for j, page in enumerate(batch):
                 if j > 0:
                     await asyncio.sleep(delay)
-                tasks.append(asyncio.create_task(
-                    download_image(session, base_url, ext, download_dir, page, semaphore)))
+                tasks.append(
+                    asyncio.create_task(
+                        download_image(session, base_url, ext, download_dir, page, semaphore)
+                    )
+                )
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             total_success += sum(1 for r in results if r is True)
@@ -142,6 +167,7 @@ async def download_range(base_url, start_page, end_page, ext="jpg", download_dir
 
 # ---- CLI ----
 
+
 def main(argv=None):
     import argparse
 
@@ -153,7 +179,9 @@ def main(argv=None):
     parser.add_argument("-n", "--end", type=int, required=True, help="Last page number")
     parser.add_argument("--cookies", default=None, help="Path to a cookies.json file")
     parser.add_argument("--concurrency", type=int, default=5, help="Max concurrent downloads")
-    parser.add_argument("--delay", type=float, default=1, help="Delay between downloads in a batch (s)")
+    parser.add_argument(
+        "--delay", type=float, default=1, help="Delay between downloads in a batch (s)"
+    )
     parser.add_argument("--batch-size", type=int, default=5, help="Images per batch")
     parser.add_argument("--batch-delay", type=float, default=1, help="Delay between batches (s)")
     args = parser.parse_args(argv)
@@ -161,10 +189,20 @@ def main(argv=None):
     cookies = load_cookies(args.cookies) if args.cookies else None
 
     start = time.time()
-    asyncio.run(download_range(
-        args.base_url, args.start, args.end, ext=args.ext, download_dir=args.output,
-        cookies=cookies, max_concurrent=args.concurrency, delay=args.delay,
-        batch_size=args.batch_size, batch_delay=args.batch_delay))
+    asyncio.run(
+        download_range(
+            args.base_url,
+            args.start,
+            args.end,
+            ext=args.ext,
+            download_dir=args.output,
+            cookies=cookies,
+            max_concurrent=args.concurrency,
+            delay=args.delay,
+            batch_size=args.batch_size,
+            batch_delay=args.batch_delay,
+        )
+    )
     print(f"Total time: {time.time() - start:.2f}s")
 
 

@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Novelia Library</title>
     <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=13" />
+    <link rel="stylesheet" href="/static/style.css?v=16" />
     <script src="/static/ui.js?v=10" defer></script>
-    <script src="/static/app.js?v=12" defer></script>
+    <script src="/static/app.js?v=14" defer></script>
   </head>
   <body>
     <aside class="rail" id="sidebar">
@@ -229,6 +229,10 @@
               <label class="switch"><input aria-labelledby="label-download_chinese_uploads" name="download_chinese_uploads" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             <div class="row">
+              <div><strong id="label-original_fallback">Keep the original when bilingual fails</strong><p>Some uploads make Novelia's bilingual builder fail every time. Save the Japanese original as that volume's Japanese edition instead; later sweeps try the bilingual file again when the volume changes.</p></div>
+              <label class="switch"><input aria-labelledby="label-original_fallback" name="original_fallback" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
               <div><strong>Works per catalog page</strong><p>Page ranges in download tasks are counted with this size.</p></div>
               <label class="unit"><input name="page_size" type="number" min="1" max="100" required aria-label="Works per catalog page" />works</label>
             </div>
@@ -310,6 +314,14 @@
               <div><strong>Wait before a round</strong><p>Multiplied by the round number: 1×, 2×, 3×…</p></div>
               <label class="unit"><input name="retry_round_delay" type="number" min="0" max="3600" required aria-label="Wait before a retry round" />seconds</label>
             </div>
+            <div class="row">
+              <div><strong>Pause after network failures</strong><p>When this many items in a row fail because the connection is down, they go back in the queue and the task pauses instead of failing everything after them. 0 never pauses.</p></div>
+              <label class="unit"><input name="network_streak" type="number" min="0" max="100" required aria-label="Network failures in a row before pausing" />items</label>
+            </div>
+            <div class="row">
+              <div><strong>Network pause</strong></div>
+              <label class="unit"><input name="network_pause" type="number" min="1" max="1440" required aria-label="Network pause length" />minutes</label>
+            </div>
             </div>
           </section>
           <section>
@@ -320,7 +332,7 @@
             </div>
             <div class="row">
               <div><strong>Window</strong><p>May cross midnight, e.g. 23:00 to 07:00.</p></div>
-              <div class="time-range"><input name="active_start" type="time" required aria-label="Window start" /><span aria-hidden="true">–</span><input name="active_end" type="time" required aria-label="Window end" /></div>
+              <div class="time-range"><input name="active_start" required inputmode="numeric" maxlength="5" placeholder="23:00" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" title="24-hour time, e.g. 23:00" aria-label="Window start (24-hour)" /><span aria-hidden="true">to</span><input name="active_end" required inputmode="numeric" maxlength="5" placeholder="07:00" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" title="24-hour time, e.g. 07:00" aria-label="Window end (24-hour)" /></div>
             </div>
             </div>
           </section>
@@ -399,13 +411,24 @@
       <div id="work-detail"></div>
     </dialog>
 
-    <dialog id="log-dialog" class="sheet" aria-labelledby="log-title">
-      <header class="dialog-head">
-        <div><h2 id="log-title">Task log</h2><p id="log-status" class="sub"></p></div>
-        <button class="icon-button" data-close="log-dialog" aria-label="Close">✕</button>
+    <dialog id="log-dialog" class="sheet log-sheet" aria-labelledby="log-title">
+      <header class="dialog-head log-head">
+        <div class="log-heading">
+          <div><h2 id="log-title">Task log</h2><p id="log-status" class="sub"></p></div>
+          <button class="icon-button" data-close="log-dialog" aria-label="Close">✕</button>
+        </div>
+        <div class="log-toolbar">
+          <div class="segmented log-filter" role="radiogroup" aria-label="Show">
+            <button type="button" role="radio" data-log-filter="all" aria-checked="true">All lines</button>
+            <button type="button" role="radio" data-log-filter="problems" aria-checked="false">Warnings and errors</button>
+          </div>
+          <span id="log-count" class="log-count"></span>
+        </div>
       </header>
       <div id="task-errors"></div>
+      <button id="log-earlier" class="log-earlier" type="button" hidden>Show earlier lines</button>
       <ol id="log-content" tabindex="0" aria-label="Task log"></ol>
+      <button id="log-latest" class="log-latest" type="button" hidden></button>
     </dialog>
 
     <div id="toast" popover="manual" role="status" aria-live="polite" hidden></div>

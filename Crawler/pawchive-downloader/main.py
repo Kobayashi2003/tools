@@ -1,24 +1,34 @@
 """Entry point: build the object graph, start the scheduler, run the shell."""
 
+import io
 import os
 import signal
 import sys
 
-# Many creator names are Japanese; the default Windows console codec (cp932)
-# would raise UnicodeEncodeError when printing them. Force UTF-8 output.
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
 from src import (
-    API, Cache, CLIContext, Downloader, ExternalLinksDownloader, ExternalLinksExtractor,
-    Logger, Migrator, Notifier, Scheduler, Storage, Validator,
+    API,
+    Cache,
+    CLIContext,
+    Downloader,
+    ExternalLinksDownloader,
+    ExternalLinksExtractor,
+    Logger,
+    Migrator,
+    Notifier,
+    Scheduler,
+    Storage,
+    Validator,
 )
 from src.cli import shell
 from src.common.env import load_dotenv
 from src.common.hotreload import dynamic_get
+
+# Many creator names are Japanese; the default Windows console codec (cp932)
+# would raise UnicodeEncodeError when printing them. Force UTF-8 output.
+for _stream in (sys.stdout, sys.stderr):
+    if isinstance(_stream, io.TextIOWrapper):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 _shutting_down = False
 
@@ -26,7 +36,8 @@ _shutting_down = False
 def get_commands() -> dict:
     """Load the command map fresh each call so edits to src/cli/commands.py hot-reload."""
     from src.cli.commands import COMMAND_MAP
-    return dynamic_get('COMMAND_MAP', 'src/cli/commands.py', default=COMMAND_MAP)
+
+    return dynamic_get("COMMAND_MAP", "src/cli/commands.py", default=COMMAND_MAP)
 
 
 def initialize():
@@ -38,14 +49,24 @@ def initialize():
     api = API(logger, config)
     notifier = Notifier(enabled=config.notify)
     downloader = Downloader(config, logger, storage, cache, api, notifier=notifier)
-    scheduler = Scheduler(storage, downloader, logger, config.global_timer,
-                          max_workers=config.max_concurrent_artists)
+    scheduler = Scheduler(
+        storage, downloader, logger, config.global_timer, max_workers=config.max_concurrent_artists
+    )
     migrator = Migrator(storage, cache)
     validator = Validator(config.data_dir, cache, storage, config, logger)
     links_extractor = ExternalLinksExtractor(cache, logger)
     links_downloader = ExternalLinksDownloader(logger)
-    ctx = CLIContext(storage, cache, api, downloader, scheduler, migrator, validator,
-                     links_extractor, links_downloader)
+    ctx = CLIContext(
+        storage,
+        cache,
+        api,
+        downloader,
+        scheduler,
+        migrator,
+        validator,
+        links_extractor,
+        links_downloader,
+    )
     return ctx, scheduler, logger
 
 
@@ -62,10 +83,12 @@ def main():
     scheduler.start()
     # The caps are the first thing to check when a run looks slow or stalled,
     # so they belong in the log next to the run that they shaped.
-    logger.app_started(artists=len(ctx.storage.get_artists()),
-                       limits=ctx.api.throttle.describe(),
-                       policies=ctx.api.policies.describe(),
-                       not_found=ctx.downloader.deferrals.describe())
+    logger.app_started(
+        artists=len(ctx.storage.get_artists()),
+        limits=ctx.api.throttle.describe(),
+        policies=ctx.api.policies.describe(),
+        not_found=ctx.downloader.deferrals.describe(),
+    )
     print("Pawchive Downloader. Type 'help' for commands, 'exit' to quit.")
 
     try:

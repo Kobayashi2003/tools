@@ -3,5 +3,3 @@ config.json
 cache/
 downloads/
 state.json
-__pycache__/
-*.pyc

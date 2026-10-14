@@ -1,16 +1,11 @@
 # khinsider-downloader
 
-Downloads video game music albums from [KHInsider](https://downloads.khinsider.com) — MP3/FLAC formats, booklet images and multi-CD layouts. Scraping uses Selenium; file downloads run concurrently.
+Downloads game soundtrack albums from [KHInsider](https://downloads.khinsider.com) in MP3 and/or
+FLAC, with booklet images and multi-CD layouts.
 
-## Install
+## Run
 
-```bash
-pip install -r requirements.txt
-```
-
-A supported browser (Chrome, Edge, or Firefox) is required; WebDrivers are managed automatically by Selenium.
-
-## Usage
+Requires Python 3.14 and Chrome, Edge or Firefox; dependencies are in `pyproject.toml`.
 
 ```bash
 python main.py <album_url> [<album_url> ...] [options]
@@ -18,19 +13,10 @@ python main.py <album_url> [<album_url> ...] [options]
 
 | Option | Description | Default |
 |---|---|---|
-| `url` | One or more album URLs | — |
 | `-o, --output` | Output directory | `downloads` |
-| `-f, --format` | Audio format: `mp3`, `flac`, `both` | `both` |
-| `-b, --browser` | Browser: `chrome`, `edge`, `firefox`, `auto` | `auto` |
-| `--headless` | Run browser headless | off |
+| `-f, --format` | `mp3`, `flac`, `both` | `both` |
+| `-b, --browser` | `chrome`, `edge`, `firefox`, `auto` | `auto` |
+| `--headless` | Run the browser headless | off |
 | `--no-booklet` | Skip booklet images | off |
 | `--retry` | Retry each resource until it succeeds | off |
-| `-w, --workers` | Max concurrent download threads | `4` |
-
-### Example
-
-```bash
-python main.py "https://downloads.khinsider.com/game-soundtracks/album/album-name" -f flac
-```
-
-Importable: `from main import download_album, Config`.
+| `-w, --workers` | Concurrent downloads | `4` |

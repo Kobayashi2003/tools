@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import difflib
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 
 class CommandError(Exception):
@@ -30,15 +31,16 @@ class ExitShell(Exception):
 # Each kind is (parse, value-hint, flaggable). `parse` returns the typed value
 # or raises CommandError; `flaggable` allows a bare `:key` (no `=`) as shorthand.
 
+
 def _parse_str(name: str, raw: str) -> str:
     return raw
 
 
 def _parse_bool(name: str, raw: str) -> bool:
     low = raw.lower()
-    if low in ('true', '1', 'yes', 'y', 'on'):
+    if low in ("true", "1", "yes", "y", "on"):
         return True
-    if low in ('false', '0', 'no', 'n', 'off'):
+    if low in ("false", "0", "no", "n", "off"):
         return False
     raise CommandError(f"'{name}' must be true or false, got '{raw}'.")
 
@@ -47,33 +49,35 @@ def _parse_int(name: str, raw: str) -> int:
     try:
         return int(raw)
     except ValueError:
-        raise CommandError(f"'{name}' must be a number, got '{raw}'.")
+        raise CommandError(f"'{name}' must be a number, got '{raw}'.") from None
 
 
 def _parse_date(name: str, raw: str) -> str:
     try:
         datetime.fromisoformat(raw)
     except ValueError:
-        raise CommandError(f"'{name}' must be a date (YYYY-MM-DD or ISO), got '{raw}'.")
+        raise CommandError(f"'{name}' must be a date (YYYY-MM-DD or ISO), got '{raw}'.") from None
     return raw
 
 
-_TYPES: Dict[str, Tuple[Callable[[str, str], Any], str, bool]] = {
-    'str':  (_parse_str,  '',           False),
-    'bool': (_parse_bool, 'true|false', True),
-    'int':  (_parse_int,  'N',          False),
-    'date': (_parse_date, 'YYYY-MM-DD', False),
+_TYPES: dict[str, tuple[Callable[[str, str], Any], str, bool]] = {
+    "str": (_parse_str, "", False),
+    "bool": (_parse_bool, "true|false", True),
+    "int": (_parse_int, "N", False),
+    "date": (_parse_date, "YYYY-MM-DD", False),
 }
 
 
 @dataclass(frozen=True)
 class Param:
     name: str
-    kind: str = 'str'
-    default: Any = ''
-    help: str = ''
-    choices: Tuple[str, ...] = ()   # allowed values, if a fixed set
-    hint: str = ''                  # value placeholder for a free-form param
+    kind: str = "str"
+    default: Any = ""
+    help: str = ""
+    choices: tuple[str, ...] = ()
+    """Allowed values, if a fixed set."""
+    hint: str = ""
+    """Value placeholder for a free-form param."""
 
     def __post_init__(self):
         if self.kind not in _TYPES:
@@ -88,10 +92,10 @@ class Param:
         """Short hint of accepted values, for help and completion:
         the fixed choices, else an explicit placeholder, else the kind's own."""
         if self.choices:
-            return '|'.join(self.choices)
+            return "|".join(self.choices)
         return self.hint or _TYPES[self.kind][1]
 
-    def coerce(self, raw: Optional[str]) -> Any:
+    def coerce(self, raw: str | None) -> Any:
         """Text (or None for a bare flag) -> typed value; raises CommandError."""
         if raw is None:
             if self.flaggable:
@@ -109,8 +113,8 @@ class Command:
     handler: Callable
     group: str
     summary: str
-    params: Tuple[Param, ...] = ()
-    aliases: Tuple[str, ...] = ()
+    params: tuple[Param, ...] = ()
+    aliases: tuple[str, ...] = ()
 
     def signature(self) -> str:
         """`name:key=,key=` usage hint for help and error messages."""
@@ -118,7 +122,7 @@ class Command:
             return self.name
         return f"{self.name}:" + ",".join(f"{p.name}=" for p in self.params)
 
-    def bind(self, positional: str, pairs: Dict[str, Optional[str]]) -> Dict[str, Any]:
+    def bind(self, positional: str, pairs: dict[str, str | None]) -> dict[str, Any]:
         """Merge parsed input onto the declared defaults; returns typed kwargs
         for every param, so handlers never need their own defaults."""
         if (positional or pairs) and not self.params:
@@ -137,7 +141,8 @@ class Command:
             param = by_name.get(key)
             if param is None:
                 raise CommandError(
-                    f"Unknown parameter '{key}' for '{self.name}'. Usage: {self.signature()}")
+                    f"Unknown parameter '{key}' for '{self.name}'. Usage: {self.signature()}"
+                )
             if key in seen:
                 raise CommandError(f"Parameter '{key}' given twice.")
             values[key] = param.coerce(raw)
@@ -145,14 +150,14 @@ class Command:
         return values
 
 
-def build_map(commands: List[Command]) -> Dict[str, Command]:
+def build_map(commands: list[Command]) -> dict[str, Command]:
     """Name and alias -> Command. Registration order is preserved for help.
 
     Each handler's signature is checked against its declared params, so a rename
     that touches only one side fails loudly at load (and on every hot-reload),
     not at call time.
     """
-    out: Dict[str, Command] = {}
+    out: dict[str, Command] = {}
     for cmd in commands:
         _check_signature(cmd)
         for key in (cmd.name, *cmd.aliases):
@@ -163,16 +168,16 @@ def build_map(commands: List[Command]) -> Dict[str, Command]:
 
 
 def _check_signature(cmd: Command):
-    args = [n for n in inspect.signature(cmd.handler).parameters if n != 'ctx']
+    args = [n for n in inspect.signature(cmd.handler).parameters if n != "ctx"]
     declared = [p.name for p in cmd.params]
     if args != declared:
-        raise ValueError(
-            f"{cmd.name}: handler args {args} != declared params {declared}")
+        raise ValueError(f"{cmd.name}: handler args {args} != declared params {declared}")
 
 
 # ==================== Input parsing ====================
 
-def parse_input(text: str) -> Tuple[str, str, Dict[str, Optional[str]]]:
+
+def parse_input(text: str) -> tuple[str, str, dict[str, str | None]]:
     """Split one input line into `(name, positional, pairs)`.
 
     Canonical form is ``command:key=value,key=value``; a bare remainder after a
@@ -181,37 +186,36 @@ def parse_input(text: str) -> Tuple[str, str, Dict[str, Optional[str]]]:
     whose meaning depends on the param type (True for a bool).
     """
     text = text.strip()
-    head, colon, rest = text.partition(':')
+    head, colon, rest = text.partition(":")
     if not colon:
-        name, _, positional = text.partition(' ')
+        name, _, positional = text.partition(" ")
         return name.strip(), positional.strip(), {}
 
-    pairs: Dict[str, Optional[str]] = {}
-    for part in rest.split(','):
+    pairs: dict[str, str | None] = {}
+    for part in rest.split(","):
         part = part.strip()
         if not part:
             continue
-        key, eq, value = part.partition('=')
+        key, eq, value = part.partition("=")
         key = key.strip()
         if not key:
             raise CommandError(f"Bad parameter '{part}': use key=value.")
         pairs[key] = value.strip() if eq else None
-    return head.strip(), '', pairs
+    return head.strip(), "", pairs
 
 
-def resolve(command_map: Dict[str, Command], name: str) -> Command:
+def resolve(command_map: dict[str, Command], name: str) -> Command:
     """Exact name or alias, else a unique prefix; anything else is an error
     with suggestions."""
     if name in command_map:
         return command_map[name]
 
-    prefixed = {cmd.name: cmd for key, cmd in command_map.items()
-                if key.startswith(name)}
+    prefixed = {cmd.name: cmd for key, cmd in command_map.items() if key.startswith(name)}
     if len(prefixed) == 1:
         return next(iter(prefixed.values()))
 
     if prefixed:
-        options = ', '.join(sorted(prefixed))
+        options = ", ".join(sorted(prefixed))
         raise CommandError(f"'{name}' is ambiguous: {options}")
     close = difflib.get_close_matches(name, command_map.keys(), n=3, cutoff=0.6)
     hint = f" Did you mean: {', '.join(close)}?" if close else " Type 'help'."
@@ -220,24 +224,25 @@ def resolve(command_map: Dict[str, Command], name: str) -> Command:
 
 # ==================== Completion ====================
 
-def param_suggestions(cmd: Command, rest: str) -> List[Tuple[str, int, str]]:
+
+def param_suggestions(cmd: Command, rest: str) -> list[tuple[str, int, str]]:
     """Completions for the param fragment after ':'. `rest` is the text between
     the colon and the cursor. Returns `(insert, start_position, display)` tuples;
     `start_position` is negative, the length of text to replace.
     """
     if not cmd.params:
         return []
-    segment = rest.split(',')[-1].lstrip()
+    segment = rest.split(",")[-1].lstrip()
 
-    if '=' in segment:   # completing a value for key=
-        key, _, partial = segment.partition('=')
+    if "=" in segment:  # completing a value for key=
+        key, _, partial = segment.partition("=")
         param = next((p for p in cmd.params if p.name == key.strip()), None)
         if param is None:
             return []
-        options = param.choices or (('true', 'false') if param.flaggable else ())
+        options = param.choices or (("true", "false") if param.flaggable else ())
         return [(o, -len(partial), o) for o in options if o.startswith(partial)]
 
-    used = {kv.partition('=')[0].strip() for kv in rest.split(',')[:-1]}
+    used = {kv.partition("=")[0].strip() for kv in rest.split(",")[:-1]}
     out = []
     for p in cmd.params:
         if p.name in used or not p.name.startswith(segment):

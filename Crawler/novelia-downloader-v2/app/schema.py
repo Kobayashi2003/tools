@@ -7,8 +7,15 @@ from urllib.parse import unquote, urlparse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 SITE = "https://n.novelia.cc"
-CATEGORIES = {0: "All library novels", 1: "Light novels", 2: "Light literature",
-              3: "Literature", 4: "Nonfiction", 5: "R18 male", 6: "R18 female"}
+CATEGORIES = {
+    0: "All library novels",
+    1: "Light novels",
+    2: "Light literature",
+    3: "Literature",
+    4: "Nonfiction",
+    5: "R18 male",
+    6: "R18 female",
+}
 LEVELS = {"一般向": 1, "轻文学": 2, "严肃向": 3, "非小说": 4, "成人向": 5, "成人向女": 6}
 PROVIDERS = ("kakuyomu", "syosetu", "novelup", "hameln", "pixiv", "alphapolis")
 
@@ -16,19 +23,40 @@ PROVIDERS = ("kakuyomu", "syosetu", "novelup", "hameln", "pixiv", "alphapolis")
 CLOCK = r"^([01]\d|2[0-3]):[0-5]\d$"
 # Pacing and retry behaviour. Unlike content settings, these follow the current settings
 # whenever a task starts or resumes, so a throttled task can be slowed down without recreating it.
-PACING_FIELDS = ("request_delay", "request_jitter", "adaptive_delay", "max_delay", "connect_timeout", "timeout",
-                 "retries", "backoff_base", "backoff_max", "rate_limit_patience", "rate_limit_pause",
-                 "max_pauses", "retry_rounds", "retry_round_delay", "rest_every", "rest_seconds",
-                 "active_hours", "active_start", "active_end")
+PACING_FIELDS = (
+    "request_delay",
+    "request_jitter",
+    "adaptive_delay",
+    "max_delay",
+    "connect_timeout",
+    "timeout",
+    "retries",
+    "backoff_base",
+    "backoff_max",
+    "rate_limit_patience",
+    "rate_limit_pause",
+    "max_pauses",
+    "retry_rounds",
+    "retry_round_delay",
+    "network_streak",
+    "network_pause",
+    "rest_every",
+    "rest_seconds",
+    "active_hours",
+    "active_start",
+    "active_end",
+)
 
 
 class Settings(BaseModel):
     # Pacing
     request_delay: float = Field(default=1.0, ge=0.2, le=60)
-    request_jitter: int = Field(default=30, ge=0, le=100)  # percent
+    request_jitter: int = Field(default=30, ge=0, le=100)
+    """Percent."""
     adaptive_delay: bool = True
     max_delay: float = Field(default=30, ge=1, le=600)
-    rest_every: int = Field(default=0, ge=0, le=10000)  # downloads; 0 disables rests
+    rest_every: int = Field(default=0, ge=0, le=10000)
+    """Downloads; 0 disables rests."""
     rest_seconds: float = Field(default=120, ge=1, le=3600)
     connect_timeout: int = Field(default=15, ge=3, le=120)
     timeout: int = Field(default=90, ge=5, le=600)
@@ -36,11 +64,17 @@ class Settings(BaseModel):
     retries: int = Field(default=3, ge=1, le=10)
     backoff_base: float = Field(default=5, ge=1, le=600)
     backoff_max: float = Field(default=300, ge=5, le=3600)
-    rate_limit_patience: float = Field(default=10, ge=0, le=240)  # minutes
-    rate_limit_pause: float = Field(default=30, ge=1, le=1440)  # minutes
+    rate_limit_patience: float = Field(default=10, ge=0, le=240)
+    """Minutes."""
+    rate_limit_pause: float = Field(default=30, ge=1, le=1440)
+    """Minutes."""
     max_pauses: int = Field(default=6, ge=0, le=100)
     retry_rounds: int = Field(default=2, ge=0, le=10)
     retry_round_delay: float = Field(default=60, ge=0, le=3600)
+    network_streak: int = Field(default=5, ge=0, le=100)
+    """Items in a row; 0 never pauses."""
+    network_pause: float = Field(default=10, ge=1, le=1440)
+    """Minutes."""
     # Active hours (server local time)
     active_hours: bool = False
     active_start: str = Field(default="01:00", pattern=CLOCK)
@@ -49,9 +83,11 @@ class Settings(BaseModel):
     page_size: int = Field(default=24, ge=1, le=100)
     source_mode: Literal["jp-zh", "zh-jp"] = "jp-zh"
     translations: list[Literal["sakura", "gpt", "youdao", "baidu"]] = Field(
-        default_factory=lambda: ["sakura", "gpt", "youdao"], min_length=1)
+        default_factory=lambda: ["sakura", "gpt", "youdao"], min_length=1
+    )
     translations_mode: Literal["priority", "parallel"] = "priority"
     download_chinese_uploads: bool = True
+    original_fallback: bool = True
     auto_convert: bool = False
     vertical: bool = True
     verify: bool = True
@@ -76,7 +112,11 @@ def normalize_key(value: str) -> str:
     value = value.strip()
     if value.startswith(("http://", "https://")):
         parsed = urlparse(value)
-        if parsed.scheme != "https" or parsed.hostname != "n.novelia.cc" or parsed.port not in (None, 443):
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "n.novelia.cc"
+            or parsed.port not in (None, 443)
+        ):
             raise ValueError("Use an https://n.novelia.cc work URL.")
         value = unquote(parsed.path).strip("/").removeprefix("novel/")
     if re.fullmatch(r"wenku/[0-9a-fA-F]{24}", value):
@@ -135,3 +175,4 @@ class JobRequest(BaseModel):
 
 class RetryRequest(BaseModel):
     targets: list[str] = Field(default_factory=list, max_length=10000)
+    only_retryable: bool = False

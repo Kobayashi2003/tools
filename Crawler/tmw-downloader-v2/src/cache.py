@@ -9,7 +9,6 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 # A crawl adds messages a page at a time, and this file is megabytes: writing on
 # every page would spend the whole crawl rewriting the archive. Batched, with a
@@ -18,18 +17,24 @@ WRITE_EVERY = 15.0
 
 # Discord returns a great deal per message; these are the fields the parser and
 # the page actually read.
-KEEP = ("id", "type", "content", "author", "attachments", "reactions",
-        "embeds", "message_snapshots")
+KEEP = (
+    "id",
+    "type",
+    "content",
+    "author",
+    "attachments",
+    "reactions",
+    "embeds",
+    "message_snapshots",
+)
 
 
 def _slim(raw: dict) -> dict:
     message = {k: raw[k] for k in KEEP if k in raw}
     author = message.get("author") or {}
-    message["author"] = {k: author.get(k) for k in
-                         ("id", "username", "global_name", "bot")}
+    message["author"] = {k: author.get(k) for k in ("id", "username", "global_name", "bot")}
     message["attachments"] = [
-        {k: a.get(k) for k in ("id", "filename", "size", "url", "content_type",
-                               "width", "height")}
+        {k: a.get(k) for k in ("id", "filename", "size", "url", "content_type", "width", "height")}
         for a in raw.get("attachments") or []
     ]
     message["reactions"] = [{"count": r.get("count")} for r in raw.get("reactions") or []]
@@ -40,13 +45,18 @@ def _slim(raw: dict) -> dict:
     snaps = []
     for snap in raw.get("message_snapshots") or []:
         inner = snap.get("message") or {}
-        snaps.append({"message": {
-            "content": inner.get("content"),
-            "attachments": [{k: a.get(k) for k in
-                             ("id", "filename", "size", "url", "content_type")}
-                            for a in inner.get("attachments") or []],
-            "embeds": [_slim_embed(e) for e in inner.get("embeds") or []],
-        }})
+        snaps.append(
+            {
+                "message": {
+                    "content": inner.get("content"),
+                    "attachments": [
+                        {k: a.get(k) for k in ("id", "filename", "size", "url", "content_type")}
+                        for a in inner.get("attachments") or []
+                    ],
+                    "embeds": [_slim_embed(e) for e in inner.get("embeds") or []],
+                }
+            }
+        )
     if snaps:
         message["message_snapshots"] = snaps
     else:
@@ -66,7 +76,7 @@ def _slim_embed(embed: dict) -> dict:
 class MessageCache:
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.messages: Dict[str, dict] = {}
+        self.messages: dict[str, dict] = {}
         self._dirty = False
         self._saved_at = 0.0
         self.load()
@@ -76,7 +86,7 @@ class MessageCache:
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             # A half-written cache is worth less than a clean refetch.
             return
         for message in data.get("messages", []):
@@ -107,10 +117,10 @@ class MessageCache:
         self._dirty = False
         self._saved_at = time.time()
 
-    def sorted_ids(self) -> List[str]:
+    def sorted_ids(self) -> list[str]:
         return sorted(self.messages, key=int)
 
-    def add(self, messages: List[dict]) -> int:
+    def add(self, messages: list[dict]) -> int:
         """Store messages, returning how many were not already held."""
         added = 0
         for raw in messages:
@@ -122,17 +132,17 @@ class MessageCache:
             self._dirty = True
         return added
 
-    def all(self) -> List[dict]:
+    def all(self) -> list[dict]:
         return [self.messages[i] for i in self.sorted_ids()]
 
     # Both edges are read on every payload; sorting 22k ids to look at one of
     # them was pure waste, and `max`/`min` answer in one pass.
     @property
-    def newest_id(self) -> Optional[str]:
+    def newest_id(self) -> str | None:
         return max(self.messages, key=int, default=None)
 
     @property
-    def oldest_id(self) -> Optional[str]:
+    def oldest_id(self) -> str | None:
         return min(self.messages, key=int, default=None)
 
     def __len__(self) -> int:

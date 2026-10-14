@@ -62,7 +62,6 @@ const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`
 const when = (value) =>
   value ? new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "never";
 const day = (value) => (value ? new Date(value).toLocaleDateString(undefined, { dateStyle: "medium" }) : "—");
-const clock = (value) => new Date(value).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const size = (bytes) =>
   bytes >= 1 << 30 ? `${(bytes / (1 << 30)).toFixed(1)} GB` : `${Math.round(bytes / (1 << 20)).toLocaleString()} MB`;
 const pct = (part, whole) => (whole ? Math.min(100, (part / whole) * 100) : 0);
@@ -361,9 +360,13 @@ function taskActions(j) {
   const status = jobStatus(j);
   const remove = `<button class="ghost" data-delete="${j.id}" title="Remove from the list" aria-label="Remove task ${j.id}">✕</button>`;
   const cancel = `<button class="danger" data-cancel="${j.id}" ${j.cancel_requested ? "disabled" : ""}>${j.cancel_requested ? "Stopping…" : "Cancel"}</button>`;
-  if (status === "paused") return `<button data-resume="${j.id}">Start now</button>${cancel}`;
-  if (["queued", "running"].includes(status)) return cancel;
-  if (status === "completed_with_errors") return `<button data-retry="${j.id}">Retry ${j.failed} failed</button>${remove}`;
+  // A running task picks retried items up next, so failures can be retried at any time.
+  const retry = j.failed
+    ? `<button data-retry="${j.id}" title="Put failed items back in the queue">Retry ${j.failed} failed</button>`
+    : "";
+  if (status === "paused") return `<button data-resume="${j.id}">Start now</button>${retry}${cancel}`;
+  if (["queued", "running"].includes(status)) return `${retry}${cancel}`;
+  if (status === "completed_with_errors") return `${retry}${remove}`;
   if (status !== "completed") return `<button data-resume="${j.id}">Resume</button>${remove}`;
   return remove;
 }
@@ -423,37 +426,153 @@ async function queue(request, { go = true } = {}) {
   return job;
 }
 
-async function openLog(id) {
-  state.log = { id, after: 0 };
+/* Task log: opens on the latest lines, follows new ones while scrolled to the bottom,
+   and pages back on request. At most LOG_CAP lines stay in the page. */
+
+const LOG_CAP = 2000;
+const logTime = (value) => new Date(value).toLocaleTimeString(undefined, { hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const logDay = (value) => new Date(value).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+const kilobytes = (kb) => (kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`);
+const LOG_KINDS = [
+  [/^Checking (\S+)$/, (m) => ({ kind: "log-work", text: m[1] })],
+  [/^Downloaded (.+) \((\d+) KB\)\.$/s, (m) => ({ kind: "log-ok", text: m[1], size: kilobytes(Number(m[2])) })],
+  [/^Saved the Japanese original of (.+) \((\d+) KB\)\.$/s, (m) => ({ kind: "log-ok", text: `Japanese original: ${m[1]}`, size: kilobytes(Number(m[2])) })],
+  [/^Unchanged: (.+)$/s, (m) => ({ kind: "log-quiet", text: `Unchanged · ${m[1]}` })],
+];
+
+function describeLog(line) {
+  for (const [pattern, shape] of LOG_KINDS) {
+    const match = line.message.match(pattern);
+    if (match) return shape(match);
+  }
+  return { kind: "", text: line.message };
+}
+
+function logRows(lines, previous) {
+  let day = previous ? logDay(previous.created_at) : "";
+  let work = "";
+  return lines.map((line) => {
+    const shape = describeLog(line);
+    const { kind, size } = shape;
+    // Lines inside a "Checking <work>" group drop the repeated "<work>: " prefix.
+    if (kind === "log-work") work = shape.text;
+    const text = work && kind !== "log-work" && shape.text.startsWith(`${work}: `) ? shape.text.slice(work.length + 2) : shape.text;
+    const lineDay = logDay(line.created_at);
+    const divider = lineDay !== day ? `<li class="log-day">${esc(lineDay)}</li>` : "";
+    day = lineDay;
+    return `${divider}<li class="${kind} ${esc(line.level)}"><time datetime="${esc(line.created_at)}" title="${esc(when(line.created_at))}">${esc(logTime(line.created_at))}</time><span class="mark" aria-hidden="true"></span><span class="msg">${esc(text)}</span>${size ? `<span class="log-size">${esc(size)}</span>` : "<span></span>"}</li>`;
+  }).join("");
+}
+
+function renderLog() {
+  const { lines, problems } = state.log;
+  $("#log-content").innerHTML = lines.length
+    ? logRows(lines)
+    : `<li class="log-empty">${problems ? "No warnings or errors." : "No log lines yet."}</li>`;
+  $("#log-earlier").hidden = !state.log.earlier;
+  $("#log-count").textContent = lines.length ? `${plural(lines.length, "line")} shown${state.log.earlier ? ", earlier lines available" : ""}` : "";
+}
+
+const logArea = () => $("#log-dialog");
+const atLogBottom = () => logArea().scrollHeight - logArea().scrollTop - logArea().clientHeight < 80;
+
+function logUrl(params) {
+  return `/api/jobs/${state.log.id}?${new URLSearchParams({ ...params, problems: state.log.problems })}`;
+}
+
+async function openLog(id, problems = false) {
+  state.log = { id, lines: [], earlier: false, problems, unseen: 0, ready: false };
+  $$("[data-log-filter]").forEach((b) => b.setAttribute("aria-checked", String((b.dataset.logFilter === "problems") === problems)));
   $("#log-content").innerHTML = "";
+  $("#log-latest").hidden = true;
   $("#task-errors").innerHTML = "";
   delete $("#task-errors").dataset.signature;
   $("#log-title").textContent = `#${id} Task log`;
   $("#log-status").textContent = "Loading…";
   UI.openDialog($("#log-dialog"));
-  await loadLog();
+  const j = await api(logUrl({}));
+  if (state.log.id !== id) return;
+  Object.assign(state.log, { lines: j.logs, earlier: j.log_earlier, ready: true });
+  renderLogHeader(j);
+  renderLog();
+  logArea().scrollTop = logArea().scrollHeight;
+}
+
+function renderLogHeader(j) {
+  $("#log-title").textContent = `#${j.id} ${KINDS[j.kind]}`;
+  const items = j.items.filter((i) => i.status === "failed").length;
+  const running = j.items.find((i) => i.status === "running");
+  $("#log-status").innerHTML = `${pill(jobStatus(j))}<span>${esc(taskScope(j))}</span>${running ? `<span>Now: ${esc(running.title || running.target)}</span>` : ""}${items ? `<span class="error-text">${plural(items, "failed item")}</span>` : ""}`;
+  renderFailures(j);
 }
 
 async function loadLog() {
-  if (!state.log.id || !$("#log-dialog").open) return;
-  const id = state.log.id;
-  const j = await api(`/api/jobs/${id}?after=${state.log.after}`);
-  if (state.log.id !== id || !$("#log-dialog").open) return;
-  $("#log-title").textContent = `#${j.id} ${KINDS[j.kind]}`;
-  $("#log-status").innerHTML = `${pill(jobStatus(j))} ${esc(taskScope(j))}`;
-  renderFailures(j);
+  const log = state.log;
+  if (!log.id || !log.ready || !$("#log-dialog").open) return;
+  const last = log.lines.at(-1);
+  const j = await api(logUrl(last ? { after: last.id } : {}));
+  if (state.log !== log || !$("#log-dialog").open) return;
+  renderLogHeader(j);
   if (!j.logs.length) return;
-  const area = $("#log-dialog");
-  const nearBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
-  $("#log-content").insertAdjacentHTML(
-    "beforeend",
-    j.logs.map((l) => `<li class="${esc(l.level)}"><time datetime="${esc(l.created_at)}">${esc(clock(l.created_at))}</time><span>${esc(l.message)}</span></li>`).join(""),
-  );
-  state.log.after = j.logs[j.logs.length - 1].id;
-  if (nearBottom) area.scrollTop = area.scrollHeight;
+  const follow = atLogBottom();
+  if (!last) {
+    log.lines = j.logs;
+    renderLog();
+  } else {
+    log.lines.push(...j.logs);
+    $("#log-content").insertAdjacentHTML("beforeend", logRows(j.logs, last));
+    const extra = log.lines.length - LOG_CAP;
+    if (extra > 0 && follow) {
+      log.lines.splice(0, extra);
+      log.earlier = true;
+      renderLog();
+    }
+    $("#log-count").textContent = `${plural(log.lines.length, "line")} shown${log.earlier ? ", earlier lines available" : ""}`;
+  }
+  if (follow) {
+    logArea().scrollTop = logArea().scrollHeight;
+  } else {
+    log.unseen += j.logs.length;
+    const latest = $("#log-latest");
+    latest.textContent = `↓ ${plural(log.unseen, "new line")}`;
+    latest.hidden = false;
+  }
 }
 
-function failureRow(j, item, canRetry) {
+$$("[data-log-filter]").forEach((button) => button.addEventListener("click", () => {
+  const problems = button.dataset.logFilter === "problems";
+  if (problems !== state.log.problems) openLog(state.log.id, problems).catch((e) => toast(e.message, true));
+}));
+$("#log-earlier").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  UI.pending(button, true, "Loading…");
+  try { await loadEarlierLog(); } catch (error) { toast(error.message, true); } finally { UI.pending(button, false); }
+});
+$("#log-latest").addEventListener("click", () => {
+  logArea().scrollTo({ top: logArea().scrollHeight, behavior: "smooth" });
+});
+$("#log-dialog").addEventListener("scroll", () => {
+  if (!$("#log-latest").hidden && atLogBottom()) {
+    state.log.unseen = 0;
+    $("#log-latest").hidden = true;
+  }
+}, { passive: true });
+
+async function loadEarlierLog() {
+  const log = state.log;
+  const first = log.lines[0];
+  if (!first) return;
+  const j = await api(logUrl({ before: first.id }));
+  if (state.log !== log) return;
+  const area = logArea();
+  const fromBottom = area.scrollHeight - area.scrollTop;
+  log.lines.unshift(...j.logs);
+  log.earlier = j.log_earlier;
+  renderLog();
+  area.scrollTop = area.scrollHeight - fromBottom; // keep the line you were reading in place
+}
+
+function failureRow(j, item) {
   const volumes = Object.entries(item.parts?.failed || {});
   const done = item.parts?.done?.length || 0;
   const tag = item.retryable
@@ -463,7 +582,7 @@ function failureRow(j, item, canRetry) {
     <div class="failure-main">
       <strong>${esc(item.title || item.target)}</strong>
       <span class="failure-tags">${tag}<span class="pill">${plural(item.attempts || 1, "attempt")}</span>${done ? `<span class="pill ok">${done} volume${done === 1 ? "" : "s"} saved</span>` : ""}</span>
-      ${canRetry ? `<button data-retry="${j.id}" data-target="${esc(item.target)}">Retry</button>` : ""}
+      <button data-retry="${j.id}" data-target="${esc(item.target)}">Retry</button>
     </div>
     ${volumes.length
       ? `<ul class="failure-volumes">${volumes.map(([volume, error]) => `<li><span>${esc(volume)}</span> ${esc(error)}</li>`).join("")}</ul>`
@@ -481,19 +600,25 @@ function renderFailures(j) {
     panel.innerHTML = "";
     return;
   }
-  const canRetry = !["queued", "running"].includes(j.status);
   const temporary = failed.filter((i) => i.retryable).length;
+  const running = ["queued", "running"].includes(j.status);
   panel.innerHTML = `<div class="failures-head">
-      <div><strong>${plural(failed.length, "failed item")}</strong><p class="hint">${temporary} temporary, ${failed.length - temporary} permanent. Retrying skips volumes that were already saved.</p></div>
-      ${canRetry ? `<button class="primary" data-retry="${j.id}">Retry all failed</button>` : ""}
+      <div><strong>${plural(failed.length, "failed item")}</strong><p class="hint">${temporary} temporary, ${failed.length - temporary} permanent. Retrying skips volumes that were already saved${running ? "; this task picks retried items up next" : ""}.</p></div>
+      <div class="failures-actions">
+        ${temporary && temporary < failed.length ? `<button data-retry="${j.id}" data-only-retryable="true">Retry ${temporary} temporary</button>` : ""}
+        <button class="primary" data-retry="${j.id}">Retry all ${failed.length}</button>
+      </div>
     </div>
-    <ul class="failures">${failed.map((i) => failureRow(j, i, canRetry)).join("")}</ul>`;
+    <ul class="failures">${failed.map((i) => failureRow(j, i)).join("")}</ul>`;
 }
 
 /* Work detail */
 
+const FILE_LABELS = { "zh-original": "Chinese", "jp-original": "Japanese original" };
+const convertible = (f) => ["jp-zh", "zh-jp"].includes(f.mode);
+
 function volumeRow(key, volume, files) {
-  const name = volume.volume_id.replace(/\.epub$/i, "");
+  const name = volume.volume_id.replace(/\.(epub|txt)$/i, "");
   const t = volume.translated;
   const coverage = t.total ? ENGINES.filter((e) => t[e]).map((e) => `${e} ${t[e]}/${t.total}`).join(", ") : "";
   const status = !files.length
@@ -509,9 +634,9 @@ function volumeRow(key, volume, files) {
           : '<span class="pill">Source only</span>';
   const actions = files.length
     ? files.map((f) => [
-        f.raw_available ? `<a href="/api/files/${f.id}/raw" download>${f.mode === "zh-original" ? "Chinese" : "Bilingual"}</a>` : '<span class="error-text">Source missing</span>',
-        f.ja_available ? `<a href="/api/files/${f.id}/ja" download>Japanese</a>` : "",
-        f.mode !== "zh-original" && f.raw_available ? `<button data-convert-file="${f.id}">${f.ja_available ? "Reconvert" : "Convert"}</button>` : "",
+        f.raw_available ? `<a href="/api/files/${f.id}/raw" download>${FILE_LABELS[f.mode] || "Bilingual"}</a>` : '<span class="error-text">Source missing</span>',
+        f.ja_available && convertible(f) ? `<a href="/api/files/${f.id}/ja" download>Japanese</a>` : "",
+        convertible(f) && f.raw_available ? `<button data-convert-file="${f.id}">${f.ja_available ? "Reconvert" : "Convert"}</button>` : "",
         !f.raw_available && volume.index ? `<button data-download-volume="${volume.index}" data-key="${esc(key)}">Download again</button>` : "",
       ].join("")).join("")
     : volume.index ? `<button data-download-volume="${volume.index}" data-key="${esc(key)}">Download</button>` : "";
@@ -546,7 +671,7 @@ async function openWork(key, show = true) {
     ["Checked", when(w.checked_at)],
   ].filter(([, v]) => v);
   const intro = m.introductionJp || m.introduction || "";
-  const bilingual = w.files.some((f) => f.mode !== "zh-original");
+  const bilingual = w.files.some(convertible);
   $("#work-detail").innerHTML = `
     <div class="work-summary">
       ${cover(w.cover, w.title)}
@@ -852,9 +977,12 @@ document.addEventListener("click", async (event) => {
       await Promise.all([loadTasks(), loadStatus()]);
     } else if (d.retry) {
       const { retried } = await api(`/api/jobs/${d.retry}/retry`, {
-        method: "POST", body: JSON.stringify({ targets: d.target ? [d.target] : [] }),
+        method: "POST",
+        body: JSON.stringify({ targets: d.target ? [d.target] : [], only_retryable: d.onlyRetryable === "true" }),
       });
-      toast(`Retrying ${plural(retried, "failed item")} in task #${d.retry}.`);
+      const job = state.jobs.find((j) => j.id === Number(d.retry));
+      const next = job && ["queued", "running"].includes(job.status) ? " They run next." : "";
+      toast(`Retrying ${plural(retried, "failed item")} in task #${d.retry}.${next}`);
       await Promise.all([loadTasks(), loadStatus(), loadLog()]);
     } else if (d.preset) {
       const form = $("#settings-form");
@@ -958,6 +1086,14 @@ $("#crawl-form").addEventListener("submit", async (event) => {
   }
 });
 
+// Accept quick entries such as "7", "730" or "2330" and store them as 24-hour HH:MM.
+$$(".time-range input").forEach((input) => input.addEventListener("change", () => {
+  const digits = input.value.replace(/\D/g, "");
+  if (!digits || digits.length > 4 || /:/.test(input.value) && input.checkValidity()) return;
+  const [hours, minutes] = digits.length <= 2 ? [digits, "0"] : [digits.slice(0, -2), digits.slice(-2)];
+  input.value = `${hours.padStart(2, "0")}:${minutes.padStart(2, "0")}`;
+  updateSettingsFeedback();
+}));
 $("#settings-form").addEventListener("input", updateSettingsFeedback);
 $("#settings-form").addEventListener("change", updateSettingsFeedback);
 $("#discard-settings").addEventListener("click", async () => {

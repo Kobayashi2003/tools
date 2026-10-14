@@ -1,43 +1,27 @@
 # jable-downloader
 
-Downloads HLS/m3u8 videos (with cover images) from [Jable.tv](https://jable.tv) — either a single video page or every video on a model page. Segments merge with `ffmpeg` and can be spread across a pool of local Clash proxy instances.
+Downloads HLS videos and their covers from [Jable.tv](https://jable.tv): one video page, or every
+video on a model page.
 
-## Install
+## Run
 
-```bash
-pip install -r requirements.txt
-```
-
-`ffmpeg` must be on `PATH`. Chrome + a matching driver are required (Selenium). Proxy settings live in `config.json` (optional): each Clash instance takes three consecutive ports from `base_port` (HTTP, SOCKS, controller), so `num_instances: 10` occupies 18000-18029.
-
-## Usage
-
-Interactive menu (no arguments):
+Requires Python 3.14, `ffmpeg` on `PATH` and Chrome; dependencies are in `pyproject.toml`.
 
 ```bash
-python main.py
-```
-
-Direct CLI:
-
-```bash
+python main.py                    # interactive menu
 python main.py <url> [options]
 ```
 
 | Option | Description | Default |
 |---|---|---|
-| `url` | Video URL or model page URL (omit for the interactive menu) | — |
+| `url` | Video or model page URL | — |
 | `-p, --path` | Output folder | current dir |
 | `--sort` | Model page sort: `best`, `latest`, `views`, `favorites` | site default |
 | `--limit` | Max videos to download (model pages) | all |
-| `--template` | Folder naming template: `{video_id}`, `{title}`, `{artist}` | `{video_id}` |
+| `--template` | Folder name template: `{video_id}`, `{title}`, `{artist}` | `{video_id}` |
 | `--no-confirm` | Skip the confirmation prompt (model pages) | off |
 
-### Example
+## Configuration
 
-```bash
-python main.py https://jable.tv/videos/abcd-123/ -p F:/Download
-python main.py https://jable.tv/models/xxx/ --sort favorites --limit 20 --no-confirm
-```
-
-Importable: `from main import download_video, download_artist`.
+`config.json` (see `config.example.json`) can spread segment downloads over local Clash
+instances: each takes three consecutive ports from `base_port` (HTTP, SOCKS, controller).

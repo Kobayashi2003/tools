@@ -1,12 +1,13 @@
-const fullBtn       = document.getElementById('capture-full-btn');
-const fullBtnLabel  = document.getElementById('capture-full-label');
-const visibleBtn    = document.getElementById('capture-visible-btn');
-const progressWrap  = document.getElementById('progress');
-const progressFill  = document.getElementById('progress-fill');
-const progressText  = document.getElementById('progress-text');
-const statusEl      = document.getElementById('status');
+const fullBtn = document.getElementById('capture-full-btn');
+const fullBtnLabel = document.getElementById('capture-full-label');
+const visibleBtn = document.getElementById('capture-visible-btn');
+const progressWrap = document.getElementById('progress');
+const progressFill = document.getElementById('progress-fill');
+const progressText = document.getElementById('progress-text');
+const statusEl = document.getElementById('status');
 
-const RESTRICTED_URL = /^(chrome|edge|about|chrome-extension):|^https:\/\/chrome\.google\.com\/webstore/;
+const RESTRICTED_URL =
+  /^(chrome|edge|about|chrome-extension):|^https:\/\/chrome\.google\.com\/webstore/;
 
 let activeTab = null;
 
@@ -19,7 +20,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     return;
   }
   // Reflect a full-page capture already running in the background (badge survives popup close/reopen).
-  chrome.action.getBadgeText({ tabId: tab.id }, (text) => {
+  chrome.action.getBadgeText({ tabId: tab.id }, text => {
     if (text && text.includes('/')) setBusy(text);
   });
 });
@@ -55,7 +56,7 @@ function runCapture(mode) {
     visibleBtn.disabled = true;
   }
 
-  chrome.runtime.sendMessage({ action: 'capture', mode, tabId: activeTab.id }, (res) => {
+  chrome.runtime.sendMessage({ action: 'capture', mode, tabId: activeTab.id }, res => {
     setIdle();
     if (chrome.runtime.lastError) {
       showStatus('error', chrome.runtime.lastError.message);
@@ -73,7 +74,7 @@ fullBtn.addEventListener('click', () => runCapture('full'));
 visibleBtn.addEventListener('click', () => runCapture('visible'));
 
 // Live progress pushed from the background service worker while it's scrolling/capturing.
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener(msg => {
   if (msg.action === 'progress' && activeTab && msg.tabId === activeTab.id) {
     setBusy(`${msg.current}/${msg.total}`);
   }

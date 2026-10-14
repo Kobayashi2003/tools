@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from . import fc2
 from .config import PROJECT, Settings
-from .crawler import PER_JOB_PAGE_LIMIT, Crawler
+from .crawler import Crawler
 from .fc2id import parse_id
 from .media import MediaCache
 from .net import FetchError, Http
@@ -20,11 +20,18 @@ from .store import SORTS, VIEWS, Store
 STATIC = PROJECT / "app" / "static"
 
 
+class SourceRequest(BaseModel):
+    source: Literal["nyaa", "nyaa_cn"]
+
+
 class JobRequest(BaseModel):
     kind: Literal["update", "older", "search"] = "update"
-    blocks: int = Field(5, ge=1, le=500)                  # older: id blocks to read
-    query: str = ""                                       # search: sukebei query
-    pages: int = Field(PER_JOB_PAGE_LIMIT, ge=1, le=PER_JOB_PAGE_LIMIT)
+    blocks: int = Field(5, ge=1, le=500)
+    """For `older`: id blocks to read."""
+    query: str = ""
+    """For `search`: the sukebei query."""
+    pages: int | None = Field(None, ge=1)
+    source: Literal["nyaa", "nyaa_cn"] | None = None
     check_files: bool = False
 
 
@@ -48,9 +55,13 @@ def create_app(settings=None, start_worker=True, http=None):
     settings = settings or Settings.from_env()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     store = Store(settings.data_dir / "library.db")
-    http = http or Http(delay=settings.source_delay, delays=settings.host_delays(), proxy=settings.proxy)
+    http = http or Http(
+        delay=settings.source_delay, delays=settings.host_delays(), proxy=settings.proxy
+    )
     # Media gets its own lightly paced client so image loading never waits behind page crawling.
-    media_http = Http(delay=0.05, attempts=2, timeout=60, proxy=settings.proxy) if start_worker else http
+    media_http = (
+        Http(delay=0.05, attempts=2, timeout=60, proxy=settings.proxy) if start_worker else http
+    )
     media = MediaCache(settings.data_dir / "media", media_http)
     crawler = Crawler(store, http, media, settings)
 
@@ -67,7 +78,9 @@ def create_app(settings=None, start_worker=True, http=None):
             store.close()
             # Only our own: another instance's file must survive this one shutting down.
             try:
-                if start_worker and pid_file.read_text(encoding="ascii").strip() == str(os.getpid()):
+                if start_worker and pid_file.read_text(encoding="ascii").strip() == str(
+                    os.getpid()
+                ):
                     pid_file.unlink()
             except OSError:
                 pass
@@ -79,7 +92,9 @@ def create_app(settings=None, start_worker=True, http=None):
     async def json_posts_only(request, call_next):
         # Another site's page can make the browser POST a plain form to 127.0.0.1, but it cannot
         # send a JSON content type without a CORS preflight, which this app never grants.
-        if request.method == "POST" and not request.headers.get("content-type", "").startswith("application/json"):
+        if request.method == "POST" and not request.headers.get("content-type", "").startswith(
+            "application/json"
+        ):
             return JSONResponse({"detail": "POST requests must send JSON"}, status_code=415)
         return await call_next(request)
 
@@ -87,24 +102,49 @@ def create_app(settings=None, start_worker=True, http=None):
     async def revalidate_static(request, call_next):
         response = await call_next(request)
         if request.url.path.startswith("/static/"):
-            response.headers["Cache-Control"] = "no-cache"   # ETag revalidation; UI updates show at once
+            response.headers["Cache-Control"] = (
+                "no-cache"  # ETag revalidation; UI updates show at once
+            )
         return response
 
     @app.get("/api/titles")
-    def list_titles(q: str = "", view: str = "all", sort: str = "uploaded", min_seeders: int = 0,
-                    media_only: bool = False, offset: int = Query(0, ge=0), limit: int = Query(60, ge=1, le=1000)):
+    def list_titles(
+        q: str = "",
+        view: str = "all",
+        sort: str = "uploaded",
+        min_seeders: int = 0,
+        media_only: bool = False,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(60, ge=1, le=1000),
+    ):
         if view not in VIEWS or sort not in SORTS:
             raise HTTPException(400, "Unknown view or sort")
-        return store.list_titles(q=q, view=view, sort=sort, min_seeders=min_seeders, media=media_only,
-                                 offset=offset, limit=limit)
+        return store.list_titles(
+            q=q,
+            view=view,
+            sort=sort,
+            min_seeders=min_seeders,
+            media=media_only,
+            offset=offset,
+            limit=limit,
+        )
 
     @app.get("/api/titles/order")
-    def title_order(q: str = "", view: str = "all", sort: str = "uploaded", min_seeders: int = 0,
-                    media_only: bool = False):
+    def title_order(
+        q: str = "",
+        view: str = "all",
+        sort: str = "uploaded",
+        min_seeders: int = 0,
+        media_only: bool = False,
+    ):
         """Every FC2 id of the view in display order, so the UI can find where a mark sits."""
         if view not in VIEWS or sort not in SORTS:
             raise HTTPException(400, "Unknown view or sort")
-        return {"ids": store.ordered_ids(q=q, view=view, sort=sort, min_seeders=min_seeders, media=media_only)}
+        return {
+            "ids": store.ordered_ids(
+                q=q, view=view, sort=sort, min_seeders=min_seeders, media=media_only
+            )
+        }
 
     @app.get("/api/marks")
     def list_marks():
@@ -129,7 +169,7 @@ def create_app(settings=None, start_worker=True, http=None):
         if not title:
             raise HTTPException(404, "Unknown title")
         if title["fc2_state"] == "" or title["pp_state"] == "":
-            crawler.prioritize(fc2_id)               # someone is looking at it: fetch it next
+            crawler.prioritize(fc2_id)  # someone is looking at it: fetch it next
         return title
 
     @app.post("/api/titles/{fc2_id}/prioritize")
@@ -156,7 +196,7 @@ def create_app(settings=None, start_worker=True, http=None):
         try:
             url = fc2.fetch_sample_video(http, _fc2_id(fc2_id), request.headers.get("user-agent"))
         except FetchError as exc:
-            raise HTTPException(502, str(exc))
+            raise HTTPException(502, str(exc)) from exc
         if not url:
             raise HTTPException(404, "No sample video")
         return {"url": url}
@@ -166,19 +206,34 @@ def create_app(settings=None, start_worker=True, http=None):
         try:
             torrent = crawler.torrent_detail(view_id, refresh=refresh)
         except FetchError as exc:
-            raise HTTPException(502, str(exc))
+            raise HTTPException(502, str(exc)) from exc
         if not torrent:
             raise HTTPException(404, "Unknown torrent")
         return torrent
+
+    @app.get("/api/source")
+    def get_source():
+        return {"source": store.get_meta("crawl_source", "nyaa")}
+
+    @app.put("/api/source")
+    def set_source(body: SourceRequest):
+        store.set_meta("crawl_source", body.source)
+        return {"source": body.source}
 
     @app.post("/api/jobs")
     def start_job(body: JobRequest):
         """update: new uploads · older: the next history blocks · search: a custom sukebei query."""
         try:
-            return crawler.start_job(body.kind, blocks=body.blocks, query=body.query, pages=body.pages,
-                                     check_files=body.check_files)
+            return crawler.start_job(
+                body.kind,
+                blocks=body.blocks,
+                query=body.query,
+                pages=body.pages,
+                check_files=body.check_files,
+                source=body.source,
+            )
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/jobs/cancel")
     def cancel_job():
@@ -190,7 +245,7 @@ def create_app(settings=None, start_worker=True, http=None):
         try:
             crawler.reset_history()
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, str(exc)) from exc
         return crawler.coverage()
 
     @app.post("/api/retry-failed")
@@ -199,18 +254,25 @@ def create_app(settings=None, start_worker=True, http=None):
 
     @app.get("/api/status")
     def status():
-        return {**crawler.status(), "default_query": settings.default_query, "watch_minutes": settings.watch_minutes}
+        return {
+            **crawler.status(),
+            "default_query": settings.default_query,
+            "watch_minutes": settings.watch_minutes,
+        }
 
     @app.get("/media")
     def proxy_media(u: str):
         try:
             path = media.get(u)
         except PermissionError:
-            raise HTTPException(403, "Host not allowed")
+            raise HTTPException(403, "Host not allowed") from None
         except FetchError as exc:
-            raise HTTPException(404 if exc.status == 404 else 502, str(exc))
-        return FileResponse(path, media_type=media.media_type(path),
-                            headers={"Cache-Control": "public, max-age=604800"})
+            raise HTTPException(404 if exc.status == 404 else 502, str(exc)) from exc
+        return FileResponse(
+            path,
+            media_type=media.media_type(path),
+            headers={"Cache-Control": "public, max-age=604800"},
+        )
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 

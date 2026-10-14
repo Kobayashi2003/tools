@@ -3,23 +3,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   const { mode, pattern, tabId } = msg;
 
-  chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    func: scanFrame,
-    args: [mode, pattern],
-  })
-  .then(results => {
-    const allUrls = new Set();
-    for (const frameResult of results) {
-      if (frameResult.result) {
-        frameResult.result.forEach(u => allUrls.add(u));
+  chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: true },
+      func: scanFrame,
+      args: [mode, pattern],
+    })
+    .then(results => {
+      const allUrls = new Set();
+      for (const frameResult of results) {
+        if (frameResult.result) {
+          frameResult.result.forEach(u => allUrls.add(u));
+        }
       }
-    }
-    sendResponse({ urls: [...allUrls] });
-  })
-  .catch(err => {
-    sendResponse({ urls: [], error: err.message });
-  });
+      sendResponse({ urls: [...allUrls] });
+    })
+    .catch(err => {
+      sendResponse({ urls: [], error: err.message });
+    });
 
   return true;
 });
@@ -28,8 +29,11 @@ function scanFrame(mode, pattern) {
   const results = new Set();
 
   function resolveUrl(url) {
-    try { return new URL(url, document.baseURI).href; }
-    catch { return url; }
+    try {
+      return new URL(url, document.baseURI).href;
+    } catch {
+      return url;
+    }
   }
 
   const urlAttrs = ['src', 'href', 'data-src', 'action'];
@@ -62,14 +66,19 @@ function scanFrame(mode, pattern) {
   const arr = [...results].filter(u => {
     if (!u.startsWith('http')) return false;
     if (mode === 'regex') {
-      try { return new RegExp(pattern).test(u); }
-      catch { return false; }
+      try {
+        return new RegExp(pattern).test(u);
+      } catch {
+        return false;
+      }
     } else {
       const exts = pattern.split(',').map(s => s.trim().toLowerCase().replace(/^\./, ''));
       try {
         const path = new URL(u).pathname.toLowerCase();
         return exts.some(ext => path.endsWith('.' + ext));
-      } catch { return false; }
+      } catch {
+        return false;
+      }
     }
   });
 

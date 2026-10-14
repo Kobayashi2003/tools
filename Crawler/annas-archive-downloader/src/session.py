@@ -9,7 +9,6 @@ answer 403 and the caller falls back to another backend.
 import json
 import time
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlparse
 
 import requests
@@ -19,11 +18,13 @@ from .config import USER_AGENT
 
 def create_session(config) -> requests.Session:
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    })
+    session.headers.update(
+        {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+    )
     if config.proxy:
         session.proxies = {"http": config.proxy, "https": config.proxy}
     load_cookies(session, config.cookies_file, config.mirror)
@@ -54,7 +55,8 @@ def load_cookies(session: requests.Session, path: str, mirror: str) -> int:
             if not isinstance(item, dict) or "name" not in item:
                 continue
             session.cookies.set(
-                item["name"], str(item.get("value", "")),
+                item["name"],
+                str(item.get("value", "")),
                 domain=(item.get("domain") or default_domain).lstrip("."),
                 path=item.get("path", "/"),
             )
@@ -62,7 +64,7 @@ def load_cookies(session: requests.Session, path: str, mirror: str) -> int:
     return count
 
 
-def get(session: requests.Session, url: str, config, **kwargs) -> Optional[requests.Response]:
+def get(session: requests.Session, url: str, config, **kwargs) -> requests.Response | None:
     """GET with retries. Returns None once the attempts are used up."""
     last_error = None
     for attempt in range(1, max(1, config.retry) + 1):
@@ -83,7 +85,7 @@ def get(session: requests.Session, url: str, config, **kwargs) -> Optional[reque
             last_error = exc
             delay = 0
         if attempt < config.retry:
-            time.sleep(delay or min(2 ** attempt, 10))
+            time.sleep(delay or min(2**attempt, 10))
     print(f"[http] giving up on {url}: {last_error}")
     return None
 
@@ -93,5 +95,5 @@ def _retry_after(response) -> int:
     raw = response.headers.get("Retry-After", "")
     try:
         return max(0, min(int(raw), 120))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0

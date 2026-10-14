@@ -18,7 +18,6 @@ Written as a dict in config.json, or as one line in the environment:
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional
 
 # `retry`     keep trying on the configured ladder.
 # `fail`      give up now and report the error as it came. The file stays
@@ -26,14 +25,14 @@ from typing import Dict, Optional
 # `permanent` give up and declare the resource gone. Unlike `fail`, this is
 #             what stops an unbounded API retry from blocking every creator
 #             behind one that was removed upstream.
-ACTIONS = ('retry', 'fail', 'permanent')
+ACTIONS = ("retry", "fail", "permanent")
 
 # `retry` without an explicit count inherits the caller's bound (unlimited for
 # API list requests, `download_max_retries` for files). The other two are
 # decisions, not ladders, so absent a count they act the first time they match.
-_DEFAULT_ATTEMPTS = {'retry': 0, 'fail': 1, 'permanent': 1}
+_DEFAULT_ATTEMPTS = {"retry": 0, "fail": 1, "permanent": 1}
 
-_KINDS = ('network', 'timeout', 'connection', 'invalid', 'default')
+_KINDS = ("network", "timeout", "connection", "invalid", "default")
 
 
 class BadPolicy(ValueError):
@@ -53,13 +52,14 @@ class Rule:
     be seen `attempts` times before it is believed. A negative value means
     never give up on this kind.
     """
-    key: str = 'default'
-    action: str = 'retry'
+
+    key: str = "default"
+    action: str = "retry"
     attempts: int = 0
-    delay: Optional[float] = None
-    backoff: Optional[float] = None
-    cap: Optional[float] = None
-    jitter: Optional[float] = None
+    delay: float | None = None
+    backoff: float | None = None
+    cap: float | None = None
+    jitter: float | None = None
 
     def limit(self) -> int:
         """Attempts allowed for this row; 0 means "inherit the caller's bound"."""
@@ -71,33 +71,33 @@ class Rule:
         return f"{self.key}/{self.action}"
 
 
-_NUMERIC = {'attempts': int, 'delay': float, 'backoff': float,
-            'cap': float, 'jitter': float}
+_NUMERIC = {"attempts": int, "delay": float, "backoff": float, "cap": float, "jitter": float}
 
 
 def _normalize_key(key: str) -> str:
     key = str(key).strip().lower()
     if key in _KINDS:
         return key
-    if len(key) == 3 and key[0] in '12345' and (key[1:].isdigit() or key[1:] == 'xx'):
+    if len(key) == 3 and key[0] in "12345" and (key[1:].isdigit() or key[1:] == "xx"):
         return key
     raise BadPolicy(
         f"unknown status key {key!r}: expected a status (404), a class (5xx), "
-        f"or one of {', '.join(_KINDS)}")
+        f"or one of {', '.join(_KINDS)}"
+    )
 
 
 def _rule_from(key: str, spec) -> Rule:
     """Build a Rule from `"retry,delay=60"` or `{"action": "retry", ...}`."""
-    fields: Dict[str, str] = {}
+    fields: dict[str, str] = {}
     action = None
 
     if isinstance(spec, str):
-        for part in spec.split(','):
+        for part in spec.split(","):
             part = part.strip()
             if not part:
                 continue
-            if '=' in part:
-                name, _, value = part.partition('=')
+            if "=" in part:
+                name, _, value = part.partition("=")
                 fields[name.strip().lower()] = value.strip()
             elif action is None:
                 action = part.lower()
@@ -106,27 +106,27 @@ def _rule_from(key: str, spec) -> Rule:
     elif isinstance(spec, dict):
         for name, value in spec.items():
             name = str(name).strip().lower()
-            if name == 'action':
+            if name == "action":
                 action = str(value).strip().lower()
             else:
                 fields[name] = value
     else:
         raise BadPolicy(f"{key}: expected a policy, got {spec!r}")
 
-    action = action or fields.pop('action', None) or 'retry'
+    action = action or fields.pop("action", None) or "retry"
     if action not in ACTIONS:
-        raise BadPolicy(f"{key}: unknown action {action!r}, expected one of "
-                        f"{', '.join(ACTIONS)}")
+        raise BadPolicy(f"{key}: unknown action {action!r}, expected one of {', '.join(ACTIONS)}")
 
     rule = Rule(key=key, action=action)
     for name, value in fields.items():
         cast = _NUMERIC.get(name)
         if cast is None:
-            raise BadPolicy(f"{key}: unknown setting {name!r}, expected one of "
-                            f"{', '.join(_NUMERIC)}")
+            raise BadPolicy(
+                f"{key}: unknown setting {name!r}, expected one of {', '.join(_NUMERIC)}"
+            )
         try:
             setattr(rule, name, cast(float(value)) if cast is int else cast(value))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             raise BadPolicy(f"{key}: {name}={value!r} is not a number") from None
     if rule.jitter is not None and not 0 <= rule.jitter <= 1:
         raise BadPolicy(f"{key}: jitter must be between 0 and 1")
@@ -136,20 +136,20 @@ def _rule_from(key: str, spec) -> Rule:
 class StatusPolicies:
     """The lookup table. Immutable once built."""
 
-    def __init__(self, rules: Dict[str, Rule] = None):
-        self.rules: Dict[str, Rule] = dict(rules or {})
-        self.rules.setdefault('default', Rule(key='default', action='retry'))
+    def __init__(self, rules: dict[str, Rule] | None = None):
+        self.rules: dict[str, Rule] = dict(rules or {})
+        self.rules.setdefault("default", Rule(key="default", action="retry"))
 
     # ==================== Building ====================
 
     @classmethod
-    def parse(cls, value, fallback: Dict = None) -> 'StatusPolicies':
+    def parse(cls, value, fallback: dict | None = None) -> StatusPolicies:
         """Read a table from a dict (config.json) or a string (environment).
 
         `fallback` supplies rows the operator did not write, so the built-in
         handling of a status stays in force until it is explicitly replaced.
         """
-        rules: Dict[str, Rule] = {}
+        rules: dict[str, Rule] = {}
         for key, spec in (fallback or {}).items():
             rules[_normalize_key(key)] = _rule_from(_normalize_key(key), spec)
         for key, spec in cls._entries(value):
@@ -167,37 +167,38 @@ class StatusPolicies:
         if not isinstance(value, str):
             raise BadPolicy(f"expected a policy table, got {value!r}")
         entries = []
-        for chunk in value.replace('\n', ';').split(';'):
+        for chunk in value.replace("\n", ";").split(";"):
             chunk = chunk.strip()
             if not chunk:
                 continue
-            if '=' not in chunk:
+            if "=" not in chunk:
                 raise BadPolicy(f"expected `status=action,...`, got {chunk!r}")
-            key, _, spec = chunk.partition('=')
+            key, _, spec = chunk.partition("=")
             entries.append((key.strip(), spec.strip()))
         return entries
 
     # ==================== Lookup ====================
 
-    def match(self, status: Optional[int] = None, kind: str = 'network') -> Rule:
+    def match(self, status: int | None = None, kind: str = "network") -> Rule:
         """The rule for one failure: most specific key that exists, else default."""
         for key in self._chain(status, kind):
             rule = self.rules.get(key)
             if rule is not None:
                 return rule
-        return self.rules['default']
+        return self.rules["default"]
 
     @staticmethod
-    def _chain(status: Optional[int], kind: str):
+    def _chain(status: int | None, kind: str):
         if status:
-            return (str(status), f"{status // 100}xx", 'default')
-        if kind in ('timeout', 'connection'):
-            return (kind, 'network', 'default')
-        if kind == 'invalid':
-            return ('invalid', 'default')
-        return ('network', 'default')
+            return (str(status), f"{status // 100}xx", "default")
+        if kind in ("timeout", "connection"):
+            return (kind, "network", "default")
+        if kind == "invalid":
+            return ("invalid", "default")
+        return ("network", "default")
 
     def describe(self) -> str:
-        return '; '.join(
+        return "; ".join(
             f"{key}={rule.action}" + (f"/{rule.attempts}" if rule.attempts else "")
-            for key, rule in sorted(self.rules.items()))
+            for key, rule in sorted(self.rules.items())
+        )

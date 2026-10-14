@@ -23,14 +23,23 @@ from .worker import Worker, ordered_volumes
 PROJECT = Path(__file__).resolve().parent.parent
 FILE_STATS = """(SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key) AS file_count,
     (SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key AND f.ja_path IS NOT NULL) AS ja_count,
-    (SELECT COUNT(*) FROM files f WHERE f.work_key=w.key AND f.mode!='zh-original' AND f.ja_path IS NULL)
+    (SELECT COUNT(*) FROM files f WHERE f.work_key=w.key AND f.mode IN ('jp-zh','zh-jp') AND f.ja_path IS NULL)
         AS pending_count,
     (SELECT COUNT(*) FROM files f WHERE f.work_key=w.key AND f.verification='unverified') AS unverified_count"""
-STATE_FILTERS = {"saved": "file_count>0", "partial": "file_count>0 AND file_count<volume_count",
-                 "metadata": "file_count=0", "japanese": "ja_count>0", "pending": "pending_count>0",
-                 "unverified": "unverified_count>0"}
-SORTS = {"checked": "checked_at DESC", "added": "first_seen DESC", "title": "title COLLATE NOCASE",
-         "volumes": "volume_count DESC"}
+STATE_FILTERS = {
+    "saved": "file_count>0",
+    "partial": "file_count>0 AND file_count<volume_count",
+    "metadata": "file_count=0",
+    "japanese": "ja_count>0",
+    "pending": "pending_count>0",
+    "unverified": "unverified_count>0",
+}
+SORTS = {
+    "checked": "checked_at DESC",
+    "added": "first_seen DESC",
+    "title": "title COLLATE NOCASE",
+    "volumes": "volume_count DESC",
+}
 
 
 class RemoveWorks(BaseModel):
@@ -45,6 +54,7 @@ class StorageRequest(BaseModel):
 
 class ProcessLock:
     """One server per data directory."""
+
     def __init__(self, path):
         self.path, self.file = path, None
 
@@ -57,30 +67,38 @@ class ProcessLock:
             self.file.seek(0)
             if os.name == "nt":
                 import msvcrt
+
                 msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
+
                 fcntl.flock(self.file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             self.file.close()
             self.file = None
-            raise RuntimeError("Another Novelia server is already using this data directory.") from None
+            raise RuntimeError(
+                "Another Novelia server is already using this data directory."
+            ) from None
 
     def release(self):
         if self.file:
             self.file.seek(0)
             if os.name == "nt":
                 import msvcrt
+
                 msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
+
                 fcntl.flock(self.file, fcntl.LOCK_UN)
             self.file.close()
 
 
 def create_app(data_root=None, download_root=None, start_worker=True):
     data_root = Path(data_root or os.environ.get("NOVELIA_DATA_DIR", PROJECT / "data")).resolve()
-    download_root = Path(download_root or os.environ.get("NOVELIA_DOWNLOAD_DIR", PROJECT / "downloads")).resolve()
+    download_root = Path(
+        download_root or os.environ.get("NOVELIA_DOWNLOAD_DIR", PROJECT / "downloads")
+    ).resolve()
     db = Database(data_root / "library.sqlite3")
     download_root = Path(db.setting("download_root", str(download_root))).resolve()
     worker = Worker(db, download_root)
@@ -98,13 +116,15 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         finally:
             if start_worker:
                 worker.shutdown()
-                if not worker.thread.is_alive():
+                if worker.thread is None or not worker.thread.is_alive():
                     (data_root / "server.pid").unlink(missing_ok=True)
                     lock.release()
 
     app = FastAPI(title="Novelia Downloader v2", version="2.0.0", lifespan=lifespan)
     app.state.db, app.state.worker = db, worker
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"]
+    )
 
     @app.middleware("http")
     async def local_origin(request: Request, call_next):
@@ -119,13 +139,15 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' https:; style-src 'self'; script-src 'self'; "
-            "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        )
         if request.url.path in ("/docs", "/redoc"):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; img-src 'self' https: data:; "
                 "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
                 "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
-                "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+                "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+            )
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -166,15 +188,25 @@ def create_app(data_root=None, download_root=None, start_worker=True):
     def status():
         settings = db.settings()
         running = db.jobs(1, "running")
-        paused = db.row("SELECT id,kind,resume_at,wait_reason FROM jobs WHERE status='queued' "
-                        "AND resume_at IS NOT NULL ORDER BY resume_at LIMIT 1")
-        return {**db.stats(), "running": running[0] if running else None, "paused": paused,
-                "capabilities": ["library_remove", "library_cleanup", "storage_migration", "job_retry"],
-                "incremental_enabled": settings.incremental_enabled, "interval_hours": settings.interval_hours,
-                "last_incremental_at": db.setting("last_incremental_at"),
-                "next_incremental_at": db.setting("next_incremental_at"),
-                "download_root": str(worker.root), "data_root": str(data_root),
-                "categories": CATEGORIES, "site": "https://n.novelia.cc", "server_time": now()}
+        paused = db.row(
+            "SELECT id,kind,resume_at,wait_reason FROM jobs WHERE status='queued' "
+            "AND resume_at IS NOT NULL ORDER BY resume_at LIMIT 1"
+        )
+        return {
+            **db.stats(),
+            "running": running[0] if running else None,
+            "paused": paused,
+            "capabilities": ["library_remove", "library_cleanup", "storage_migration", "job_retry"],
+            "incremental_enabled": settings.incremental_enabled,
+            "interval_hours": settings.interval_hours,
+            "last_incremental_at": db.setting("last_incremental_at"),
+            "next_incremental_at": db.setting("next_incremental_at"),
+            "download_root": str(worker.root),
+            "data_root": str(data_root),
+            "categories": CATEGORIES,
+            "site": "https://n.novelia.cc",
+            "server_time": now(),
+        }
 
     @app.get("/api/settings")
     def get_settings():
@@ -184,18 +216,27 @@ def create_app(data_root=None, download_root=None, start_worker=True):
     def save_settings(settings: Settings):
         # Checked here rather than on the model so older saved settings still load.
         if settings.adaptive_delay and settings.max_delay <= settings.request_delay:
-            raise HTTPException(422, "The slowest delay must be longer than the delay between requests, "
-                                     "or turn off slowing down when refused.")
+            raise HTTPException(
+                422,
+                "The slowest delay must be longer than the delay between requests, "
+                "or turn off slowing down when refused.",
+            )
         old = db.settings()
         db.set_setting("config", settings.model_dump())
-        if old.interval_hours != settings.interval_hours or old.incremental_enabled != settings.incremental_enabled:
+        if (
+            old.interval_hours != settings.interval_hours
+            or old.incremental_enabled != settings.incremental_enabled
+        ):
             db.set_setting("next_incremental_at", None)
         worker.wake.set()
         return settings.model_dump()
 
     @app.get("/api/catalog")
-    def catalog(page: int = Query(1, ge=1, le=100000), category: int = Query(1, ge=0, le=6),
-                query: str = Query("", max_length=300)):
+    def catalog(
+        page: int = Query(1, ge=1, le=100000),
+        category: int = Query(1, ge=0, le=6),
+        query: str = Query("", max_length=300),
+    ):
         client = Client(db.settings(), interactive=True)
         try:
             result = client.listing(page, category, query)
@@ -206,18 +247,33 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         finally:
             client.close()
         keys = ["wenku/" + str(item.get("id", "")).lower() for item in result["items"]]
-        local = {r["key"]: r for r in db.rows(
-            f"SELECT key,volume_count,{FILE_STATS} FROM works w WHERE key IN ({','.join('?' * len(keys))})", keys)
-        } if keys else {}
-        for item, key in zip(result["items"], keys):
+        local = (
+            {
+                r["key"]: r
+                for r in db.rows(
+                    f"SELECT key,volume_count,{FILE_STATS} FROM works w WHERE key IN ({','.join('?' * len(keys))})",
+                    keys,
+                )
+            }
+            if keys
+            else {}
+        )
+        for item, key in zip(result["items"], keys, strict=False):
             item["local"] = local.get(key)
         return result
 
     @app.get("/api/works")
-    def works(query: str = "", category: int | None = None, kind: str = "",
-              state: Literal["", "saved", "partial", "metadata", "japanese", "pending", "unverified"] = "",
-              sort: Literal["checked", "added", "title", "volumes"] = "checked",
-              page: int = Query(1, ge=1), page_size: int = Query(48, ge=1, le=200)):
+    def works(
+        query: str = "",
+        category: int | None = None,
+        kind: str = "",
+        state: Literal[
+            "", "saved", "partial", "metadata", "japanese", "pending", "unverified"
+        ] = "",
+        sort: Literal["checked", "added", "title", "volumes"] = "checked",
+        page: int = Query(1, ge=1),
+        page_size: int = Query(48, ge=1, le=200),
+    ):
         clauses, params = [], []
         if query:
             clauses.append("(title LIKE ? OR title_zh LIKE ? OR key LIKE ? OR authors LIKE ?)")
@@ -232,11 +288,13 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             clauses.append(STATE_FILTERS[state])
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         inner = f"SELECT w.*,{FILE_STATS} FROM works w"
-        total = db.row(f"SELECT COUNT(*) AS n FROM ({inner}){where}", params)["n"]
-        items = db.rows(f"""SELECT key,kind,category,title,title_zh,cover,authors,publisher,volume_count,
+        total = db.rows(f"SELECT COUNT(*) AS n FROM ({inner}){where}", params)[0]["n"]
+        items = db.rows(
+            f"""SELECT key,kind,category,title,title_zh,cover,authors,publisher,volume_count,
             first_seen,checked_at,file_count,ja_count,pending_count,unverified_count
             FROM ({inner}){where} ORDER BY {SORTS[sort]},key LIMIT ? OFFSET ?""",
-            [*params, page_size, (page - 1) * page_size])
+            [*params, page_size, (page - 1) * page_size],
+        )
         for row in items:
             row["authors"] = json.loads(row["authors"])
         return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -253,9 +311,17 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             file["report"] = json.loads(file["report"] or "null")
             file["raw_available"] = Path(file["raw_path"]).is_file()
             file["ja_available"] = bool(file["ja_path"] and Path(file["ja_path"]).is_file())
-        work["volumes"] = [{"index": i, "volume_id": v["volumeId"], "chinese_only": zh,
-                            "translated": {k: v[k] for k in ("sakura", "gpt", "youdao", "baidu", "total") if k in v}}
-                           for i, (v, zh) in enumerate(ordered_volumes(key, work["metadata"]), 1)]
+        work["volumes"] = [
+            {
+                "index": i,
+                "volume_id": v["volumeId"],
+                "chinese_only": zh,
+                "translated": {
+                    k: v[k] for k in ("sakura", "gpt", "youdao", "baidu", "total") if k in v
+                },
+            }
+            for i, (v, zh) in enumerate(ordered_volumes(key, work["metadata"]), 1)
+        ]
         return work
 
     @app.get("/api/jobs")
@@ -274,12 +340,18 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         return {"id": job_id}
 
     @app.get("/api/jobs/{job_id}")
-    def job_detail(job_id: int, after: int = Query(0, ge=0)):
+    def job_detail(
+        job_id: int,
+        after: int = Query(0, ge=0),
+        before: int = Query(0, ge=0),
+        problems: bool = False,
+    ):
+        """Logs: `after` follows new lines; otherwise the latest page, or the page `before` an id."""
         job = db.job(job_id)
         if not job:
             raise HTTPException(404, "Task not found.")
         job["request"], job["config"] = json.loads(job["request"]), json.loads(job["config"])
-        job["logs"] = db.rows("SELECT * FROM logs WHERE job_id=? AND id>? ORDER BY id LIMIT 500", (job_id, after))
+        job["logs"], job["log_earlier"] = db.logs(job_id, after, before, problems)
         job["items"] = db.open_items(job_id, job["kind"])
         return job
 
@@ -303,7 +375,10 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         if job["status"] not in ("queued", "running"):
             raise HTTPException(409, "Task is not queued or running.")
         if job["status"] == "queued":
-            db.execute("UPDATE jobs SET status='cancelled',finished_at=?,cancel_requested=1 WHERE id=?", (now(), job_id))
+            db.execute(
+                "UPDATE jobs SET status='cancelled',finished_at=?,cancel_requested=1 WHERE id=?",
+                (now(), job_id),
+            )
         else:
             db.execute("UPDATE jobs SET cancel_requested=1 WHERE id=?", (job_id,))
         worker.wake.set()
@@ -322,8 +397,9 @@ def create_app(data_root=None, download_root=None, start_worker=True):
 
     @app.post("/api/jobs/{job_id}/retry")
     def retry(job_id: int, request: RetryRequest | None = None):
+        request = request or RetryRequest()
         try:
-            count = db.retry(job_id, request.targets if request else [])
+            count = db.retry(job_id, request.targets, request.only_retryable)
         except KeyError:
             raise HTTPException(404, "Task not found.") from None
         except ValueError as exc:
@@ -337,25 +413,63 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         if variant not in ("raw", "ja", "reference"):
             raise HTTPException(404, "File variant not found.")
         row = db.row("SELECT * FROM files WHERE id=?", (file_id,))
-        raw = row and row[variant + "_path"]
+        raw = row[variant + "_path"] if row else None
         if not raw:
             raise HTTPException(404, "File not available.")
         path = Path(raw).resolve()
         if not any(path.is_relative_to(r.resolve()) for r in storage.roots()) or not path.is_file():
             raise HTTPException(404, "File is missing from the download directory.")
-        return FileResponse(path, filename=path.name, media_type="application/epub+zip")
+        text = path.suffix.lower() == ".txt"
+        return FileResponse(
+            path,
+            filename=path.name,
+            media_type="text/plain; charset=utf-8" if text else "application/epub+zip",
+        )
 
     @app.get("/api/export.csv")
     def export():
         stream = io.StringIO(newline="")
         writer = csv.writer(stream)
-        writer.writerow(["key", "category", "title", "title_zh", "authors", "publisher", "volumes", "checked_at"])
+        writer.writerow(
+            [
+                "key",
+                "category",
+                "title",
+                "title_zh",
+                "authors",
+                "publisher",
+                "volumes",
+                "checked_at",
+            ]
+        )
         for row in db.rows("SELECT * FROM works ORDER BY key"):
-            values = [row[k] for k in ("key", "category", "title", "title_zh", "authors", "publisher", "volume_count", "checked_at")]
+            values = [
+                row[k]
+                for k in (
+                    "key",
+                    "category",
+                    "title",
+                    "title_zh",
+                    "authors",
+                    "publisher",
+                    "volume_count",
+                    "checked_at",
+                )
+            ]
             # Titles are remote data; prevent spreadsheet formula execution on export.
-            writer.writerow(["'" + v if isinstance(v, str) and v.startswith(("=", "+", "-", "@", "\t", "\r")) else v for v in values])
-        return Response("\ufeff" + stream.getvalue(), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": 'attachment; filename="novelia-library.csv"'})
+            writer.writerow(
+                [
+                    "'" + v
+                    if isinstance(v, str) and v.startswith(("=", "+", "-", "@", "\t", "\r"))
+                    else v
+                    for v in values
+                ]
+            )
+        return Response(
+            "\ufeff" + stream.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="novelia-library.csv"'},
+        )
 
     app.mount("/static", StaticFiles(directory=PROJECT / "app" / "static"), name="static")
 

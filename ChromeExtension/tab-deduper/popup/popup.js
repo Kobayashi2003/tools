@@ -1,7 +1,7 @@
-const btn     = document.getElementById('btn');
+const btn = document.getElementById('btn');
 const totalEl = document.getElementById('total');
 const dupesEl = document.getElementById('dupes');
-const msgEl   = document.getElementById('msg');
+const msgEl = document.getElementById('msg');
 
 async function countDuplicates() {
   const tabs = await chrome.tabs.query({});
@@ -26,9 +26,8 @@ btn.addEventListener('click', async () => {
   const res = await chrome.runtime.sendMessage({ action: 'deduplicate' });
 
   msgEl.className = 'msg ' + (res.closed > 0 ? 'success' : 'empty');
-  msgEl.textContent = res.closed > 0
-    ? `✓ Closed ${res.closed} duplicate tab(s)`
-    : 'No duplicate tabs found';
+  msgEl.textContent =
+    res.closed > 0 ? `✓ Closed ${res.closed} duplicate tab(s)` : 'No duplicate tabs found';
 
   await countDuplicates();
   btn.disabled = false;

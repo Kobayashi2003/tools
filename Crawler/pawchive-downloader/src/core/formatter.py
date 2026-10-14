@@ -1,12 +1,11 @@
 from pathlib import Path
-from typing import List
 
 from ..common.hotreload import plugin_hook
 from ..common.naming import format_date, sanitize_component, sanitize_path
 from .models import Artist, Post
 
 # Hooks resolve per call, so edits hot-reload. No-ops by default.
-_FORMAT_PLUGIN = 'src/plugins/format_plugin.py'
+_FORMAT_PLUGIN = "src/plugins/format_plugin.py"
 
 
 def group_values(group: str) -> dict:
@@ -16,12 +15,12 @@ def group_values(group: str) -> dict:
 
     Path-valued, unlike every other variable: their `/` is real hierarchy.
     """
-    parts = [p for p in group.split('/') if p]
+    parts = [p for p in group.split("/") if p]
     return {
-        'group': sanitize_path(group),
-        'group_top': sanitize_path(parts[0]) if parts else '',
-        'group_tail': sanitize_path('/'.join(parts[1:])),
-        'group_leaf': sanitize_path(parts[-1]) if parts else '',
+        "group": sanitize_path(group),
+        "group_top": sanitize_path(parts[0]) if parts else "",
+        "group_tail": sanitize_path("/".join(parts[1:])),
+        "group_leaf": sanitize_path(parts[-1]) if parts else "",
     }
 
 
@@ -37,7 +36,7 @@ class Formatter:
         return Path(download_dir) / Formatter.artist_folder(artist, template, group)
 
     @staticmethod
-    @plugin_hook('format_artist_plugin', _FORMAT_PLUGIN)
+    @plugin_hook("format_artist_plugin", _FORMAT_PLUGIN)
     def artist_folder(artist: Artist, template: str, group: str = "") -> Path:
         # Name values are sanitized *before* substitution: only a '/' written in
         # the template, or a path-valued {group*}, may create a directory. An
@@ -53,7 +52,7 @@ class Formatter:
         return Path(sanitize_path(raw))
 
     @staticmethod
-    @plugin_hook('format_post_plugin', _FORMAT_PLUGIN)
+    @plugin_hook("format_post_plugin", _FORMAT_PLUGIN)
     def post_folder(post: Post, template: str, date_format: str) -> str:
         raw = template.format(
             id=post.id,
@@ -65,17 +64,18 @@ class Formatter:
         return sanitize_component(raw)
 
     @staticmethod
-    @plugin_hook('format_file_plugin', _FORMAT_PLUGIN)
+    @plugin_hook("format_file_plugin", _FORMAT_PLUGIN)
     def format_file(name: str, idx: int, template: str) -> str:
         """Fields: `idx`, `name`."""
         out = template.format(idx=idx, name=name)
-        if '.' not in out and '.' in name:
+        if "." not in out and "." in name:
             out = f"{out}.{name.rsplit('.', 1)[-1]}"
         return sanitize_component(out)
 
     @staticmethod
-    def file_names(names: List[str], template: str,
-                   rename_images_only: bool, image_extensions: set) -> List[str]:
+    def file_names(
+        names: list[str], template: str, rename_images_only: bool, image_extensions: set
+    ) -> list[str]:
         """With `rename_images_only`, non-images keep their original name and
         images get a 0-based `{idx}`."""
         result = []

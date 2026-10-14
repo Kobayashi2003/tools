@@ -19,7 +19,7 @@ class Notifier:
 
     def __init__(self, enabled: bool = False):
         self.enabled = enabled
-        self._files: dict = {}    # filename -> [downloaded, total, last printed %]
+        self._files: dict = {}  # filename -> [downloaded, total, last printed %]
         self._deltas: deque = deque()  # (timestamp, byte delta)
         self._lock = threading.Lock()
 
@@ -56,6 +56,7 @@ class Notifier:
             while self._deltas and self._deltas[0][0] < now - _SPEED_WINDOW:
                 self._deltas.popleft()
             speed = sum(d for _, d in self._deltas) / _SPEED_WINDOW
-            files = [(name, int(got / total * 100))
-                     for name, (got, total, _) in self._files.items()]
-        return {'files': files, 'speed': speed}
+            files = [
+                (name, int(got / total * 100)) for name, (got, total, _) in self._files.items()
+            ]
+        return {"files": files, "speed": speed}

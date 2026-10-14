@@ -6,31 +6,29 @@ video on a model page. Optionally distributes segment downloads across a pool of
 local Clash proxy instances. Site: https://jable.tv
 """
 
+import argparse
+import atexit
+import json
 import os
 import re
-import sys
-import json
-import time
-import atexit
-import argparse
-import threading
 import subprocess
-from pathlib import Path
+import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
-
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
+from pathlib import Path
 
 import m3u8
+import requests
 import tqdm
+from bs4 import BeautifulSoup
 from Crypto.Cipher import AES
-
+from requests.adapters import HTTPAdapter
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from urllib3.util.retry import Retry
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -46,12 +44,13 @@ SORT_MAP = {
     "favorites": "最高收藏",
 }
 
-MAX_WORKERS = 32   # concurrent segment downloads
-MAX_RETRIES = 5    # per-segment retries
-TS_TIMEOUT = 30    # per-segment request timeout (s)
+MAX_WORKERS = 32  # concurrent segment downloads
+MAX_RETRIES = 5  # per-segment retries
+TS_TIMEOUT = 30  # per-segment request timeout (s)
 
 
 # ---- helpers ----
+
 
 def sanitize_filename(name):
     name = re.sub(r'[\\/:*?"<>|]', "_", name)
@@ -73,15 +72,19 @@ def extract_video_id(url):
 
 # ---- config / session ----
 
-def create_session(max_retries=3, timeout=30, proxy=None):
+
+def create_session(max_retries=3, proxy=None):
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
-    retry = Retry(total=max_retries, backoff_factor=1,
-                  status_forcelist=[500, 502, 503, 504], allowed_methods=["GET"])
+    retry = Retry(
+        total=max_retries,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["GET"],
+    )
     adapter = HTTPAdapter(max_retries=retry, pool_maxsize=32, pool_connections=16)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
-    session.timeout = timeout
     if proxy:
         session.proxies.update(proxy)
     return session
@@ -89,7 +92,7 @@ def create_session(max_retries=3, timeout=30, proxy=None):
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -123,6 +126,7 @@ def save_last_input(**kwargs):
 
 # ---- logger ----
 
+
 class Logger:
     STATUS_OK = "  OK"
     STATUS_SKIP = "SKIP"
@@ -133,9 +137,9 @@ class Logger:
 
     def header(self, text):
         width = max(60, len(text) + 4)
-        print(f'\n{"=" * width}')
+        print(f"\n{'=' * width}")
         print(f"  {text}")
-        print(f'{"=" * width}')
+        print(f"{'=' * width}")
 
     def info(self, text):
         print(text)
@@ -153,8 +157,15 @@ class Logger:
         print(msg)
 
     def record(self, index, video_id, title, status, detail=""):
-        self.results.append({"index": index, "video_id": video_id, "title": title,
-                             "status": status, "detail": detail})
+        self.results.append(
+            {
+                "index": index,
+                "video_id": video_id,
+                "title": title,
+                "status": status,
+                "detail": detail,
+            }
+        )
 
     def get_failed(self):
         return [r for r in self.results if r["status"] == self.STATUS_FAIL]
@@ -168,18 +179,21 @@ class Logger:
         ok = [r for r in self.results if r["status"] == self.STATUS_OK]
         skipped = [r for r in self.results if r["status"] == self.STATUS_SKIP]
         failed = self.get_failed()
-        print(f'\n{"=" * 60}')
-        print(f"  Summary: {len(ok)} done, {len(skipped)} skipped, {len(failed)} failed"
-              f"  (total {len(self.results)})")
+        print(f"\n{'=' * 60}")
+        print(
+            f"  Summary: {len(ok)} done, {len(skipped)} skipped, {len(failed)} failed"
+            f"  (total {len(self.results)})"
+        )
         if failed:
-            print(f'{"─" * 60}')
+            print(f"{'─' * 60}")
             print("  Failed:")
             for r in failed:
-                print(f'    {r["video_id"]}  {r["detail"]}')
-        print(f'{"=" * 60}')
+                print(f"    {r['video_id']}  {r['detail']}")
+        print(f"{'=' * 60}")
 
 
 # ---- clash proxy pool ----
+
 
 class ClashPool:
     """Round-robin pool of local Clash proxy instances for multi-IP downloads.
@@ -191,8 +205,9 @@ class ClashPool:
 
     PORTS_PER_INSTANCE = 3
 
-    def __init__(self, clash_exe, clash_config, num_instances=5, base_port=18000,
-                 skip_keywords=None):
+    def __init__(
+        self, clash_exe, clash_config, num_instances=5, base_port=18000, skip_keywords=None
+    ):
         self.processes = []
         self._proxies = []
         self._index = 0
@@ -207,11 +222,12 @@ class ClashPool:
         import yaml
 
         skip = skip_keywords or ["DIRECT", "REJECT"]
-        with open(cfg, "r", encoding="utf-8") as f:
+        with open(cfg, encoding="utf-8") as f:
             base = yaml.safe_load(f)
 
-        nodes = [p for p in base.get("proxies", [])
-                 if not any(k in p.get("name", "") for k in skip)]
+        nodes = [
+            p for p in base.get("proxies", []) if not any(k in p.get("name", "") for k in skip)
+        ]
         count = min(num_instances, len(nodes))
         if count == 0:
             print("[proxy] No usable nodes in config.")
@@ -244,12 +260,14 @@ class ClashPool:
             try:
                 proc = subprocess.Popen(
                     [str(exe), "-f", str(inst_file)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 )
                 self.processes.append(proc)
-                self._proxies.append({"http": f"http://127.0.0.1:{port}",
-                                      "https": f"http://127.0.0.1:{port}"})
+                self._proxies.append(
+                    {"http": f"http://127.0.0.1:{port}", "https": f"http://127.0.0.1:{port}"}
+                )
             except Exception as e:
                 print(f"[proxy] Instance {i} failed: {e}")
 
@@ -297,6 +315,7 @@ def load_proxy_pool(config):
 
 # ---- browser ----
 
+
 def create_driver(proxy_url=None):
     options = Options()
     options.add_argument("--no-sandbox")
@@ -316,17 +335,32 @@ def create_driver(proxy_url=None):
 
 # ---- encoder ----
 
+
 def ffmpeg_encode(input_path, output_path):
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", input_path,
-               "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", output_path]
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        input_path,
+        "-c",
+        "copy",
+        "-bsf:a",
+        "aac_adtstoasc",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+    result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
-        print(f'  [!] ffmpeg: {result.stderr.decode(errors="replace").strip()}')
+        print(f"  [!] ffmpeg: {result.stderr.decode(errors='replace').strip()}")
         return False
     return True
 
 
 # ---- m3u8 / segments ----
+
 
 def parse_m3u8(page_source):
     urls = re.findall(r"https://[^\s\"']+\.m3u8", page_source)
@@ -349,13 +383,15 @@ def fetch_m3u8(m3u8_url, folder_path, video_id, session=None):
 
     cipher = None
     for key in m3u8_obj.keys:
-        if key:
-            key_data = _session.get(base_url + "/" + key.uri, timeout=30).content
+        if key and key.uri:
+            if key.iv is None:
+                raise ValueError("Encrypted playlist has no IV.")
+            key_data = _session.get(f"{base_url}/{key.uri}", timeout=30).content
             iv = key.iv.replace("0x", "")[:16].encode()
             cipher = AES.new(key_data, AES.MODE_CBC, iv)
             break
 
-    ts_urls = [base_url + "/" + seg.uri for seg in m3u8_obj.segments]
+    ts_urls = [f"{base_url}/{seg.uri}" for seg in m3u8_obj.segments if seg.uri]
 
     os.remove(m3u8_file)
     if not os.listdir(folder_path):
@@ -370,19 +406,18 @@ def download_segments(ts_urls, cipher, folder_path, session=None, proxy_pool=Non
 
     # Build per-proxy sessions for multi-IP distribution
     pool_sz = proxy_pool.size() if proxy_pool else 0
-    if pool_sz > 1:
+    if proxy_pool is not None and pool_sz > 1:
         sessions = [create_session(proxy=proxy_pool.get_proxy()) for _ in range(pool_sz)]
-        idx = [0]
-        idx_lock = threading.Lock()
-
-        def next_session():
-            with idx_lock:
-                s = sessions[idx[0]]
-                idx[0] = (idx[0] + 1) % len(sessions)
-                return s
     else:
-        def next_session():
-            return _session
+        sessions = [_session]
+    idx = [0]
+    idx_lock = threading.Lock()
+
+    def next_session():
+        with idx_lock:
+            s = sessions[idx[0]]
+            idx[0] = (idx[0] + 1) % len(sessions)
+            return s
 
     def ts_path(url):
         return os.path.join(folder_path, url.split("/")[-1][:-3] + ".ts")
@@ -392,8 +427,12 @@ def download_segments(ts_urls, cipher, folder_path, session=None, proxy_pool=Non
     if not pending:
         return 0
 
-    pbar = tqdm.tqdm(total=len(ts_urls), initial=skipped, unit="seg",
-                     bar_format="  {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
+    pbar = tqdm.tqdm(
+        total=len(ts_urls),
+        initial=skipped,
+        unit="seg",
+        bar_format="  {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+    )
     lock = threading.Lock()
     fail_count = 0
 
@@ -438,6 +477,7 @@ def merge_segments(ts_urls, ts_folder, output_path):
 
 
 # ---- single video download ----
+
 
 def _scrape_video_page(url, proxy_url=None):
     driver = create_driver(proxy_url=proxy_url)
@@ -500,8 +540,9 @@ def download_video(url, folder_path, folder_name=None, proxy_pool=None):
 
     ts_urls, cipher = fetch_m3u8(m3u8_url, video_folder, video_id, session=session)
 
-    fail_count = download_segments(ts_urls, cipher, ts_folder, session=session,
-                                   proxy_pool=proxy_pool)
+    fail_count = download_segments(
+        ts_urls, cipher, ts_folder, session=session, proxy_pool=proxy_pool
+    )
     if fail_count:
         raise RuntimeError(f"{fail_count} segment(s) failed after retries")
 
@@ -523,6 +564,7 @@ def download_video(url, folder_path, folder_name=None, proxy_pool=None):
 
 # ---- artist / model page ----
 
+
 def parse_videos_from_html(html):
     soup = BeautifulSoup(html, "html.parser")
     videos, seen = [], set()
@@ -530,7 +572,7 @@ def parse_videos_from_html(html):
         link = card.select_one("h6.title a") or card.select_one('a[href*="/videos/"]')
         if not link:
             continue
-        href = link.get("href", "")
+        href = str(link.get("href") or "")
         if not re.match(r"https?://jable\.tv/videos/[^/]+/", href) or href in seen:
             continue
         seen.add(href)
@@ -544,7 +586,7 @@ def get_total_pages(html):
     soup = BeautifulSoup(html, "html.parser")
     pages = set()
     for a in soup.select("ul.pagination a"):
-        match = re.search(r"/(\d+)/?$", a.get("href", ""))
+        match = re.search(r"/(\d+)/?$", str(a.get("href") or ""))
         if match:
             pages.add(int(match.group(1)))
     return max(pages) if pages else 1
@@ -636,8 +678,9 @@ def _download_one(index, total, video, folder_path, template, artist_name, log, 
 
     log.video_start(index, total, video["title"])
     try:
-        result = download_video(video["url"], folder_path, folder_name=folder_name,
-                                proxy_pool=proxy_pool)
+        result = download_video(
+            video["url"], folder_path, folder_name=folder_name, proxy_pool=proxy_pool
+        )
         status = Logger.STATUS_SKIP if result == "skipped" else Logger.STATUS_OK
         log.video_done(index, total, status, folder_name if result == "skipped" else "")
         log.record(index, video_id, video["title"], status)
@@ -646,8 +689,16 @@ def _download_one(index, total, video, folder_path, template, artist_name, log, 
         log.record(index, video_id, video["title"], Logger.STATUS_FAIL, str(e))
 
 
-def download_artist(url, folder_path=None, sort_by=None, template=None, limit=None,
-                    no_confirm=False, proxy_pool=None, log=None):
+def download_artist(
+    url,
+    folder_path=None,
+    sort_by=None,
+    template=None,
+    limit=None,
+    no_confirm=False,
+    proxy_pool=None,
+    log=None,
+):
     """Collect and download every video on a model page, with an interactive retry loop."""
     log = log or Logger()
     template = template or get_last_template()
@@ -666,16 +717,17 @@ def download_artist(url, folder_path=None, sort_by=None, template=None, limit=No
         log.info(f"  Proxy:    {proxy_pool.size()} node(s)")
     print()
 
-    videos, artist_name = collect_all_videos(url, sort_by=sort_by, limit=limit,
-                                             proxy_pool=proxy_pool)
+    videos, artist_name = collect_all_videos(
+        url, sort_by=sort_by, limit=limit, proxy_pool=proxy_pool
+    )
     if not videos:
         print("No videos found.")
         return
 
     log.header(f"Found {len(videos)} video(s)")
     for i, v in enumerate(videos, 1):
-        print(f'  {i:3d}. {v["title"]}')
-        print(f'       {v["url"]}')
+        print(f"  {i:3d}. {v['title']}")
+        print(f"       {v['url']}")
 
     if not no_confirm:
         if input("\nStart downloading? [y/N]: ").strip().lower() != "y":
@@ -695,11 +747,14 @@ def download_artist(url, folder_path=None, sort_by=None, template=None, limit=No
         retry_videos = [v for v in videos if extract_video_id(v["url"]) in failed_ids]
         log.clear_failed()
         for i, v in enumerate(retry_videos, 1):
-            _download_one(i, len(retry_videos), v, folder_path, template, artist_name, log, proxy_pool)
+            _download_one(
+                i, len(retry_videos), v, folder_path, template, artist_name, log, proxy_pool
+            )
         log.print_summary()
 
 
 # ---- interactive CLI ----
+
 
 def _prompt(label, last="", show_last=True):
     """Prompt with a default from the last run. Enter reuses the last value."""
@@ -711,14 +766,17 @@ def _prompt(label, last="", show_last=True):
 
 
 def _interactive_videos(proxy_pool):
-    urls_input = _prompt("Enter video URL(s) (space-separated)",
-                         get_last_input("video_urls", "")).split()
+    urls_input = _prompt(
+        "Enter video URL(s) (space-separated)", get_last_input("video_urls", "")
+    ).split()
     if not urls_input:
         print("No URLs provided.")
         sys.exit(1)
 
-    folder_path = _prompt("Output folder (Enter = current dir)",
-                          get_last_input("video_folder", "")) or os.getcwd()
+    folder_path = (
+        _prompt("Output folder (Enter = current dir)", get_last_input("video_folder", ""))
+        or os.getcwd()
+    )
     os.makedirs(folder_path, exist_ok=True)
     save_last_input(mode="1", video_urls=" ".join(urls_input), video_folder=folder_path)
 
@@ -739,17 +797,29 @@ def _interactive_artist(proxy_pool):
         print(f"Invalid Jable artist URL: {url}")
         sys.exit(1)
 
-    folder_path = _prompt("Output folder (Enter = current dir)", get_last_input("artist_folder", ""))
-    sort_order = _prompt("Sort order (best/latest/views/favorites)", get_last_input("artist_sort", ""))
-    template = _prompt("Naming template ({video_id}, {title}, {artist})",
-                       get_last_input("artist_template", ""))
+    folder_path = _prompt(
+        "Output folder (Enter = current dir)", get_last_input("artist_folder", "")
+    )
+    sort_order = _prompt(
+        "Sort order (best/latest/views/favorites)", get_last_input("artist_sort", "")
+    )
+    template = _prompt(
+        "Naming template ({video_id}, {title}, {artist})", get_last_input("artist_template", "")
+    )
     limit = _prompt("Max videos to download (Enter = all)", get_last_input("artist_limit", ""))
-    no_confirm = _prompt("Skip confirmation? [y/N]",
-                         get_last_input("artist_no_confirm", "")).lower() == "y"
+    no_confirm = (
+        _prompt("Skip confirmation? [y/N]", get_last_input("artist_no_confirm", "")).lower() == "y"
+    )
 
-    save_last_input(mode="2", artist_url=url, artist_folder=folder_path, artist_sort=sort_order,
-                    artist_template=template, artist_limit=limit,
-                    artist_no_confirm="y" if no_confirm else "n")
+    save_last_input(
+        mode="2",
+        artist_url=url,
+        artist_folder=folder_path,
+        artist_sort=sort_order,
+        artist_template=template,
+        artist_limit=limit,
+        artist_no_confirm="y" if no_confirm else "n",
+    )
 
     download_artist(
         url,
@@ -764,13 +834,17 @@ def _interactive_artist(proxy_pool):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Jable.tv video downloader")
-    parser.add_argument("url", nargs="?", help="Video or model page URL (omit for interactive menu)")
+    parser.add_argument(
+        "url", nargs="?", help="Video or model page URL (omit for interactive menu)"
+    )
     parser.add_argument("-p", "--path", default=None, help="Output folder")
-    parser.add_argument("--sort", choices=list(SORT_MAP), default=None,
-                        help="Model page sort order")
+    parser.add_argument(
+        "--sort", choices=list(SORT_MAP), default=None, help="Model page sort order"
+    )
     parser.add_argument("--limit", type=int, default=None, help="Max videos (model pages)")
-    parser.add_argument("--template", default=None,
-                        help="Naming template: {video_id}, {title}, {artist}")
+    parser.add_argument(
+        "--template", default=None, help="Naming template: {video_id}, {title}, {artist}"
+    )
     parser.add_argument("--no-confirm", action="store_true", help="Skip confirmation (model pages)")
     args = parser.parse_args(argv)
 
@@ -782,9 +856,15 @@ def main(argv=None):
                 os.makedirs(folder, exist_ok=True)
                 download_video(args.url, folder, proxy_pool=proxy_pool)
             elif is_artist_url(args.url):
-                download_artist(args.url, folder_path=args.path, sort_by=args.sort,
-                                template=args.template, limit=args.limit,
-                                no_confirm=args.no_confirm, proxy_pool=proxy_pool)
+                download_artist(
+                    args.url,
+                    folder_path=args.path,
+                    sort_by=args.sort,
+                    template=args.template,
+                    limit=args.limit,
+                    no_confirm=args.no_confirm,
+                    proxy_pool=proxy_pool,
+                )
             else:
                 print(f"Unrecognized Jable URL: {args.url}")
                 sys.exit(1)

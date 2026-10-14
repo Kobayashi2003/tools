@@ -5,7 +5,7 @@ const DEFAULTS = { enabled: true, modifier: 'alt' };
 
 // Seed default settings on install so the popup and content scripts agree.
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.get(DEFAULTS, (cfg) => {
+  chrome.storage.sync.get(DEFAULTS, cfg => {
     chrome.storage.sync.set(cfg);
   });
 });
@@ -20,13 +20,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       conflictAction: 'uniquify',
       saveAs: false,
     },
-    (downloadId) => {
+    downloadId => {
       if (chrome.runtime.lastError) {
         sendResponse({ ok: false, error: chrome.runtime.lastError.message });
       } else {
         sendResponse({ ok: true, downloadId });
       }
-    }
+    },
   );
 
   return true; // keep the message channel open for the async response

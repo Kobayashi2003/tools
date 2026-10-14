@@ -1,8 +1,17 @@
 """Minimal HTML samples mirroring the live markup of each source (structure verified 2026-10)."""
 
 
-def listing_row(view_id, name, infohash, row_class="default", size="1.8 GiB", ts=1791484390,
-                seeders=5, leechers=11, downloads=3):
+def listing_row(
+    view_id,
+    name,
+    infohash,
+    row_class="default",
+    size="1.8 GiB",
+    ts=1791484390,
+    seeders=5,
+    leechers=11,
+    downloads=3,
+):
     return f"""
 <tr class="{row_class}">
   <td><a href="/?c=2_2" title="Real Life - Videos"><img src="/static/img/icons/sukebei/2_2.png" alt="Real Life - Videos" class="category-icon"></a></td>
@@ -23,18 +32,33 @@ def listing_row(view_id, name, infohash, row_class="default", size="1.8 GiB", ts
 
 
 def listing_page(rows, total=1000, has_next=True):
-    nxt = '<li class="next"><a href="/?f=0&c=0_0&q=FC2&p=2">&raquo;</a></li>' if has_next else \
-        '<li class="next disabled unavailable"><a>&raquo;</a></li>'
+    nxt = (
+        '<li class="next"><a href="/?f=0&c=0_0&q=FC2&p=2">&raquo;</a></li>'
+        if has_next
+        else '<li class="next disabled unavailable"><a>&raquo;</a></li>'
+    )
     return f"""<html><body><div class="pagination-page-info">Displaying results 1-75 out of {total} results.</div>
-<table><tbody>{''.join(rows)}</tbody></table><ul class="pagination">{nxt}</ul></body></html>"""
+<table><tbody>{"".join(rows)}</tbody></table><ul class="pagination">{nxt}</ul></body></html>"""
 
 
-LISTING = listing_page([
-    listing_row(4732175, "fc2-ppv-4802589 藻梨特典有 &amp; more", "68B8F9604D16DAE11CB76C52990C54BDDB80B070"),
-    listing_row(4732100, "[FHD] FC2 PPV 1289686 (UNCENSORED 2160p)", "aa" * 20, row_class="success",
-                size="512.3 MiB", seeders=0),
-    listing_row(4732099, "Some other release 2160p", "bb" * 20, row_class="danger"),
-])
+LISTING = listing_page(
+    [
+        listing_row(
+            4732175,
+            "fc2-ppv-4802589 藻梨特典有 &amp; more",
+            "68B8F9604D16DAE11CB76C52990C54BDDB80B070",
+        ),
+        listing_row(
+            4732100,
+            "[FHD] FC2 PPV 1289686 (UNCENSORED 2160p)",
+            "aa" * 20,
+            row_class="success",
+            size="512.3 MiB",
+            seeders=0,
+        ),
+        listing_row(4732099, "Some other release 2160p", "bb" * 20, row_class="danger"),
+    ]
+)
 
 VIEW = """
 <div class="panel-body" id="torrent-description">https://imagetwist.com/x/y.png &amp; notes</div>

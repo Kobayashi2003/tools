@@ -7,8 +7,7 @@ what the book is, who put it up, and the job id the button trades for a link.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 
 DISCORD_EPOCH_MS = 1420070400000
@@ -19,7 +18,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp"}
 def snowflake_time(message_id: str) -> datetime:
     """A Discord id carries its own creation time, so ordering needs no lookup."""
     ms = (int(message_id) >> 22) + DISCORD_EPOCH_MS
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    return datetime.fromtimestamp(ms / 1000, tz=UTC)
 
 
 def snowflake_for(moment: datetime) -> str:
@@ -40,13 +39,13 @@ def human_size(size: int) -> str:
     return ""  # unreachable: the loop always returns at GB
 
 
-def expiry_of(url: str) -> Optional[datetime]:
+def expiry_of(url: str) -> datetime | None:
     """When a signed CDN link dies. `ex` is hex unix seconds; unsigned is None."""
     value = parse_qs(urlparse(url or "").query).get("ex", [None])[0]
     if not value:
         return None
     try:
-        return datetime.fromtimestamp(int(value, 16), tz=timezone.utc)
+        return datetime.fromtimestamp(int(value, 16), tz=UTC)
     except ValueError:
         return None
 
@@ -69,7 +68,7 @@ class FileEntry:
     height: int = 0
 
     @classmethod
-    def from_attachment(cls, raw: dict) -> "FileEntry":
+    def from_attachment(cls, raw: dict) -> FileEntry:
         return cls(
             attachment_id=str(raw.get("id", "")),
             filename=raw.get("filename", "") or "",
@@ -89,14 +88,14 @@ class FileEntry:
         return self.ext in IMAGE_EXTS or self.content_type.startswith("image/")
 
     @property
-    def expires_at(self) -> Optional[datetime]:
+    def expires_at(self) -> datetime | None:
         return expiry_of(self.url)
 
     def is_fresh(self, margin_seconds: int = 900) -> bool:
         expiry = self.expires_at
         if expiry is None:
             return True
-        return (expiry - datetime.now(timezone.utc)).total_seconds() > margin_seconds
+        return (expiry - datetime.now(UTC)).total_seconds() > margin_seconds
 
     def to_json(self) -> dict:
         return {"id": self.attachment_id, "name": self.filename, "url": self.url}
@@ -107,24 +106,32 @@ class Rec:
     """One recommendation: a book, and the job id that leads to its files."""
 
     message_id: str
-    author: str = ""            # the bot that posted it
+    author: str = ""
+    """The bot that posted it."""
     author_id: str = ""
-    timestamp: Optional[datetime] = None
+    timestamp: datetime | None = None
 
-    blurb: str = ""             # "This one was pretty fun"
-    recommender: str = ""       # "Anon", a name, or a raw <@id>
+    blurb: str = ""
+    """E.g. "This one was pretty fun"."""
+    recommender: str = ""
+    """E.g. "Anon", a name, or a raw <@id>."""
     recommender_id: str = ""
-    kind: str = ""              # as written: "Light Novel LN ラノベ ライトノベル"
-    label: str = ""             # folded for the chips: "Light Novel"
-    title: str = ""             # Series title
-    titles: List[str] = field(default_factory=list)   # Book titles, when listed
+    kind: str = ""
+    """As written, e.g. "Light Novel LN ラノベ ライトノベル"."""
+    label: str = ""
+    """Folded for the chips, e.g. "Light Novel"."""
+    title: str = ""
+    """Series title."""
+    titles: list[str] = field(default_factory=list)
+    """Book titles, when listed."""
     volumes: str = ""
     description: str = ""
 
     job: str = ""
-    custom_id: str = ""         # the button on the message, verbatim
+    custom_id: str = ""
+    """The button on the message, verbatim."""
 
-    covers: List[FileEntry] = field(default_factory=list)
+    covers: list[FileEntry] = field(default_factory=list)
     reactions: int = 0
 
     @property

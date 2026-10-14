@@ -1,0 +1,27 @@
+[project]
+name = "tmw-downloader-v2"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "requests>=2.31.0",
+    "websocket-client>=1.7.0",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.2",
+    "ruff>=0.17.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP"]
+
+[tool.basedpyright]
+include = ["main.py", "src"]
+typeCheckingMode = "standard"

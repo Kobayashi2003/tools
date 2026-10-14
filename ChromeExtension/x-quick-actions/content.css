@@ -1,13 +1,13 @@
 /* Media under the cursor while the modifier key is held. */
 .xmd-hover {
-  outline: 3px solid #4F46E5 !important;
+  outline: 3px solid #4f46e5 !important;
   outline-offset: -3px !important;
   cursor: copy !important;
 }
 
 /* Modifier + click set to "like" only: X's like pink instead of blue. */
 .xmd-hover.xmd-hover-like {
-  outline-color: #F91880 !important;
+  outline-color: #f91880 !important;
   cursor: pointer !important;
 }
 
@@ -19,12 +19,20 @@
   animation: xmd-flash-like 0.6s ease-out;
 }
 @keyframes xmd-flash {
-  0%   { box-shadow: inset 0 0 0 4px rgba(79, 70, 229, 0.9); }
-  100% { box-shadow: inset 0 0 0 4px rgba(79, 70, 229, 0); }
+  0% {
+    box-shadow: inset 0 0 0 4px rgba(79, 70, 229, 0.9);
+  }
+  100% {
+    box-shadow: inset 0 0 0 4px rgba(79, 70, 229, 0);
+  }
 }
 @keyframes xmd-flash-like {
-  0%   { box-shadow: inset 0 0 0 4px rgba(249, 24, 128, 0.9); }
-  100% { box-shadow: inset 0 0 0 4px rgba(249, 24, 128, 0); }
+  0% {
+    box-shadow: inset 0 0 0 4px rgba(249, 24, 128, 0.9);
+  }
+  100% {
+    box-shadow: inset 0 0 0 4px rgba(249, 24, 128, 0);
+  }
 }
 
 /* Download button in the post's action bar. Unlike the overlays it keeps X's
@@ -52,7 +60,9 @@
   position: absolute;
   inset: -8px;
   border-radius: 9999px;
-  transition: background-color 0.2s, box-shadow 0.2s;
+  transition:
+    background-color 0.2s,
+    box-shadow 0.2s;
 }
 .xmd-btn svg {
   position: relative;
@@ -61,15 +71,31 @@
   fill: currentColor;
 }
 .xmd-btn:hover,
-.xmd-btn:focus-visible { color: rgb(29, 155, 240); }
-.xmd-btn:hover .xmd-btn-circle { background: rgba(29, 155, 240, 0.1); }
-.xmd-btn:focus-visible .xmd-btn-circle { box-shadow: 0 0 0 2px rgba(29, 155, 240, 0.6); }
-.xmd-btn.xmd-done { color: rgb(0, 186, 124); }
-.xmd-btn.xmd-done:hover .xmd-btn-circle { background: rgba(0, 186, 124, 0.1); }
-.xmd-btn.xmd-loading { pointer-events: none; }
-.xmd-btn.xmd-loading svg { animation: xmd-pulse 1s ease-in-out infinite; }
+.xmd-btn:focus-visible {
+  color: rgb(29, 155, 240);
+}
+.xmd-btn:hover .xmd-btn-circle {
+  background: rgba(29, 155, 240, 0.1);
+}
+.xmd-btn:focus-visible .xmd-btn-circle {
+  box-shadow: 0 0 0 2px rgba(29, 155, 240, 0.6);
+}
+.xmd-btn.xmd-done {
+  color: rgb(0, 186, 124);
+}
+.xmd-btn.xmd-done:hover .xmd-btn-circle {
+  background: rgba(0, 186, 124, 0.1);
+}
+.xmd-btn.xmd-loading {
+  pointer-events: none;
+}
+.xmd-btn.xmd-loading svg {
+  animation: xmd-pulse 1s ease-in-out infinite;
+}
 @keyframes xmd-pulse {
-  50% { opacity: 0.35; }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .xmd-toast {
@@ -82,14 +108,23 @@
   border: 1px solid rgba(167, 139, 250, 0.5);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font:
+    500 12px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
 }
-.xmd-toast-ok    { border-color: rgba(79, 209, 121, 0.7); }
-.xmd-toast-error { border-color: rgba(248, 113, 113, 0.8); white-space: normal; }
+.xmd-toast-ok {
+  border-color: rgba(79, 209, 121, 0.7);
+}
+.xmd-toast-error {
+  border-color: rgba(248, 113, 113, 0.8);
+  white-space: normal;
+}
 
 /* Picker shown by the action-bar button when the quoted post has media too. */
 .xmd-menu {
@@ -101,7 +136,11 @@
   border: 1px solid rgba(167, 139, 250, 0.35);
   border-radius: 14px;
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
-  font: 13px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font:
+    13px/1.35 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   color: #e2e2f0;
 }
 .xmd-menu-title {
@@ -124,7 +163,10 @@
   cursor: pointer;
 }
 .xmd-menu-item:hover,
-.xmd-menu-item:focus-visible { background: rgba(79, 70, 229, 0.25); outline: none; }
+.xmd-menu-item:focus-visible {
+  background: rgba(79, 70, 229, 0.25);
+  outline: none;
+}
 .xmd-menu-item kbd {
   grid-row: span 2;
   align-self: center;
@@ -132,11 +174,15 @@
   padding: 1px 0;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 5px;
-  font: 11px Consolas, monospace;
+  font:
+    11px Consolas,
+    monospace;
   text-align: center;
   color: #a78bfa;
 }
-.xmd-menu-item b { font-weight: 600; }
+.xmd-menu-item b {
+  font-weight: 600;
+}
 .xmd-menu-item span {
   font-size: 12px;
   color: #7c7c9a;

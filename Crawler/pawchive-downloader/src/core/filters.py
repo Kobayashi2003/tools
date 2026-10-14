@@ -1,18 +1,16 @@
-from typing import Dict, List
-
 from .models import Post
 
 
 class PostFilter:
     """Filters a list of posts against a config dict. Supported keys:
 
-        include_keywords      : list[str]  keep if title contains ANY
-        exclude_keywords      : list[str]  drop if title contains ANY
-        require_all_keywords  : list[str]  keep only if title contains ALL
-        require_files         : bool       keep only posts with file/attachments
-        require_attachments   : bool       keep only posts with attachments
-        published_after       : "YYYY-MM-DD"
-        published_before      : "YYYY-MM-DD"
+    include_keywords      : list[str]  keep if title contains ANY
+    exclude_keywords      : list[str]  drop if title contains ANY
+    require_all_keywords  : list[str]  keep only if title contains ALL
+    require_files         : bool       keep only posts with file/attachments
+    require_attachments   : bool       keep only posts with attachments
+    published_after       : "YYYY-MM-DD"
+    published_before      : "YYYY-MM-DD"
     """
 
     @staticmethod
@@ -20,7 +18,7 @@ class PostFilter:
         return kw.lower() in post.title.lower()
 
     @staticmethod
-    def apply(posts: List[Post], cfg: Dict) -> List[Post]:
+    def apply(posts: list[Post], cfg: dict) -> list[Post]:
         if not cfg:
             return posts
 

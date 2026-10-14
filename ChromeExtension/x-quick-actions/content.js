@@ -29,8 +29,10 @@
 
   const MODIFIER_PROP = { alt: 'altKey', ctrl: 'ctrlKey', shift: 'shiftKey', meta: 'metaKey' };
   const DBL_MS = 300;
-  const MEDIA_SEL = '[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="videoComponent"]';
-  const MEDIA_IMG_RE = /^https:\/\/pbs\.twimg\.com\/(media|ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\//;
+  const MEDIA_SEL =
+    '[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="videoComponent"]';
+  const MEDIA_IMG_RE =
+    /^https:\/\/pbs\.twimg\.com\/(media|ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\//;
   const STATUS_RE = /\/status\/(\d+)(?:\/(?:photo|video)\/(\d+))?/;
 
   const cfg = { ...DEFAULTS };
@@ -38,11 +40,11 @@
 
   // --- settings & history ---------------------------------------------------
 
-  chrome.storage.sync.get(DEFAULTS, (stored) => {
+  chrome.storage.sync.get(DEFAULTS, stored => {
     Object.assign(cfg, stored);
     queueScan();
   });
-  chrome.storage.local.get({ history: [] }, (s) => {
+  chrome.storage.local.get({ history: [] }, s => {
     history = new Set(s.history);
     refreshButtonStates();
   });
@@ -64,9 +66,9 @@
   // never overwrite each other's entries; this local copy is only for display
   // and is kept in sync through storage.onChanged.
   function markDownloaded(...ids) {
-    ids = ids.filter((id) => id && !history.has(id));
+    ids = ids.filter(id => id && !history.has(id));
     if (!cfg.saveHistory || !ids.length) return;
-    ids.forEach((id) => history.add(id));
+    ids.forEach(id => history.add(id));
     refreshButtonStates();
     chrome.runtime.sendMessage({ action: 'addHistory', ids });
   }
@@ -116,7 +118,10 @@
   };
 
   const OPS = {
-    TweetResultByRestId: { queryId: '2ICDjqPd81tulZcYrtpTuQ', featureSwitches: Object.keys(DEFAULT_FEATURES) },
+    TweetResultByRestId: {
+      queryId: '2ICDjqPd81tulZcYrtpTuQ',
+      featureSwitches: Object.keys(DEFAULT_FEATURES),
+    },
     FavoriteTweet: { queryId: 'lI07N6Otwv1PhnEgXILM7A', featureSwitches: null },
   };
 
@@ -148,15 +153,15 @@
     if (!discovery) {
       // Script tags plus lazily imported chunks (only visible as resources).
       const loaded = [
-        ...[...document.scripts].map((s) => s.src),
-        ...performance.getEntriesByType('resource').map((r) => r.name),
+        ...[...document.scripts].map(s => s.src),
+        ...performance.getEntriesByType('resource').map(r => r.name),
       ];
       const urls = [...new Set(loaded)]
-        .filter((src) => /^https:\/\/abs\.twimg\.com\/.+\.js(\?|$)/.test(src))
+        .filter(src => /^https:\/\/abs\.twimg\.com\/.+\.js(\?|$)/.test(src))
         .sort((a, b) => /\/(main|entry)[.-]/.test(b) - /\/(main|entry)[.-]/.test(a))
         .slice(0, 60);
       discovery = urls.length
-        ? chrome.runtime.sendMessage({ action: 'discoverOps', urls }).then((res) => {
+        ? chrome.runtime.sendMessage({ action: 'discoverOps', urls }).then(res => {
             for (const [name, op] of Object.entries(res?.ops || {})) Object.assign(OPS[name], op);
             return !!res?.ok;
           })
@@ -172,7 +177,11 @@
     return Object.assign(f, extra);
   }
 
-  async function gql(name, variables, { method = 'GET', retried = false, extraFeatures = {} } = {}) {
+  async function gql(
+    name,
+    variables,
+    { method = 'GET', retried = false, extraFeatures = {} } = {},
+  ) {
     const op = OPS[name];
     const features = buildFeatures(op, extraFeatures);
     const url = new URL(`/i/api/graphql/${op.queryId}/${name}`, location.origin);
@@ -194,7 +203,7 @@
     }
     if (res.ok && body?.data && !body.errors) return body;
 
-    const msg = (body?.errors || []).map((e) => e.message).join('; ');
+    const msg = (body?.errors || []).map(e => e.message).join('; ');
     if (!retried) {
       // "The following features cannot be null: a, b" → send them as false.
       const missing = msg.match(/cannot be null: ([\w, ]+)/);
@@ -211,7 +220,7 @@
     throw new Error(msg || `HTTP ${res.status}`);
   }
 
-  const unwrap = (r) => (r && r.tweet) || r;
+  const unwrap = r => (r && r.tweet) || r;
 
   const tweetCache = new Map();
   function fetchTweet(id) {
@@ -221,7 +230,7 @@
         withCommunity: false,
         includePromotedContent: false,
         withVoice: false,
-      }).then((body) => {
+      }).then(body => {
         let t = unwrap(body.data?.tweetResult?.result);
         if (!t?.legacy) throw new Error(t?.__typename || 'post unavailable');
         const rt = unwrap(t.legacy.retweeted_status_result?.result);
@@ -247,9 +256,9 @@
   // Media of a post and of the post it quotes, in display order.
   function collectMedia(t) {
     const out = [];
-    const add = (tw) => {
+    const add = tw => {
       (tw?.legacy?.extended_entities?.media || []).forEach((media, i) =>
-        out.push({ media, index: i + 1, tweet: tw })
+        out.push({ media, index: i + 1, tweet: tw }),
       );
     };
     add(t);
@@ -262,7 +271,10 @@
   // API URLs (…/media/KEY.jpg) and page URLs (…/media/KEY?format=jpg).
   function keyOf(url) {
     if (!url || !MEDIA_IMG_RE.test(url)) return null;
-    return new URL(url).pathname.split('/').pop().replace(/\.\w+$/, '');
+    return new URL(url).pathname
+      .split('/')
+      .pop()
+      .replace(/\.\w+$/, '');
   }
 
   function mediaSource(m) {
@@ -271,27 +283,55 @@
       return { url: m.media_url_https.replace(/\.\w+$/, '') + `?format=${ext}&name=orig`, ext };
     }
     const best = (m.video_info?.variants || [])
-      .filter((v) => v.content_type === 'video/mp4')
+      .filter(v => v.content_type === 'video/mp4')
       .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
     return best ? { url: best.url, ext: 'mp4' } : null;
   }
 
   // --- filenames ------------------------------------------------------------
 
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = n => String(n).padStart(2, '0');
 
   // Same convention as the original userscript: reserved filename characters
   // become full-width look-alikes, invisible characters are dropped.
-  const FULLWIDTH = { '\\': '＼', '/': '／', '|': '｜', '<': '＜', '>': '＞', ':': '：', '*': '＊', '?': '？', '"': '＂' };
+  const FULLWIDTH = {
+    '\\': '＼',
+    '/': '／',
+    '|': '｜',
+    '<': '＜',
+    '>': '＞',
+    ':': '：',
+    '*': '＊',
+    '?': '？',
+    '"': '＂',
+  };
+  // eslint-disable-next-line no-control-regex -- control characters are what this strips
   const INVISIBLE_RE = /[\u{0}-\u{1F}\u{200B}-\u{200D}\u{2060}\u{FEFF}]|🔞/gu;
 
-  const clean = (value) => String(value).replace(/[\\/|<>:*?"]/g, (c) => FULLWIDTH[c]).replace(INVISIBLE_RE, '');
+  const clean = value =>
+    String(value)
+      .replace(/[\\/|<>:*?"]/g, c => FULLWIDTH[c])
+      .replace(INVISIBLE_RE, '');
 
   // YYYYMMDD-hhmmss, in UTC by default like the original script.
   function stamp(d, local) {
     const p = local
-      ? [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()]
-      : [d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()];
+      ? [
+          d.getFullYear(),
+          d.getMonth() + 1,
+          d.getDate(),
+          d.getHours(),
+          d.getMinutes(),
+          d.getSeconds(),
+        ]
+      : [
+          d.getUTCFullYear(),
+          d.getUTCMonth() + 1,
+          d.getUTCDate(),
+          d.getUTCHours(),
+          d.getUTCMinutes(),
+          d.getUTCSeconds(),
+        ];
     return `${p[0]}${pad(p[1])}${pad(p[2])}-${pad(p[3])}${pad(p[4])}${pad(p[5])}`;
   }
 
@@ -302,7 +342,7 @@
     let name = cfg.template
       .split(/(\{[\w-]+\})/)
       .map((part, i) => {
-        if (i % 2 === 0) return part.replace(/[\\|<>:*?"]/g, (c) => FULLWIDTH[c]);
+        if (i % 2 === 0) return part.replace(/[\\|<>:*?"]/g, c => FULLWIDTH[c]);
         const k = part.slice(1, -1);
         return k in tokens ? clean(tokens[k]) : part;
       })
@@ -310,7 +350,12 @@
     if (suffix != null && !cfg.template.includes('{file-name}')) name += '-' + suffix;
     const path = name
       .split('/')
-      .map((seg) => seg.trim().replace(/^\.+|\.+$/g, '').slice(0, 150))
+      .map(seg =>
+        seg
+          .trim()
+          .replace(/^\.+|\.+$/g, '')
+          .slice(0, 150),
+      )
       .filter(Boolean)
       .join('/');
     return `${path || tokens['status-id']}.${ext}`;
@@ -331,7 +376,10 @@
       'file-type': entry.media.type.replace('animated_', ''),
       'file-name': keyOf(entry.media.media_url_https) || entry.media.id_str,
     };
-    return { url: src.url, filename: buildFilename(tokens, src.ext, multiple ? entry.index - 1 : null) };
+    return {
+      url: src.url,
+      filename: buildFilename(tokens, src.ext, multiple ? entry.index - 1 : null),
+    };
   }
 
   // Fallback when the API is unavailable: the photo URL in the page.
@@ -369,16 +417,16 @@
     const all = collectMedia(tweet);
     if (!all.length) throw new Error('no media in this post');
 
-    const hit = target.key && all.find((e) => keyOf(e.media.media_url_https) === target.key);
+    const hit = target.key && all.find(e => keyOf(e.media.media_url_https) === target.key);
     const owner = hit ? hit.tweet : all[0].tweet;
-    const own = all.filter((e) => e.tweet === owner);
+    const own = all.filter(e => e.tweet === owner);
 
     let picked = own;
     if (scope === 'single') {
       if (hit) picked = [hit];
       else if (target.index && own[target.index - 1]) picked = [own[target.index - 1]];
     }
-    const items = picked.map((e) => apiItem(e, own.length > 1)).filter(Boolean);
+    const items = picked.map(e => apiItem(e, own.length > 1)).filter(Boolean);
     if (!items.length) throw new Error('no downloadable media');
     return { items, ownerId: owner.rest_id || owner.legacy.id_str };
   }
@@ -443,10 +491,14 @@
   // --- like -----------------------------------------------------------------
 
   function findLikeButton(statusId) {
-    const scopes = [...document.querySelectorAll('article')].filter((a) => primaryStatusId(a) === statusId);
+    const scopes = [...document.querySelectorAll('article')].filter(
+      a => primaryStatusId(a) === statusId,
+    );
     const modal = document.querySelector('[aria-modal="true"]');
     if (modal && location.pathname.includes(`/status/${statusId}/`)) {
-      scopes.push(...[...modal.querySelectorAll('[role="group"]')].filter((g) => !g.closest('article')));
+      scopes.push(
+        ...[...modal.querySelectorAll('[role="group"]')].filter(g => !g.closest('article')),
+      );
     }
     for (const s of scopes) {
       const unlike = s.querySelector('[data-testid="unlike"]');
@@ -552,13 +604,15 @@
       const kind = { photo: 'photo', animated_gif: 'GIF' }[e.media.type] || 'video';
       counts[kind] = (counts[kind] || 0) + 1;
     }
-    return Object.entries(counts).map(([k, n]) => plural(n, k)).join(', ');
+    return Object.entries(counts)
+      .map(([k, n]) => plural(n, k))
+      .join(', ');
   }
 
   // Small picker for posts whose quoted post also has media (like the
   // original userscript's dialog). Resolves to the chosen value or null.
   function choose(x, y, title, options, anchor) {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const menu = document.createElement('div');
       menu.className = 'xmd-menu';
       const head = document.createElement('div');
@@ -567,21 +621,21 @@
       menu.appendChild(head);
 
       let unfollow = () => {};
-      const close = (value) => {
+      const close = value => {
         unfollow();
         menu.remove();
         window.removeEventListener('keydown', onKey, true);
         document.removeEventListener('mousedown', onDown, true);
         resolve(value);
       };
-      const onKey = (e) => {
+      const onKey = e => {
         const n = Number(e.key);
         if (e.key === 'Escape') close(null);
         else if (n >= 1 && n <= options.length) close(options[n - 1].value);
         else return;
         swallow(e);
       };
-      const onDown = (e) => {
+      const onDown = e => {
         if (!menu.contains(e.target)) close(null);
       };
 
@@ -595,7 +649,7 @@
         const key = document.createElement('kbd');
         key.textContent = i + 1;
         b.append(key, label, hint);
-        b.addEventListener('click', (e) => {
+        b.addEventListener('click', e => {
           swallow(e);
           close(opt.value);
         });
@@ -633,7 +687,7 @@
     if (target.link || !target.key) return target.statusId;
     try {
       const all = collectMedia(await fetchTweet(target.statusId));
-      const hit = all.find((e) => keyOf(e.media.media_url_https) === target.key);
+      const hit = all.find(e => keyOf(e.media.media_url_https) === target.key);
       if (hit) return hit.tweet.rest_id || hit.tweet.legacy.id_str;
     } catch {
       /* fall back to the surrounding post */
@@ -672,7 +726,7 @@
       const tweet = await fetchTweet(statusId);
       const groups = [];
       for (const e of collectMedia(tweet)) {
-        let g = groups.find((g) => g.tweet === e.tweet);
+        let g = groups.find(g => g.tweet === e.tweet);
         if (!g) groups.push((g = { tweet: e.tweet, entries: [] }));
         g.entries.push(e);
       }
@@ -683,23 +737,41 @@
       else if (groups.length > 1 && cfg.quoteMode === 'ask') {
         t.dismiss();
         const [own, quoted] = groups;
-        const by = (g) => '@' + userOf(g.tweet).screenName;
-        const choice = await choose(x, y, 'This post quotes another post with media', [
-          { value: 'own', label: 'This post', hint: `${by(own)} · ${summarize(own.entries)}` },
-          { value: 'quoted', label: 'Quoted post', hint: `${by(quoted)} · ${summarize(quoted.entries)}` },
-          { value: 'both', label: 'Both', hint: plural(own.entries.length + quoted.entries.length, 'file') },
-        ], button);
+        const by = g => '@' + userOf(g.tweet).screenName;
+        const choice = await choose(
+          x,
+          y,
+          'This post quotes another post with media',
+          [
+            { value: 'own', label: 'This post', hint: `${by(own)} · ${summarize(own.entries)}` },
+            {
+              value: 'quoted',
+              label: 'Quoted post',
+              hint: `${by(quoted)} · ${summarize(quoted.entries)}`,
+            },
+            {
+              value: 'both',
+              label: 'Both',
+              hint: plural(own.entries.length + quoted.entries.length, 'file'),
+            },
+          ],
+          button,
+        );
         if (!choice) return;
         picked = { own: [own], quoted: [quoted], both: groups }[choice];
         t = toast(x, y, 'Downloading…', button);
       }
 
       const items = picked
-        .flatMap((g) => g.entries.map((e) => apiItem(e, g.entries.length > 1)))
+        .flatMap(g => g.entries.map(e => apiItem(e, g.entries.length > 1)))
         .filter(Boolean);
       if (!items.length) throw new Error('no downloadable media');
-      const ids = picked.map((g) => g.tweet.rest_id || g.tweet.legacy.id_str);
-      await deliver(t, items, { historyIds: [statusId, ...ids], likeId: cfg.buttonLike ? ids[0] : null, box: null });
+      const ids = picked.map(g => g.tweet.rest_id || g.tweet.legacy.id_str);
+      await deliver(t, items, {
+        historyIds: [statusId, ...ids],
+        likeId: cfg.buttonLike ? ids[0] : null,
+        box: null,
+      });
     } catch (err) {
       t.finish('✗ ' + err.message, 'error');
     } finally {
@@ -713,7 +785,7 @@
     return e[MODIFIER_PROP[cfg.modifier] || 'altKey'] === true;
   }
 
-  const viaModifier = (e) => cfg.modClickAction !== 'none' && modifierActive(e);
+  const viaModifier = e => cfg.modClickAction !== 'none' && modifierActive(e);
 
   function swallow(e) {
     e.preventDefault();
@@ -742,7 +814,18 @@
 
   function clickInit(e) {
     const init = { bubbles: true, cancelable: true, composed: true, view: window, detail: 1 };
-    for (const k of ['clientX', 'clientY', 'screenX', 'screenY', 'button', 'buttons', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey']) {
+    for (const k of [
+      'clientX',
+      'clientY',
+      'screenX',
+      'screenY',
+      'button',
+      'buttons',
+      'ctrlKey',
+      'shiftKey',
+      'altKey',
+      'metaKey',
+    ]) {
       init[k] = e[k];
     }
     return init;
@@ -750,7 +833,7 @@
 
   window.addEventListener(
     'click',
-    (e) => {
+    e => {
       if (replaying || !cfg.enabled || e.button !== 0) return;
       const modified = viaModifier(e);
       if (!modified && cfg.dblclickAction === 'none') return;
@@ -770,28 +853,33 @@
         return;
       }
       flushPending(); // a different media item — let the earlier click through
-      pending = { box: target.box, node: e.target, init: clickInit(e), timer: setTimeout(flushPending, DBL_MS) };
+      pending = {
+        box: target.box,
+        node: e.target,
+        init: clickInit(e),
+        timer: setTimeout(flushPending, DBL_MS),
+      };
     },
-    true
+    true,
   );
 
   // Stop text selection on double-click and Chrome's Alt+click "save link".
   window.addEventListener(
     'mousedown',
-    (e) => {
+    e => {
       if (!cfg.enabled || e.button !== 0) return;
       const dbl = cfg.dblclickAction !== 'none' && e.detail > 1;
       if ((viaModifier(e) || dbl) && mediaAt(e)) e.preventDefault();
     },
-    true
+    true,
   );
 
   window.addEventListener(
     'dblclick',
-    (e) => {
+    e => {
       if (cfg.enabled && cfg.dblclickAction !== 'none' && mediaAt(e)) swallow(e);
     },
-    true
+    true,
   );
 
   // Outline the media under the cursor while the modifier is held — pink when
@@ -808,13 +896,13 @@
 
   window.addEventListener(
     'mousemove',
-    (e) => {
+    e => {
       if (!cfg.enabled || !viaModifier(e)) return setHover(null);
       setHover(mediaAt(e)?.box || null);
     },
-    true
+    true,
   );
-  window.addEventListener('keyup', (e) => {
+  window.addEventListener('keyup', e => {
     if (!modifierActive(e)) setHover(null);
   });
   window.addEventListener('blur', () => setHover(null));
@@ -834,7 +922,7 @@
     const group = [...article.querySelectorAll('[role="group"]')].pop();
     if (!group) return;
 
-    article.querySelectorAll('.xmd-btn').forEach((b) => b.remove());
+    article.querySelectorAll('.xmd-btn').forEach(b => b.remove());
     article.dataset.xmd = id;
     const btn = document.createElement('div');
     btn.className = 'xmd-btn';
@@ -848,25 +936,27 @@
     // Borrow the idle icon colour from X's own buttons (differs per theme).
     const ref = group.querySelector('svg');
     if (ref) btn.style.setProperty('--xmd-fg', getComputedStyle(ref).color);
-    const trigger = (e) => {
+    const trigger = e => {
       swallow(e);
       const r = btn.getBoundingClientRect();
       runPost(primaryStatusId(article), e.clientX || r.left, e.clientY || r.bottom, btn);
     };
     btn.addEventListener('click', trigger);
-    btn.addEventListener('keydown', (e) => {
+    btn.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') trigger(e);
     });
     group.appendChild(btn);
   }
 
   function refreshButtonStates() {
-    document.querySelectorAll('.xmd-btn').forEach((b) => b.classList.toggle('xmd-done', history.has(b.dataset.statusId)));
+    document
+      .querySelectorAll('.xmd-btn')
+      .forEach(b => b.classList.toggle('xmd-done', history.has(b.dataset.statusId)));
   }
 
   function removeButtons() {
-    document.querySelectorAll('.xmd-btn').forEach((b) => b.remove());
-    document.querySelectorAll('article[data-xmd]').forEach((a) => delete a.dataset.xmd);
+    document.querySelectorAll('.xmd-btn').forEach(b => b.remove());
+    document.querySelectorAll('article[data-xmd]').forEach(a => delete a.dataset.xmd);
   }
 
   let scanQueued = false;
@@ -879,5 +969,8 @@
     });
   }
 
-  new MutationObserver(queueScan).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver(queueScan).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
 })();

@@ -1,38 +1,19 @@
 # annas-archive-downloader
 
-A downloader for [Anna's Archive](https://annas-archive.gl). Searches a keyword, works out which
-volume each hit belongs to, keeps the best file per volume, and downloads the ones you tick.
+Searches [Anna's Archive](https://annas-archive.gl) for a keyword, keeps the best file per volume
+(epub first, then larger, then newer) and downloads the volumes you tick.
 
-"Best" is, in order: `epub` before every other format, then the larger file, then the newer date.
-Both the order and the format list are configurable.
+## Run
 
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-`requests` and `beautifulsoup4` are required; `prompt_toolkit` adds the checkbox list and degrades
-to a numbered prompt if absent; `selenium` is only needed for the `browser` backend.
-
-## Usage
+Requires Python 3.14; dependencies are in `pyproject.toml`.
 
 ```bash
 python main.py "Sword Art Online"
 ```
 
-Ticked volumes land in `downloads/<keyword>/<volume> <title>.<ext>`. Existing files are skipped,
-so re-running after an interruption resumes the set.
-
-```
-↑/↓ move · space toggle · a all · n none · i invert · enter download · q cancel
-
-❯ [x] Vol.1   Sword Art Online Alternative Clover's Regret   EPUB · 23.5MB · 2024
-  [x] Vol.3   Sword Art Online Progressive 3 [TNC]           EPUB · 15.1MB · 2017
-```
-
-Without a tty the same list is printed numbered and you type a selection: `1,3,5-8`, `all`,
-`none`, `-4` to drop one, blank to accept.
+Files land in `downloads/<keyword>/<volume> <title>.<ext>`; existing files are skipped, so a
+rerun resumes. Without a tty the list is numbered and takes a selection such as `1,3,5-8`, `all`
+or `-4`.
 
 | Option | Description | Default |
 |---|---|---|
@@ -57,24 +38,9 @@ Without a tty the same list is printed numbered and you type a selection: `1,3,5
 
 ## Configuration
 
-Anything above can live in `config.json` (copy `config.example.json`) or come from the
-environment as `ANNAS_<OPTION>`.
+Every option can also be set in `config.json` (see `config.example.json`) or as `ANNAS_<OPTION>`;
+the command line wins, then the environment, then the file.
 
-```
-precedence:  command line  >  environment  >  config.json  >  built-in defaults
-```
-
-`/search` and `/md5/` answer a plain client, but `/dyn/…` and `/slow_download/…` sit behind
-DDoS-Guard. Exporting those cookies from a browser into `cookies.json` lets the plain client
-through; a flat `{"name": "value"}` map or a browser extension's list export both work.
-
-## Notes
-
-Downloads are tried `member` → `libgen` → `browser` and stop at the first that yields a link.
-`member` needs a key but is one request; `libgen` is free but only covers what Libgen holds —
-Japanese light novels are largely absent, so those fall through to the browser, which is slow and
-bounded by a per-record timeout.
-
-Every file is checked against the md5 the archive keys it by, so a mirror answering with the
-wrong book is caught rather than saved. Two picks that would build the same filename are given
-distinct ones; a batch that cannot do so is refused rather than silently losing a file.
+Download pages sit behind DDoS-Guard: export the browser's cookies to `cookies.json` to get
+through. `auto` tries `member` (needs a key), then `libgen`, then a real browser (slow; needed
+for titles Libgen lacks, such as most Japanese light novels).

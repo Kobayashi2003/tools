@@ -49,7 +49,7 @@ class Board:
     def __init__(self, stream=None, min_interval: float = 0.2):
         self.stream = stream or sys.stdout
         self.lock = threading.RLock()
-        self.rows = {}          # key -> [label, done, total]
+        self.rows = {}  # key -> [label, done, total]
         self.order = []
         self.painted = 0
         self.min_interval = min_interval
@@ -138,5 +138,5 @@ class Board:
             meter = f"{' ' * 22}   ??  {human(done)}"
         room = max(10, width - len(meter) - 6)
         if len(label) > room:
-            label = label[:room - 1] + "…"
+            label = label[: room - 1] + "…"
         return f"  {meter}  {label}"
