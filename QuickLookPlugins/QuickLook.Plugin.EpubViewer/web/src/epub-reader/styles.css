@@ -1,0 +1,39 @@
+/* Stable public entry point; import order defines the reader's cascade. */
+@import './react/styles/tokens.css';
+
+@import './react/reader/shell/ReaderShell.css';
+@import './react/reader/shell/components/ReaderToolbar.css';
+@import './react/chrome/EpubReaderControls.css';
+@import './react/chrome/EpubReaderStatus.css';
+@import './react/chrome/EpubReaderFeedback.css';
+
+@import './react/reader/shell/components/ReaderPanelHost.css';
+@import './react/reader/shell/components/ReaderTransientSurfaceHost.css';
+@import './react/overlays/EpubSelectionToolbar.css';
+@import './react/overlays/annotation-colors.css';
+@import './react/overlays/EpubMarkPopover.css';
+@import './react/overlays/EpubImageViewer.css';
+@import './react/overlays/EpubExternalLinkDialog.css';
+
+@import './react/panels/panel-base.css';
+@import './react/panels/EpubContents.css';
+@import './react/panels/contents/TocItems.css';
+@import './react/panels/contents/NavigationEntries.css';
+@import './react/panels/EpubSearchPanel.css';
+@import './react/panels/EpubMarksPanel.css';
+@import './react/panels/marks/EpubMarkGroups.css';
+@import './react/panels/marks/EpubMarkEditor.css';
+@import './react/panels/EpubSettingsPanel.css';
+@import './react/panels/settings/AdvancedReaderSettings.css';
+@import './react/panels/settings/CompatibilitySettings.css';
+@import './react/panels/settings/ReadingDataSettings.css';
+@import './react/panels/settings/ReaderSettingsPreviews.css';
+@import './react/panels/settings/TypographySettings.css';
+@import './react/panels/settings/ThemeSettings.css';
+@import './react/panels/EpubCompatibilityPanel.css';
+@import './react/overlays/EpubKeyboardHelp.css';
+
+/* Cross-component adaptations intentionally follow component-owned rules. */
+@import './react/styles/responsive.css';
+@import './react/reader/shell/immersive-chrome.css';
+@import './react/styles/motion.css';

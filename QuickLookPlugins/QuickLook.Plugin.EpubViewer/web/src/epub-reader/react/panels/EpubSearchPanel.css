@@ -1,0 +1,119 @@
+.epub-search-panel__form {
+  display: grid;
+  gap: var(--epub-space-1);
+  padding: 12px;
+  border: 1px solid var(--epub-color-line);
+  border-radius: var(--epub-radius-md);
+  background: var(--epub-color-surface-raised);
+  box-shadow: 0 1px 2px rgba(20, 22, 20, 0.035);
+}
+
+.epub-search-panel__pager {
+  justify-content: space-between;
+  color: var(--epub-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.epub-search-panel__groups,
+.epub-search-panel__group {
+  display: grid;
+  gap: 8px;
+}
+
+.epub-search-panel__groups {
+  gap: 16px;
+}
+
+.epub-search-panel__group > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--epub-color-line);
+}
+
+.epub-search-panel__group > header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.epub-search-panel__group > header strong,
+.epub-search-panel__group > header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epub-search-panel__group > header span,
+.epub-search-panel__group > header small {
+  color: var(--epub-color-text-muted);
+  font-size: 0.65rem;
+}
+
+.epub-search-panel__results li > button {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border-color: transparent;
+  background: var(--epub-color-surface-muted);
+  color: var(--epub-color-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.epub-search-result__excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.epub-search-result__context {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.epub-search-result__context small {
+  margin-left: auto;
+}
+
+.epub-search-result__context strong {
+  overflow: hidden;
+  color: var(--epub-color-text);
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epub-search-result__context small {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.epub-search-result__excerpt mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--epub-color-accent) 24%, transparent);
+  color: inherit;
+  font-weight: 700;
+}
+
+.epub-search-panel__results li > button[aria-current='true'] {
+  background: var(--epub-color-accent-soft);
+  color: var(--epub-color-accent-strong);
+}
+
+.epub-search-panel__results li > button:hover:not(:disabled) {
+  border-color: color-mix(
+    in srgb,
+    var(--epub-color-accent) 28%,
+    var(--epub-color-line)
+  );
+  background: var(--epub-color-surface-muted);
+}

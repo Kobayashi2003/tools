@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- QuickLook.Common.dll is referenced from the installed QuickLook so plugins always build against
+       the version that will load them. Override with -p:QuickLookDir=<folder containing QuickLook.exe>. -->
+  <PropertyGroup Condition="'$(QuickLookDir)' == ''">
+    <QuickLookDir Condition="'$(SCOOP)' != ''">$(SCOOP)\apps\quicklook\current</QuickLookDir>
+    <QuickLookDir Condition="'$(QuickLookDir)' == ''">$(USERPROFILE)\scoop\apps\quicklook\current</QuickLookDir>
+  </PropertyGroup>
+</Project>

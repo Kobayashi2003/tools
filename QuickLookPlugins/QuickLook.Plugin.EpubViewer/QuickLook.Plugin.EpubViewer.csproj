@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- QuickLook 4.x runs on .NET Framework 4.6.2. -->
+    <TargetFramework>net462</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>QuickLook.Plugin.EpubViewer</RootNamespace>
+    <AssemblyName>QuickLook.Plugin.EpubViewer</AssemblyName>
+    <!-- Keep in step with QuickLook.Plugin.Metadata.config. -->
+    <Version>1.0.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- web/ is a pnpm project; only its build output ships, listed below. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);web\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The version QuickLook's own HtmlViewer ships, so both plugins load the same assembly. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3912.50" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="QuickLook.Common">
+      <HintPath>$(QuickLookDir)\QuickLook.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="QuickLook.Plugin.Metadata.config;Translations.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="web\dist\**" Link="web\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="CheckQuickLookCommon" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(QuickLookDir)\QuickLook.Common.dll')">
+    <Error Text="QuickLook.Common.dll not found in '$(QuickLookDir)'. Install QuickLook or pass -p:QuickLookDir=&lt;folder containing QuickLook.exe&gt;." />
+  </Target>
+
+  <Target Name="CheckWebBuild" BeforeTargets="Build" Condition="!Exists('web\dist\index.html')">
+    <Error Text="web\dist is missing. Run ../build.ps1, or 'pnpm install' and 'pnpm build' in web\." />
+  </Target>
+
+</Project>

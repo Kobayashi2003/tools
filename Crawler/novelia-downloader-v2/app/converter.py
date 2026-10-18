@@ -1,14 +1,20 @@
 """Turn a bilingual Novelia EPUB into a Japanese-only one, laid out for vertical reading.
 
 Japanese paragraphs carry a dimming style (plus `lang="ja"` on web novels). A bare
-`<p>` with text is the inserted translation and is dropped; an empty bare `<p>` is a
-spacer and is kept; a `<p>` with other attributes belongs to the original book.
+`<p>` with text is the inserted translation and is dropped, and so is a bare `<p></p>`
+right after a Japanese paragraph (an empty translation); other empty bare `<p>`s are
+spacers and are kept; a `<p>` with other attributes belongs to the original book.
 Headings have no marker, so duplicated pairs are resolved by kana.
+
+A Chinese edition keeps the other side of each pair instead: the translation next to each
+Japanese paragraph (after it, or before it in zh-jp files), or the Japanese line itself when
+it has none.
 """
 
 import posixpath
 import re
 import zipfile
+from html import unescape
 from pathlib import Path
 
 from .models import ConversionReport
@@ -77,7 +83,13 @@ def is_japanese(text: str) -> bool:
 
 
 def convert_document(
-    html: str, report: ConversionReport, vertical: bool, css_href: str = "", link_css: bool = True
+    html: str,
+    report: ConversionReport,
+    vertical: bool,
+    css_href: str = "",
+    link_css: bool = True,
+    chinese: bool = False,
+    translation_first: bool = False,
 ) -> str:
     match = _BODY.search(html)
     if not match:
@@ -86,8 +98,12 @@ def convert_document(
 
     open_tag, body, close_tag = match.groups()
     body = _SELF_CLOSING_P.sub(r"<p\1></p>", body)
-    body = _strip_duplicate_headings(body, report)
-    body = _strip_chinese_paragraphs(body, report)
+    body = _strip_duplicate_headings(body, report, prefer_japanese=not chinese)
+    body = (
+        _keep_translations(body, report, translation_first)
+        if chinese
+        else _strip_chinese_paragraphs(body, report)
+    )
 
     html = html[: match.start()] + open_tag + body + close_tag + html[match.end() :]
     # <title> holds the Chinese chapter name; reuse the surviving Japanese heading.
@@ -102,13 +118,15 @@ def convert_document(
                 count=1,
                 flags=re.S,
             )
-    html = _retag_language(html)
+    html = _retag_language(html, "zh" if chinese else "ja")
     if vertical and link_css and css_href:
         html = _link_stylesheet(html, css_href)
     return html
 
 
-def _strip_duplicate_headings(body: str, report: ConversionReport) -> str:
+def _strip_duplicate_headings(
+    body: str, report: ConversionReport, prefer_japanese: bool = True
+) -> str:
     headings = list(_HEADING.finditer(body))
     if len(headings) < 2:
         return body
@@ -123,7 +141,8 @@ def _strip_duplicate_headings(body: str, report: ConversionReport) -> str:
         first_text = _TAGS.sub("", first.group(3)).strip()
         second_text = _TAGS.sub("", second.group(3)).strip()
         # Without kana on either side the titles match anyway; keep the first.
-        if is_japanese(second_text) and not is_japanese(first_text):
+        first_ja, second_ja = is_japanese(first_text), is_japanese(second_text)
+        if (second_ja and not first_ja) if prefer_japanese else (first_ja and not second_ja):
             drop.append((first.start(), first.end()))
         else:
             drop.append((second.start(), second.end()))
@@ -140,15 +159,23 @@ def is_japanese_paragraph(attrs: str) -> bool:
 
 
 def _strip_chinese_paragraphs(body: str, report: ConversionReport) -> str:
+    japanese_end = -1
+
     def replace(match: re.Match) -> str:
+        nonlocal japanese_end
         attrs, inner = match.group(1), match.group(2)
+        follows_japanese = japanese_end >= 0 and not body[japanese_end : match.start()].strip()
+        japanese_end = -1
         if is_japanese_paragraph(attrs):
             report.kept_ja += 1
+            japanese_end = match.end()
             return f"<p{_OPACITY.sub('', attrs)}>{inner}</p>"
         if attrs.strip():
             report.kept_original += 1
             return match.group(0)
-        if not _TAGS.sub("", inner).strip():
+        # Untranslatable lines (URLs, addresses) get an empty `<p></p>` as their translation,
+        # while the original's own spacers keep their `<br/>`.
+        if not _TAGS.sub("", inner).strip() and not (follows_japanese and not inner.strip()):
             report.kept_blank += 1
             return match.group(0)
         report.dropped_zh += 1
@@ -158,10 +185,40 @@ def _strip_chinese_paragraphs(body: str, report: ConversionReport) -> str:
     return re.sub(r"\n{3,}", "\n\n", body)
 
 
-def _retag_language(html: str) -> str:
+def _keep_translations(body: str, report: ConversionReport, translation_first: bool) -> str:
+    matches = list(_P.finditer(body))
+    kept = [m.group(0) for m in matches]
+    step = -1 if translation_first else 1
+    for index, match in enumerate(matches):
+        attrs, inner = match.groups()
+        if not is_japanese_paragraph(attrs):
+            continue
+        partner = matches[index + step] if 0 <= index + step < len(matches) else None
+        if partner and not partner.group(1).strip():
+            start, end = sorted((match.span(), partner.span()))
+            if not body[start[1] : end[0]].strip():
+                if _TAGS.sub("", partner.group(2)).strip():
+                    kept[index] = ""
+                    report.kept_zh += 1
+                    continue
+                if not partner.group(2).strip():  # an empty translation, not a `<br/>` spacer
+                    kept[index + step] = ""
+        kept[index] = f"<p{_OPACITY.sub('', attrs)}>{inner}</p>"
+        report.untranslated += 1
+    pieces, last = [], 0
+    for match, text in zip(matches, kept, strict=True):
+        pieces += [body[last : match.start()], text]
+        last = match.end()
+    pieces.append(body[last:])
+    return re.sub(r"\n{3,}", "\n\n", "".join(pieces))
+
+
+def _retag_language(html: str, language: str) -> str:
     html = re.sub(r'(<html\b[^>]*?)\slang="[^"]*"', r"\1", html, flags=re.I)
     html = re.sub(r'(<html\b[^>]*?)\sxml:lang="[^"]*"', r"\1", html, flags=re.I)
-    return re.sub(r"<html\b", '<html lang="ja" xml:lang="ja"', html, count=1, flags=re.I)
+    return re.sub(
+        r"<html\b", f'<html lang="{language}" xml:lang="{language}"', html, count=1, flags=re.I
+    )
 
 
 def _link_stylesheet(html: str, href: str) -> str:
@@ -186,13 +243,19 @@ def convert_epub(
     authors: list[str] | None = None,
     toc: list[dict] | None = None,
     restore_css_from: Path | None = None,
+    chinese: bool = False,
+    translation_first: bool = False,
 ) -> ConversionReport:
     """Write a Japanese-only copy of `source` to `destination`.
 
     `toc` is the metadata table of contents used to relabel navigation in Japanese.
     `restore_css_from` is a library volume's uploaded original: the site empties its
     stylesheets, so the publisher's CSS is copied back instead of generated.
+    `chinese` writes the Chinese edition instead, laid out as Novelia's own Chinese build:
+    horizontal, with Novelia's titles, so the Japanese metadata arguments are left out.
+    `translation_first` marks a zh-jp source.
     """
+    vertical = vertical and not chinese
     report = ConversionReport(vertical=vertical)
     with zipfile.ZipFile(source) as archive:
         names = archive.namelist()
@@ -222,7 +285,7 @@ def convert_epub(
             text = data.decode("utf-8")
             if name.endswith("nav.xhtml"):
                 text = _convert_nav(text, report, title_jp, toc or [])
-                text = _retag_language(text)
+                text = _retag_language(text, "zh" if chinese else "ja")
             else:
                 report.chapters += 1
                 text = convert_document(
@@ -231,6 +294,8 @@ def convert_epub(
                     vertical,
                     css_href=_relative_href(name, css_name),
                     link_css=not restorable,
+                    chinese=chinese,
+                    translation_first=translation_first,
                 )
             data = text.encode("utf-8")
         elif lower.endswith(".css") and name in restorable:
@@ -244,6 +309,7 @@ def convert_epub(
                 introduction_jp,
                 authors or [],
                 add_css=not restorable,
+                language="zh" if chinese else "ja",
             ).encode("utf-8")
         elif lower.endswith(".ncx"):
             data = _convert_ncx(data.decode("utf-8"), title_jp, toc or []).encode("utf-8")
@@ -335,8 +401,11 @@ def _convert_opf(
     introduction_jp: str,
     authors: list[str],
     add_css: bool = True,
+    language: str = "ja",
 ) -> str:
-    xml = re.sub(r"<dc:language>[^<]*</dc:language>", "<dc:language>ja</dc:language>", xml, count=1)
+    xml = re.sub(
+        r"<dc:language>[^<]*</dc:language>", f"<dc:language>{language}</dc:language>", xml, count=1
+    )
     if title_jp:
         xml = re.sub(
             r"<dc:title>.*?</dc:title>",
@@ -405,6 +474,7 @@ def _escape(text: str) -> str:
 
 # Whitespace is ignored: the site pretty-prints bilingual XHTML, even inside <ruby>.
 _SPACE = re.compile(r"\s+")
+_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 
 def chapter_paragraphs(path: Path, japanese_only: bool = False) -> dict[str, list[str]]:
@@ -417,11 +487,14 @@ def chapter_paragraphs(path: Path, japanese_only: bool = False) -> dict[str, lis
             if not body_match:
                 continue
             paragraphs = []
-            body = _SELF_CLOSING_P.sub(r"<p\1></p>", body_match.group(2))
+            # Commented-out markup is never shown, and the converter may edit inside it.
+            body = _COMMENT.sub("", body_match.group(2))
+            body = _SELF_CLOSING_P.sub(r"<p\1></p>", body)
             for attrs, inner in _P.findall(body):
                 if japanese_only and not is_japanese_paragraph(attrs):
                     continue
-                paragraphs.append(_SPACE.sub("", _TAGS.sub("", inner)))
+                # The site re-serializes entities (&#160; becomes &#xa0;, &apos; becomes ').
+                paragraphs.append(_SPACE.sub("", unescape(_TAGS.sub("", inner))))
             result[name] = paragraphs
     return result
 

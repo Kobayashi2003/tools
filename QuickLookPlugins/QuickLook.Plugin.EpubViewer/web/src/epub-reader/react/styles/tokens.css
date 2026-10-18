@@ -1,0 +1,270 @@
+.epub-background,
+.epub-reader-shell {
+  --epub-color-canvas: #ececea;
+  --epub-color-reader: #d9d9d6;
+  --epub-color-surface: #f8f8f6;
+  --epub-color-surface-raised: #ffffff;
+  --epub-color-surface-muted: #f1f1ee;
+  --epub-color-text: #20211f;
+  --epub-color-text-muted: #666962;
+  --epub-color-line: #d8d9d4;
+  --epub-color-line-strong: #bfc1ba;
+  --epub-color-accent: #315f70;
+  --epub-color-accent-strong: #244b59;
+  --epub-color-accent-soft: #e3edf0;
+  --epub-color-positive: #4a7b58;
+  --epub-color-warning: #b37c25;
+  --epub-color-danger: #aa4d43;
+  --epub-scrollbar-thumb: color-mix(
+    in srgb,
+    var(--epub-color-text-muted) 48%,
+    transparent
+  );
+  --epub-scrollbar-thumb-hover: color-mix(
+    in srgb,
+    var(--epub-color-text-muted) 72%,
+    transparent
+  );
+  --epub-scrollbar-track: transparent;
+  /* Annotation swatches. One definition, because the selection toolbar and the
+     mark popover both offer them and they must not drift apart. */
+  --epub-highlight-yellow: #e7c955;
+  --epub-highlight-orange: #dfa15f;
+  --epub-highlight-pink: #df8fa7;
+  --epub-highlight-green: #80b88b;
+  --epub-highlight-blue: #75a9c8;
+  --epub-highlight-purple: #a48bc4;
+  --epub-space-1: 4px;
+  --epub-space-2: 8px;
+  --epub-space-3: 12px;
+  --epub-space-4: 16px;
+  --epub-space-5: 24px;
+  --epub-control-sm: 32px;
+  --epub-control-md: 40px;
+  /* Heights of the top toolbar and the bottom controls bar. Anything that has
+     to sit clear of the chrome reads these instead of restating the numbers. */
+  --epub-chrome-top: 58px;
+  --epub-chrome-bottom: 68px;
+  --epub-panel-width: 380px;
+  --epub-radius-sm: 7px;
+  --epub-radius-md: 11px;
+  --epub-radius-lg: 18px;
+  --epub-shadow-drawer: 14px 0 38px rgba(22, 24, 21, 0.14);
+  --epub-shadow-float: 0 12px 38px rgba(22, 24, 21, 0.12);
+  --epub-focus: 0 0 0 3px rgba(49, 95, 112, 0.28);
+  --epub-field-focus: 0 0 0 2px
+    color-mix(in srgb, var(--epub-color-accent) 18%, transparent);
+  --epub-font-ui:
+    'Segoe UI Variable', 'Noto Sans SC', 'Noto Sans JP', 'Microsoft YaHei UI',
+    'Yu Gothic UI', system-ui, sans-serif;
+  color: var(--epub-color-text);
+  color-scheme: light;
+  font-family: var(--epub-font-ui);
+  font-size: 14px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+.epub-reader-shell[data-density='compact'] {
+  --epub-control-sm: 28px;
+  --epub-control-md: 36px;
+  --epub-chrome-top: 52px;
+  --epub-chrome-bottom: 60px;
+  font-size: 13px;
+}
+
+.epub-reader-shell[data-motion='reduced'] *,
+.epub-reader-shell[data-motion='reduced'] *::before,
+.epub-reader-shell[data-motion='reduced'] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+.epub-reader-shell * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--epub-scrollbar-thumb) var(--epub-scrollbar-track);
+}
+
+.epub-reader-shell *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.epub-reader-shell *::-webkit-scrollbar-track {
+  background: var(--epub-scrollbar-track);
+}
+
+.epub-reader-shell *::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--epub-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.epub-reader-shell *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--epub-scrollbar-thumb-hover);
+}
+
+.epub-reader-shell *::-webkit-scrollbar-button,
+.epub-reader-shell *::-webkit-scrollbar-corner {
+  display: none;
+  background: transparent;
+}
+
+.epub-background *,
+.epub-background *::before,
+.epub-background *::after,
+.epub-reader-shell *,
+.epub-reader-shell *::before,
+.epub-reader-shell *::after {
+  box-sizing: border-box;
+}
+
+.epub-background button,
+.epub-background input,
+.epub-background select,
+.epub-background textarea,
+.epub-reader-shell button,
+.epub-reader-shell input,
+.epub-reader-shell select,
+.epub-reader-shell textarea {
+  font: inherit;
+}
+
+.epub-background button,
+.epub-reader-shell button {
+  min-height: var(--epub-control-sm);
+  padding: 6px 10px;
+  border: 1px solid var(--epub-color-line);
+  border-radius: var(--epub-radius-sm);
+  background: var(--epub-color-surface-raised);
+  color: inherit;
+  font-size: 0.86rem;
+  font-weight: 520;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.epub-background button:hover:not(:disabled),
+.epub-reader-shell button:hover:not(:disabled) {
+  border-color: var(--epub-color-line-strong);
+  background: var(--epub-color-surface-muted);
+}
+
+.epub-background button:disabled,
+.epub-reader-shell button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.epub-background
+  :is(
+    button,
+    input[type='checkbox'],
+    input[type='radio'],
+    input[type='range']
+  ):focus-visible,
+.epub-reader-shell
+  :is(
+    button,
+    input[type='checkbox'],
+    input[type='radio'],
+    input[type='range'],
+    [tabindex]
+  ):focus-visible {
+  outline: 2px solid var(--epub-color-accent);
+  outline-offset: 2px;
+  box-shadow: var(--epub-focus);
+}
+
+/* Text-entry controls use one restrained focus ring. Keeping this separate
+   from button/navigation focus avoids the doubled outline-and-shadow frame
+   that made every field look heavier than the surrounding reader UI. */
+.epub-background
+  :is(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not(
+        [type='file']
+      ),
+    select,
+    textarea
+  ):focus-visible,
+.epub-reader-shell
+  :is(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not(
+        [type='file']
+      ),
+    select,
+    textarea
+  ):focus-visible {
+  outline: 0;
+  border-color: var(--epub-color-accent);
+  box-shadow: var(--epub-field-focus);
+}
+
+.epub-file-picker:focus-within {
+  outline: 0;
+  border-color: var(--epub-color-accent);
+  box-shadow: var(--epub-field-focus);
+}
+
+.epub-reader-tool-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.epub-reader-visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+@media (pointer: coarse) {
+  .epub-reader-shell {
+    --epub-control-sm: 44px;
+    --epub-control-md: 44px;
+  }
+
+  .epub-reader-shell button {
+    touch-action: manipulation;
+  }
+  .epub-reader-shell input[type='range'] {
+    min-height: 32px;
+    touch-action: pan-x;
+  }
+  .epub-reader-selection-tool__colors button,
+  .epub-reader-mark-popover__colors button,
+  .epub-mark-editor__colors button {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .epub-background *,
+  .epub-reader-shell * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

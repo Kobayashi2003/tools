@@ -10,11 +10,13 @@ import pytest
 
 from app.client import (
     Client,
+    DamagedUpload,
     Deferred,
     Rejected,
     Throttle,
     TransientError,
     retry_after,
+    salvage_epub,
     validate_epub,
 )
 from app.schema import Settings
@@ -257,10 +259,40 @@ def test_validation_accepts_what_readers_open_and_rejects_damage(tmp_path):
     with zipfile.ZipFile(directory) as check:
         assert check.testzip() == "META-INF/"  # the old validator rejected this file
     validate_epub(directory)
-    # Damaged content is still rejected.
+    # Damaged content is still rejected, and cannot be repaired.
     damaged = bytearray(book.read_bytes())
     chapter = damaged.find(b"OPS/chapter.xhtml") + len(b"OPS/chapter.xhtml")
     damaged[chapter + 5] ^= 0xFF
     (tmp_path / "c.epub").write_bytes(bytes(damaged))
-    with pytest.raises(ValueError, match="not a valid EPUB"):
+    with pytest.raises(DamagedUpload, match="not a valid EPUB"):
         validate_epub(tmp_path / "c.epub")
+    assert salvage_epub(tmp_path / "c.epub") is None
+    # Most broken uploads were cut off at a whole number of MiB on Novelia's side.
+    (tmp_path / "d.epub").write_bytes(book.read_bytes()[:300])
+    with pytest.raises(DamagedUpload, match="cut off"):
+        validate_epub(tmp_path / "d.epub")
+    assert salvage_epub(tmp_path / "d.epub") is None
+
+
+def test_broken_pictures_and_junk_mimetype_are_repaired(tmp_path):
+    picture = b"\xff\xd8 picture " * 200
+    book = rebuild(
+        epub(tmp_path / "book.epub"),
+        tmp_path / "broken.epub",
+        lambda n, d: b"\x00Salted__junk" if n == "mimetype" else d,
+    )
+    with zipfile.ZipFile(book, "a", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("OPS/images/1.jpg", picture)
+    data = bytearray(book.read_bytes())
+    for signature, crc_at in ((b"PK\x03\x04", 14), (b"PK\x01\x02", 16)):
+        at = data.rfind(signature)  # the picture's headers come last
+        struct.pack_into("<I", data, at + crc_at, 0xDEADBEEF)
+    book.write_bytes(bytes(data))
+    with pytest.raises(DamagedUpload):
+        validate_epub(book)
+    assert salvage_epub(book) == ["mimetype", "OPS/images/1.jpg"]
+    validate_epub(book)
+    with zipfile.ZipFile(book) as z:
+        assert z.read("mimetype") == b"application/epub+zip"
+        assert z.read("OPS/images/1.jpg") == picture
+        assert z.read("OPS/chapter.xhtml").count(b"<p") == 3

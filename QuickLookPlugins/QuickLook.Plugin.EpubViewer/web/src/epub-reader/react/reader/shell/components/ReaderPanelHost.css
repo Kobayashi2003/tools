@@ -1,0 +1,41 @@
+.epub-reader-shell__panel {
+  position: absolute;
+  inset: var(--epub-chrome-top) auto var(--epub-chrome-bottom) 0;
+  z-index: 20;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  width: min(var(--epub-panel-width), calc(100% - 52px));
+  overflow: hidden;
+  border-right: 1px solid var(--epub-color-line);
+  background: var(--epub-color-surface);
+  box-shadow: var(--epub-shadow-drawer);
+  animation: epub-reader-drawer-enter 160ms ease-out both;
+}
+
+.epub-reader-shell__panel.is-closing {
+  pointer-events: none;
+  animation: epub-reader-drawer-exit 170ms ease-in both;
+}
+
+.epub-reader-shell .epub-reader-shell__dismiss-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  touch-action: manipulation;
+}
+
+.epub-reader-shell .epub-reader-shell__dismiss-layer:hover:not(:disabled) {
+  border: 0;
+  background: transparent;
+}
+
+.epub-reader-shell .epub-reader-shell__dismiss-layer.is-closing {
+  pointer-events: none;
+}

@@ -5,6 +5,10 @@ import argparse
 import io
 import sys
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.config import Settings
 
 for stream in (sys.stdout, sys.stderr):
     if isinstance(stream, io.TextIOWrapper):
@@ -34,7 +38,15 @@ def serve(settings, port):
     return 0
 
 
-def crawl(settings, kind, blocks=5, query=""):
+def crawl(
+    settings: Settings,
+    kind: str,
+    query: str = "",
+    blocks: int | None = 5,
+    block_digits: int = 4,
+    stop_on_empty: bool = False,
+    id_range: tuple[int, int] | None = None,
+) -> int:
     """Run one crawl job and wait until every queued title has its metadata."""
     import dataclasses
 
@@ -51,7 +63,14 @@ def crawl(settings, kind, blocks=5, query=""):
     http = Http(delay=settings.source_delay, delays=settings.host_delays(), proxy=settings.proxy)
     crawler = Crawler(store, http, MediaCache(settings.data_dir / "media", http), settings)
     crawler.start()
-    crawler.start_job(kind, blocks=blocks, query=query)
+    crawler.start_job(
+        kind,
+        query=query,
+        blocks=blocks,
+        block_digits=block_digits,
+        stop_on_empty=stop_on_empty,
+        id_range=id_range,
+    )
     shown = 0
     try:
         while True:
@@ -125,11 +144,37 @@ def main():
     crawl_cmd.add_argument(
         "--blocks", type=int, default=5, help="history blocks for `older` (default 5)"
     )
+    crawl_cmd.add_argument("--all", action="store_true", help="`older`: every block that is left")
+    crawl_cmd.add_argument(
+        "--block-digits",
+        type=int,
+        choices=(3, 4, 5),
+        default=4,
+        help="`older`: block size as id-prefix digits: 3, 4 (default) or 5",
+    )
+    crawl_cmd.add_argument(
+        "--stop-on-empty", action="store_true", help="`older`: stop at a block with no results"
+    )
+    crawl_cmd.add_argument(
+        "--range",
+        type=int,
+        nargs=2,
+        metavar=("FROM", "TO"),
+        help="`older`: read the blocks between two FC2 ids; the history walk is not moved",
+    )
     commands.add_parser("doctor", help="Check that sukebei, FC2 and paipancon answer and parse")
     args = parser.parse_args()
 
     if args.command == "crawl":
-        return crawl(settings, args.kind, args.blocks, args.query)
+        return crawl(
+            settings,
+            args.kind,
+            args.query,
+            blocks=None if args.all or args.range else args.blocks,
+            block_digits=args.block_digits,
+            stop_on_empty=args.stop_on_empty,
+            id_range=(args.range[0], args.range[1]) if args.range else None,
+        )
     if args.command == "doctor":
         return doctor(settings)
     return serve(settings, getattr(args, "port", settings.port))

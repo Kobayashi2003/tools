@@ -1,0 +1,25 @@
+const s = (d, w = 1.6) => `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" aria-hidden="true">${d}</svg>`;
+
+export const I = {
+  chev: '<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>',
+  dots: '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>',
+  x: '<svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m2 2 6 6M8 2 2 8"/></svg>',
+  search: s('<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>'),
+  dl: s('<path d="M8 2.5v8m-3.5-3.5L8 10.5 11.5 7M3 13.5h10"/>'),
+  sync: s('<path d="M13 6.5A5 5 0 0 0 4 4.5L3 5.5m0-3v3h3M3 9.5a5 5 0 0 0 9 2l1-1m0 3v-3h-3"/>'),
+  folder: s('<path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/>', 1.5),
+  ext: s('<path d="M9 3h4v4M13 3 7.5 8.5M11 9.5V13H3V5h3.5"/>', 1.5),
+  check: s('<path d="m3.5 8.5 3 3 6-7"/>'),
+  reset: s('<path d="M3 8a5 5 0 1 0 1.5-3.5L3 6m0-3v3h3"/>', 1.5),
+  eye: s('<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/>', 1.5),
+  plus: s('<path d="M8 3v10M3 8h10"/>'),
+  edit: s('<path d="M3 13h3l7-7-3-3-7 7z"/>', 1.5),
+  unfold: s('<path d="m5 6 3-3 3 3M5 10l3 3 3-3"/>', 1.5),
+  fold: s('<path d="m5 3 3 3 3-3M5 13l3-3 3 3"/>', 1.5),
+  move: s('<path d="M2 8h12m-3-3 3 3-3 3M5 5 2 8l3 3"/>', 1.5),
+  stop: s('<rect x="4" y="4" width="8" height="8" rx="1"/>', 1.5),
+  list: s('<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>', 1.5),
+  grid: s('<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>', 1.4),
+  close: s('<path d="m4 4 8 8M12 4l-8 8"/>'),
+  trash: s('<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.5 9h6l.5-9"/>', 1.5),
+};

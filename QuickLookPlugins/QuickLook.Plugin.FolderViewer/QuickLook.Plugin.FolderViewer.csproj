@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- QuickLook 4.x runs on .NET Framework 4.6.2. -->
+    <TargetFramework>net462</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>QuickLook.Plugin.FolderViewer</RootNamespace>
+    <AssemblyName>QuickLook.Plugin.FolderViewer</AssemblyName>
+    <!-- Keep in step with QuickLook.Plugin.Metadata.config. -->
+    <Version>1.0.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="QuickLook.Common">
+      <HintPath>$(QuickLookDir)\QuickLook.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuickLook.Plugin.FolderViewer.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="QuickLook.Plugin.Metadata.config;Translations.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Target Name="CheckQuickLookCommon" BeforeTargets="ResolveAssemblyReferences" Condition="!Exists('$(QuickLookDir)\QuickLook.Common.dll')">
+    <Error Text="QuickLook.Common.dll not found in '$(QuickLookDir)'. Install QuickLook or pass -p:QuickLookDir=&lt;folder containing QuickLook.exe&gt;." />
+  </Target>
+
+</Project>

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.ruff_cache/
+.pytest_cache/
+data/
+downloads/
+# The Fanbox session cookie. It lives under data/ already (as does the sign-in browser's
+# profile, data/browser/); named here so moving data/ cannot expose it.
+secrets.json
+.env
+.running.json
+*.log

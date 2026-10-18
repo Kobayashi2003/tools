@@ -62,7 +62,6 @@ class Upstream:
         self.listed = []
         self.fail_page = None
         self.fail_volume = None
-        self.fail_reference = False
         self.cancel_volume = None
         self.fail_times = {}  # volume -> number of transient failures before success
         self.raise_on = {}  # volume -> exception raised on every attempt
@@ -76,6 +75,7 @@ class Upstream:
         class FakeClient:
             def __init__(self):
                 self.closed = False
+                self.repaired: list[str] = []
 
             def listing(self, page, category, query=""):
                 check()
@@ -92,11 +92,11 @@ class Upstream:
                 upstream.checked.append(key)
                 return copy.deepcopy(upstream.works[key])
 
-            def source(self, key, volume, destination, original=False):
+            def source(self, key, volume, destination, original=False, chinese=False):
                 check()
                 if volume == upstream.cancel_volume:
                     raise Cancelled("Test interruption")
-                if volume == upstream.fail_volume or (original and upstream.fail_reference):
+                if volume == upstream.fail_volume:
                     raise NetworkError("Temporary download error")
                 if volume in upstream.raise_on:
                     raise upstream.raise_on[volume]
@@ -105,11 +105,13 @@ class Upstream:
                 if upstream.fail_times.get(volume):
                     upstream.fail_times[volume] -= 1
                     raise NetworkError("Temporary download error")
-                upstream.downloads.append((key, volume, original))
+                upstream.downloads.append((key, volume, "zh" if chinese else original))
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 if destination.suffix == ".txt":  # text volumes: original Japanese or interleaved
-                    text = "日本語\n" if original else "日本語\n中文\n"
+                    text = "中文\n" if chinese else "日本語\n" if original else "日本語\n中文\n"
                     destination.write_text(text, encoding="utf-8")
+                elif chinese:
+                    epub(destination, False, paragraph="测试译文")
                 else:
                     shutil.copyfile(upstream.original if original else upstream.raw, destination)
                 return destination.stat().st_size, fingerprint(destination.read_bytes().hex())

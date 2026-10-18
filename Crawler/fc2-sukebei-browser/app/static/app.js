@@ -774,7 +774,10 @@ const jobRunning = () => !!lastStatus?.job?.running;
 
 function jobText(job) {
   const page = Math.max(job.page, 1);
-  if (job.kind === 'older') return t('jobOlder', { block: job.block ?? '…', page });
+  if (job.kind === 'older') {
+    const done = job.blocks ? `${job.blocks_done}/${job.blocks}` : String(job.blocks_done);
+    return t(job.range ? 'jobRange' : 'jobOlder', { block: job.block ?? '…', page, done });
+  }
   if (job.kind === 'search') return t('jobSearch', { page });
   return t('jobUpdate', { page });
 }
@@ -783,7 +786,10 @@ function coverageText(c) {
   const history = c.history_complete ? t('covComplete')
     : c.history_next == null ? t('covNotStarted')
       : c.history_phase === 'short' ? t('covShort', { next: c.history_next })
-        : t('covDown', { from: c.history_next + 1, top: c.history_top, next: c.history_next });
+        : t('covDown', {
+          from: c.history_next + 1, top: c.history_top, next: c.history_next,
+          x: 'x'.repeat(Math.max(0, 7 - (c.history_digits ?? 4))),
+        });
   return { history };
 }
 
@@ -798,7 +804,8 @@ function renderStatus(status) {
       status.waiting.pp ? t('fetchingClips', { n: status.waiting.pp }) : ''].filter(Boolean).join(' · ') || t('idle')
       : t('idle');
   $('#job-update').disabled = !!crawling;
-  $('#job-older').disabled = !!crawling || status.coverage.history_complete;
+  $('#job-older').disabled = !!crawling || (status.coverage.history_complete && !older.rangeOn);
+  if (!$('#older-options').hidden) renderOlderOptions();
   $('#job-cancel').hidden = !crawling;
 
   const s = status.stats;
@@ -886,7 +893,7 @@ function renderLibraryEnd() {
     h('span', {}, `${t('libraryEnd')} · ${t('covHistory')}: ${coverageText(c).history}`),
     c.history_complete ? null : h('button', {
       class: 'btn small', type: 'button', disabled: running,
-      onclick: () => startJob('older', { blocks: 5 }),
+      onclick: runOlder,
     }, running && lastStatus.job.kind === 'older' ? t('loadingOlder') : `↓ ${t('loadOlder')}`),
   ].filter(Boolean));
 }
@@ -895,7 +902,113 @@ function maybeLoadOlder() {
   if (!autoOlderArmed || !state.done || !lastStatus || jobRunning()) return;
   if (!defaultFilters() || lastStatus.coverage.history_complete || !state.items.length) return;
   autoOlderArmed = false;
-  startJob('older', { blocks: 2 }, true);
+  startJob('older', { blocks: 2, block_digits: older.digits }, true);
+}
+
+// --- history options -------------------------------------------------------------------------
+//
+// How Older runs: blocks per run (or all that are left), block size, stopping at an empty block,
+// or an id range that leaves the walk's position alone. Kept per browser; the automatic run at the
+// end of the grid uses the same block size.
+
+const OLDER_DEFAULTS = { blocks: 5, all: false, digits: 4, stopEmpty: false, rangeOn: false, from: '', to: '' };
+const older = { ...OLDER_DEFAULTS, ...store.get('older', {}) };
+let olderDigitsSelect = null;
+const SUKEBEI_DELAY = 1.5;
+
+function readOlderControls() {
+  older.blocks = Math.max(1, Number($('#older-blocks').value) || 1);
+  older.all = $('#older-all').checked;
+  older.digits = Number($('#older-digits').value) || 4;
+  older.stopEmpty = $('#older-stop-empty').checked;
+  older.rangeOn = $('#older-range-on').checked;
+  older.from = $('#older-range-from').value.trim();
+  older.to = $('#older-range-to').value.trim();
+  store.set('older', older);
+  renderOlderOptions();
+}
+
+function writeOlderControls() {
+  $('#older-blocks').value = older.blocks;
+  $('#older-all').checked = older.all;
+  $('#older-digits').value = String(older.digits);
+  olderDigitsSelect?.sync();
+  $('#older-stop-empty').checked = older.stopEmpty;
+  $('#older-range-on').checked = older.rangeOn;
+  $('#older-range-from').value = older.from;
+  $('#older-range-to').value = older.to;
+  renderOlderOptions();
+}
+
+// The range in blocks, or an error message when the two ids cannot form one.
+function olderRange() {
+  const [a, b] = [older.from, older.to];
+  if (!/^\d{5,8}$/.test(a) || !/^\d{5,8}$/.test(b)) return { error: t('olderRangeMissing') };
+  if (a.length !== b.length) return { error: t('olderRangeBad') };
+  const [high, low] = [a, b].sort((x, y) => Number(y) - Number(x));
+  const from = Number(high.slice(0, older.digits));
+  const to = Number(low.slice(0, older.digits));
+  return { from, to, count: from - to + 1, body: { range_from: Number(high), range_to: Number(low) } };
+}
+
+function olderBody() {
+  const body = { block_digits: older.digits, stop_on_empty: older.stopEmpty, blocks: older.all ? null : older.blocks };
+  if (older.rangeOn) {
+    const range = olderRange();
+    if (range.error) return null;
+    Object.assign(body, range.body, { blocks: null });
+  }
+  return body;
+}
+
+const blockIds = (digits) => (10 ** (7 - digits)).toLocaleString();
+
+function renderOlderOptions() {
+  $('#older-blocks').disabled = older.all || older.rangeOn;
+  $('#older-all').disabled = older.rangeOn;
+  $('#older-range-fields').hidden = !older.rangeOn;
+  const c = lastStatus?.coverage;
+  let summary;
+  let problem = false;
+  if (older.rangeOn) {
+    const range = olderRange();
+    problem = !!range.error;
+    summary = range.error ?? t('olderSumRange', { from: range.from, to: range.to, n: range.count.toLocaleString() });
+  } else if (c?.history_complete) {
+    summary = t('historyDone');
+  } else {
+    // Where the walk continues at the chosen size (finer blocks start at the top of the current one).
+    const next = c?.history_next == null ? null
+      : String(c.history_next).slice(0, older.digits).padEnd(older.digits, '9');
+    const start = next ? t('olderSumAt', { block: next }) : t('olderSumNewest');
+    const total = 9 * 10 ** (older.digits - 1);
+    const scale = 10 ** (older.digits - (c?.history_digits ?? older.digits));
+    const left = Math.max(0, total - Math.round((c?.history_blocks ?? 0) * scale));
+    summary = older.all
+      ? t('olderSumAll', { n: left.toLocaleString(), start, hours: (left * SUKEBEI_DELAY / 3600).toFixed(1) })
+      : t('olderSumBlocks', { n: older.blocks, size: blockIds(older.digits), start });
+  }
+  if (older.stopEmpty && !problem) summary += ` ${t('olderSumStop')}`;
+  $('#older-summary').textContent = summary;
+  $('#older-run').disabled = jobRunning() || (older.rangeOn ? !!olderRange().error : !!c?.history_complete);
+}
+
+function runOlder() {
+  const body = olderBody();
+  if (!body) { toast(olderRange().error, 'error'); return; }
+  closeOlderOptions();
+  startJob('older', body);
+}
+
+function openOlderOptions() {
+  writeOlderControls();
+  $('#older-options').hidden = false;
+  $('#older-toggle').setAttribute('aria-expanded', 'true');
+}
+
+function closeOlderOptions() {
+  $('#older-options').hidden = true;
+  $('#older-toggle').setAttribute('aria-expanded', 'false');
 }
 
 // --- reading marks ---------------------------------------------------------------------------
@@ -1143,7 +1256,14 @@ function wire() {
     }
   });
   $('#job-update').addEventListener('click', () => startJob('update'));
-  $('#job-older').addEventListener('click', () => startJob('older', { blocks: 5 }));
+  $('#job-older').addEventListener('click', runOlder);
+  olderDigitsSelect = enhanceSelect($('#older-digits'));
+  $('#older-toggle').addEventListener('click', () => ($('#older-options').hidden ? openOlderOptions() : closeOlderOptions()));
+  $('#older-options').addEventListener('input', readOlderControls);
+  $('#older-options').addEventListener('change', readOlderControls);
+  $('#older-run').addEventListener('click', runOlder);
+  document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#older-group')) closeOlderOptions(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOlderOptions(); });
   $('#search-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const query = $('#search-query').value.trim();

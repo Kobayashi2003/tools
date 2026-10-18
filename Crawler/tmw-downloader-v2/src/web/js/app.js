@@ -152,7 +152,7 @@ function bookmarkFocused() {
 
 function bindControls() {
   $("#sync").onclick = sync;
-  $("#channel-pick").onchange = (ev) => switchChannel(ev.target.value);
+  chrome.bindChannels(switchChannel);
 
   let typing = null;
   $("#search").addEventListener("input", (ev) => {

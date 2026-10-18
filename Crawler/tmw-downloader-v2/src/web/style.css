@@ -7,8 +7,8 @@
    titles themselves, which are the books.
 
    Written narrow first. The base rules are the phone layout, and each
-   breakpoint adds what a wider window can afford -- single-line file rows at
-   560, the month rail as a column at 900. Anything the virtual list measures is
+   breakpoint adds what a wider window can afford -- the recommender on a card
+   at 420, single-line file rows at 560, the month rail as a column at 900. Anything the virtual list measures is
    a custom property on :root, so a breakpoint that changes a height changes the
    arithmetic with it.
 
@@ -61,6 +61,8 @@
 
 * { box-sizing: border-box; }
 
+html { scrollbar-color: var(--ai-edge) var(--ai-sunk); }
+
 /* `hidden` is a UA rule and any author `display` beats it, which silently left
    the help dialog and the alert bar on screen. Settle it once, here. */
 [hidden] { display: none !important; }
@@ -103,6 +105,7 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
 .quiet-btn {
   background: none; border: none; padding: 5px 8px;
   color: var(--asagi); font-size: 12.5px; cursor: pointer; border-radius: 5px;
+  text-decoration: none;   /* some are links, and should not look different */
 }
 .quiet-btn:hover:not(:disabled) { background: var(--ai-raised); }
 .quiet-btn:disabled { opacity: .35; cursor: default; }
@@ -121,6 +124,29 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
 .act:hover:not(:disabled) { background: var(--ai-hover); border-color: var(--ai-edge); }
 .act:disabled { opacity: .35; cursor: default; }
 .act.icon { padding: 6px 11px; font-family: var(--mono); }
+/* The one thing a sheet is for. Teal, because it is an action. */
+.act.primary { background: var(--asagi); border-color: var(--asagi); color: var(--ai); font-weight: 600; }
+.act.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--asagi) 82%, #fff);
+  border-color: color-mix(in srgb, var(--asagi) 82%, #fff);
+}
+
+/* A count on a button. It lights up only when there is something to come back
+   to: vermilion for bookmarks, teal for downloads still running. */
+.tally {
+  display: inline-block;
+  min-width: 20px;
+  margin-left: 3px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--ai-sunk);
+  color: var(--nezumi);
+  font: 500 11px/17px var(--mono);
+  text-align: center;
+  vertical-align: 1px;
+}
+#marks-open[data-any="1"] .tally { background: var(--shu); color: #fff; }
+#grabs-open[data-any="1"] .tally { background: var(--asagi); color: var(--ai); }
 
 .chip {
   background: none;
@@ -152,8 +178,36 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   color: var(--nezumi); cursor: pointer; user-select: none;
   font-size: 12.5px; white-space: nowrap; flex: 0 0 auto;
 }
-.switch input { accent-color: var(--asagi); margin: 0; }
-.switch:hover { color: var(--kinari); }
+/* Drawn rather than native, for the same reason as the channel list: the
+   system checkbox is a white square in a page with none. */
+.switch input {
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 15px;
+  margin: 0;
+  border: 1px solid var(--ai-edge);
+  border-radius: 999px;
+  background: var(--ai-sunk);
+  cursor: inherit;
+  transition: background .12s, border-color .12s;
+}
+.switch input::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--nezumi);
+  transition: transform .12s, background .12s;
+}
+.switch input:checked { background: var(--asagi); border-color: var(--asagi); }
+.switch input:checked::before { transform: translateX(11px); background: var(--ai); }
+.switch input:focus-visible { outline-offset: 2px; border-radius: 999px; }
+.switch:hover, .switch:has(input:checked) { color: var(--kinari); }
 .switch:has(input:disabled) { opacity: .4; cursor: default; }
 
 /* ---------- 4. the bar ---------- */
@@ -219,27 +273,87 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
 
 /* The channel switcher sits where the channel name was: the same thing, now
    answerable. Styled as text rather than a form control so the bar still reads
-   as a title rather than a settings panel. */
-.channel { display: flex; align-items: baseline; gap: 2px; min-width: 0; }
+   as a title rather than a settings panel. Its list is drawn by the page, not
+   the browser: a native <select> opens in the system's colours and font, the
+   one part of the page that is not indigo and paper. */
+.channel { position: relative; display: flex; align-items: baseline; gap: 2px; min-width: 0; }
 .hash { color: var(--nezumi-dim); }
 #channel-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   max-width: 46vw;
   background: none;
   border: none;
+  border-radius: 5px;
   color: var(--kinari);
-  font: 600 15px/1 var(--ui);
+  font: 600 15px/1.2 var(--ui);
   letter-spacing: -0.01em;
-  padding: 2px 18px 2px 2px;
+  padding: 2px 6px 2px 2px;
   cursor: pointer;
-  appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--nezumi-dim) 50%),
-                    linear-gradient(135deg, var(--nezumi-dim) 50%, transparent 50%);
-  background-position: right 7px center, right 3px center;
-  background-size: 4px 4px, 4px 4px;
-  background-repeat: no-repeat;
 }
-#channel-pick:hover { color: var(--asagi); }
-#channel-pick option { background: var(--ai-raised); color: var(--kinari); font-weight: 400; }
+#channel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#channel-pick::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border: solid var(--nezumi-dim);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform .12s, border-color .12s;
+}
+#channel-pick:hover,
+#channel-pick[aria-expanded="true"] { color: var(--asagi); }
+#channel-pick:hover::after,
+#channel-pick[aria-expanded="true"]::after { border-color: var(--asagi); }
+#channel-pick[aria-expanded="true"]::after { transform: translateY(1px) rotate(-135deg); }
+
+.pick-list {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 35;
+  min-width: 240px;
+  max-width: calc(100vw - 2 * var(--pad));
+  max-height: min(62dvh, 440px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  background: var(--ai-raised);
+  border: 1px solid var(--ai-line);
+  border-radius: 10px;
+  box-shadow: 0 24px 60px -24px #000;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ai-line) transparent;
+}
+.pick-list:focus-visible { outline: none; }
+.pick-opt {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--nezumi);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pick-opt.read { color: var(--kinari); }
+.pick-opt.on { background: var(--ai-hover); color: var(--kinari); }
+.pick-opt[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--asagi); font-weight: 600; }
+.pick-opt[aria-selected="true"] .pick-name { color: var(--asagi); }
+.pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Already read down, so it opens full rather than empty. */
+.pick-tag {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: .06em;
+  color: var(--nezumi-dim);
+}
 
 /* Narrow: the counts drop to their own line rather than squeezing the actions
    off the edge. Wide: they sit between the two, right-aligned. */
@@ -253,8 +367,13 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   line-height: 1.4;
 }
 .counts b { color: var(--kinari); font-weight: 500; }
+.counts .cover-mark { cursor: help; }
 
-.acts { display: flex; gap: 6px; margin-left: auto; flex: 0 0 auto; }
+/* Narrow: a row of their own that wraps, so the last button is never pushed
+   past the edge of a phone. Wide: they sit at the end of the title row. */
+.acts { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; }
+.acts .act { flex: 1 0 auto; }
+.acts .act.icon { flex-grow: 0; }
 
 .find { position: relative; display: block; }
 .find input {
@@ -266,6 +385,15 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   color: var(--kinari);
 }
 .find input::placeholder { color: var(--nezumi-dim); }
+.find input::-webkit-search-cancel-button {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  background: var(--nezumi);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 3.5l7 7m0-7l-7 7' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.find input::-webkit-search-cancel-button:hover { background: var(--asagi); }
 .find input:focus { outline: none; border-color: var(--asagi); }
 .find .slash {
   position: absolute;
@@ -288,7 +416,10 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
-  padding-bottom: 1px;
+  padding: 0 20px 1px 0;
+  /* The strip runs on past the edge; the fade says so. The padding keeps the
+     last control clear of it once you have scrolled to the end. */
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
 }
 .filters::-webkit-scrollbar { display: none; }
 .chips { display: flex; gap: 5px; flex-wrap: nowrap; }
@@ -317,6 +448,8 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   border-bottom: 1px solid var(--ai-line);
   font-family: var(--mono);
   font-size: 11px;
+  padding-right: 20px;
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
 }
 .rail::-webkit-scrollbar { display: none; }
 /* Narrow, an empty strip is just wasted height. Wide, it must keep its column
@@ -481,7 +614,20 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   overflow: hidden;
   white-space: nowrap;
 }
-.line .sep { opacity: .45; }
+.line .sep { opacity: .45; flex: 0 0 auto; }
+/* The line is one row high by contract, so on a narrow card its parts give way
+   in order rather than the job id being pushed off the end: the recommender and
+   likes shrink first, the date only once they are gone, the job id last. */
+.line > span:not(.sep) {
+  flex: 0 4 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.line > span:first-child { flex-shrink: 1; }
+/* Under 420 there is not room for the recommender at all, and squeezed to
+   nothing it left its separators behind as a bare "/ /". */
+.line > span:not(:first-child) { display: none; }
 
 .body {
   margin: 8px 0 0;
@@ -628,7 +774,10 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   padding: 0 5px;
   margin-left: auto;
   cursor: pointer;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 8ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .line .job:hover { color: var(--asagi); border-color: var(--ai-line); }
 
@@ -821,6 +970,9 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   inset: 0;
   display: grid;
   grid-template-rows: 1fr auto;
+  /* Without it the column is as wide as the widest download's row, and the
+     queue sheet ran half its width off a phone. */
+  grid-template-columns: minmax(0, 1fr);
   background: var(--veil);
   z-index: 70;
 }
@@ -958,6 +1110,17 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   max-height: 100dvh;
   padding: 56px 12px 72px;
 }
+.light-body > *, .light-body::after { grid-area: 1 / 1; }
+.light-body[data-state="loading"]::after,
+.light-body[data-state="gone"]::after {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .06em;
+  color: var(--nezumi-dim);
+}
+.light-body[data-state="loading"]::after { content: "Loading cover…"; }
+.light-body[data-state="gone"]::after { content: "This cover's link has expired"; }
+.light-body[data-state="gone"] img { display: none; }
 .light-body img {
   max-width: 100%;
   max-height: calc(100dvh - 130px);
@@ -984,6 +1147,11 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
 .light-step.next { right: 22%; }
 
 /* ---------- 9. breakpoints ---------- */
+
+/* Room for who recommended it beside the date. */
+@media (min-width: 420px) {
+  .line > span:not(:first-child) { display: inline; }
+}
 
 /* Room for a file row on one line. */
 @media (min-width: 560px) {
@@ -1034,9 +1202,18 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
 
   .bar-inner.tools { flex-direction: row; align-items: center; gap: 14px; padding-bottom: 12px; }
   .bar-inner.tools > * { width: auto; }
+  /* The filters dissolve into the bar's own row, so the search, the source and
+     the switches share one line and the types take the whole of the next. Left
+     as one block, it wrapped as one block, and the search sat alone on a row
+     with nothing beside it. */
+  .bar-inner.tools { row-gap: 10px; }
+  .filters { display: contents; }
   .find { flex: 0 1 360px; min-width: 220px; }
-  .filters { flex: 1 1 auto; flex-wrap: wrap; overflow: visible; }
-  .chips { flex-wrap: wrap; }
+  .seg { order: 1; }
+  #reset { order: 2; }
+  .filters > .switch { order: 3; }
+  .filters > .switch:first-of-type { margin-left: auto; }
+  .chips { order: 4; flex: 1 1 100%; flex-wrap: wrap; }
 
   .counts {
     order: 0;
@@ -1046,7 +1223,8 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
     white-space: nowrap;
     text-align: right;
   }
-  .acts { margin-left: 0; }
+  .acts { flex: 0 0 auto; flex-wrap: nowrap; }
+  .acts .act { flex: none; }
 
   .stage {
     grid-template-columns: var(--rail-w) minmax(0, 1fr);
@@ -1074,7 +1252,9 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
     scrollbar-color: var(--ai-line) transparent;
     border-bottom: none;
     padding-bottom: 0;
+    padding-right: 0;
     margin-bottom: 0;
+    mask-image: none;
   }
   .rail-year {
     padding: 10px 0 4px;

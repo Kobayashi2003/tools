@@ -91,11 +91,12 @@ def env(tmp_path):
         yield client, app, http
 
 
-def run_job(client, **body):
-    """Start a crawl job and wait for it; returns the finished job."""
+def run_job(client, wait=5.0, **body):
+    """Start a crawl job and wait up to `wait` seconds for it; returns the finished job."""
     response = client.post("/api/jobs", json=body)
     assert response.status_code == 200, response.text
-    for _ in range(200):
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
         job = client.get("/api/status").json()["job"]
         if not job["running"]:
             return job

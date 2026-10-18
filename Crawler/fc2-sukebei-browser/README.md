@@ -25,9 +25,13 @@ sukebei returns at most 1000 results per query, so the library grows along two e
 
 - **Update** reads the newest uploads until it meets a torrent it already holds; it runs every
   30 minutes and on **⟳ Update**. More than 1000 uploads between two updates is reported as a gap.
-- **Older** walks FC2 ids downward in blocks of 1000 (`4802*`), each read completely; scrolling
-  to the end of the library, **↓ Older**, or **Re-check history** advance it. Progress is saved
-  after every block.
+- **Older** walks FC2 ids downward in blocks (`4802*` = 1000 ids), each read completely;
+  scrolling to the end of the library, **↓ Older**, or **Re-check history** advance it. Progress
+  is saved after every block. The ▾ next to **↓ Older** sets how a run goes: a number of blocks or
+  all that are left, the block size (10,000, 1,000 or 100 ids; changing it keeps the position),
+  stopping at the first block with no results, or an id range read without moving the walk.
+  The same options exist on the command line (`--all`, `--block-digits`, `--stop-on-empty`,
+  `--range FROM TO`).
 - **Search** reads every page of a custom query into the same library.
 
 Metadata is fetched in the background, FC2 first and paipancon after (about 10 titles a minute,

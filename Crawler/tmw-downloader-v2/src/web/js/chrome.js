@@ -12,32 +12,137 @@ import { filtering, savePrefs, state } from "./store.js";
  * perform itself. */
 export const actions = { showEverything: () => {} };
 
-/* ---------- the bar ---------- */
+/* ---------- the channel picker ---------- */
+
+let channelsDrawn = "";
+let picked = () => {};
+
+const pickOptions = () => $$(".pick-opt", $("#channel-list"));
+const pickerOpen = () => !$("#channel-list").hidden;
 
 function paintChannels() {
-  const pick = $("#channel-pick");
-  const list = state.meta.channels || [];
+  const box = $("#channel-list");
   const open = (state.meta.channel && state.meta.channel.channel_id) || state.channel;
-  const same = list.length === pick.options.length &&
-    list.every((entry, i) => pick.options[i].value === entry.id);
-  if (!same) {
-    pick.textContent = "";
-    for (const entry of list) {
-      // A dot marks the channels already read down; the rest are offered but
-      // start empty, which switching to will say for itself.
-      pick.appendChild(el("option", {
-        value: entry.id, text: entry.name + (entry.cached ? " ·" : ""),
-      }));
-    }
-    if (!list.length && open) {
-      pick.appendChild(el("option", { value: open, text: state.meta.channel.name || open }));
-    }
+  let list = state.meta.channels || [];
+  if (!list.length && open) list = [{ id: open, name: state.meta.channel.name || open, cached: true }];
+
+  // The head repaints on every crawl tick; rebuilding an open list under the
+  // pointer would throw away where the reader had got to in it.
+  const drawn = JSON.stringify(list.map((entry) => [entry.id, entry.name, !!entry.cached]));
+  if (drawn !== channelsDrawn) {
+    channelsDrawn = drawn;
+    box.textContent = "";
+    list.forEach((entry, i) => {
+      // Channels already read down say so; the rest are offered but start
+      // empty, which switching to will say for itself.
+      box.appendChild(el("div", {
+        class: "pick-opt" + (entry.cached ? " read" : ""),
+        id: "channel-" + entry.id,
+        role: "option",
+        "data-id": entry.id,
+        onclick: () => choose(entry.id),
+        onpointermove: () => setActive(i, false),
+      }, [
+        el("span", { class: "pick-name", text: entry.name }),
+        entry.cached ? el("span", { class: "pick-tag", text: "read" }) : null,
+      ]));
+    });
   }
-  pick.value = open || "";
+  for (const option of pickOptions()) {
+    option.setAttribute("aria-selected", option.dataset.id === open ? "true" : "false");
+  }
+  const current = list.find((entry) => entry.id === open);
+  $("#channel-name").textContent = current ? current.name : "";
   // Adopt what the server says it served: on a cold page the channel is empty
   // and the default is whatever the command line named.
   if (open) state.channel = open;
 }
+
+function setActive(index, scroll = true) {
+  const options = pickOptions();
+  if (!options.length) return;
+  const at = Math.max(0, Math.min(options.length - 1, index));
+  options.forEach((option, i) => option.classList.toggle("on", i === at));
+  $("#channel-list").setAttribute("aria-activedescendant", options[at].id);
+  if (scroll) options[at].scrollIntoView({ block: "nearest" });
+}
+
+const activeIndex = () => pickOptions().findIndex((option) => option.classList.contains("on"));
+
+function showPicker(on, refocus = false) {
+  if (on === pickerOpen()) return;
+  const box = $("#channel-list");
+  show(box, on);
+  $("#channel-pick").setAttribute("aria-expanded", on ? "true" : "false");
+  if (on) {
+    const options = pickOptions();
+    setActive(options.findIndex((option) => option.getAttribute("aria-selected") === "true"));
+    box.focus({ preventScroll: true });
+  } else if (refocus) {
+    $("#channel-pick").focus();
+  }
+}
+
+function choose(id) {
+  showPicker(false, true);
+  picked(id);
+}
+
+/* Type a letter to jump to the next channel that starts with it, the one
+ * native-select habit worth keeping with twenty-odd names in the list. */
+function jumpTo(letter) {
+  const options = pickOptions();
+  const from = activeIndex();
+  for (let step = 1; step <= options.length; step++) {
+    const i = (from + step) % options.length;
+    if (options[i].textContent.toLowerCase().startsWith(letter)) { setActive(i); return; }
+  }
+}
+
+export function bindChannels(onPick) {
+  picked = onPick;
+  const button = $("#channel-pick");
+  const box = $("#channel-list");
+
+  button.onclick = () => showPicker(!pickerOpen());
+  // Kept from the page's own keys: Enter there means "peek", and j / k would
+  // move the feed under an open list.
+  button.addEventListener("keydown", (ev) => {
+    if (["ArrowDown", "ArrowUp"].includes(ev.key)) {
+      ev.preventDefault();
+      showPicker(true);
+    }
+    if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(ev.key)) ev.stopPropagation();
+  });
+
+  box.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    const last = pickOptions().length - 1;
+    const moves = {
+      ArrowDown: () => setActive(activeIndex() + 1),
+      ArrowUp: () => setActive(activeIndex() - 1),
+      Home: () => setActive(0),
+      End: () => setActive(last),
+      PageDown: () => setActive(activeIndex() + 8),
+      PageUp: () => setActive(activeIndex() - 8),
+      Enter: () => { const at = pickOptions()[activeIndex()]; if (at) choose(at.dataset.id); },
+      Escape: () => showPicker(false, true),
+    };
+    moves[" "] = moves.Enter;
+    if (moves[ev.key]) { ev.preventDefault(); moves[ev.key](); return; }
+    if (ev.key === "Tab") { showPicker(false); return; }
+    if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) jumpTo(ev.key.toLowerCase());
+  });
+
+  document.addEventListener("pointerdown", (ev) => {
+    if (pickerOpen() && !ev.target.closest(".channel")) showPicker(false);
+  });
+  box.addEventListener("focusout", (ev) => {
+    if (pickerOpen() && !(ev.relatedTarget && ev.relatedTarget.closest(".channel"))) showPicker(false);
+  });
+}
+
+/* ---------- the bar ---------- */
 
 function counts() {
   const total = state.meta.display.in_scope ?? state.index.length;
@@ -48,8 +153,12 @@ function counts() {
   if (state.saved.size) bits.push(`${state.saved.size} bookmarked`);
   const cover = state.meta.coverage || {};
   if (cover.messages) {
-    bits.push(`${fmtDay(cover.oldest_at).slice(-4)}–${fmtDay(cover.newest_at).slice(-4)} ` +
-              `${cover.messages.toLocaleString()} msgs ${cover.complete ? "●" : "○"}`);
+    const from = fmtDay(cover.oldest_at).slice(-4);
+    const to = fmtDay(cover.newest_at).slice(-4);
+    const mark = cover.complete
+      ? `<span class="cover-mark" title="Read back to the channel's first message">●</span>`
+      : `<span class="cover-mark" title="Older messages not read yet — Fetch reads more">○</span>`;
+    bits.push(`${cover.messages.toLocaleString()} msgs ${from === to ? from : from + "–" + to} ${mark}`);
   }
   if (state.meta.offline) bits.push("offline");
   return bits.join("  ·  ");

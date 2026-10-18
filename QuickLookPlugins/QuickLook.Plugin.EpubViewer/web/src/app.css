@@ -1,0 +1,18 @@
+/* The reader shell sizes itself to its parent; give it the whole preview window. */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.host-error {
+  margin: 0;
+  padding: 24px;
+  font:
+    14px system-ui,
+    sans-serif;
+  color: #b3261e;
+}

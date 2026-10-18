@@ -155,3 +155,26 @@ def test_boundaries_and_busy_tasks(library):
     client.post("/api/jobs", json={"kind": "full"})
     assert client.post("/api/library/remove", json={"keys": [KEY]}).status_code == 409
     assert client.put("/api/storage", json={"directory": str(root / "new")}).status_code == 409
+
+
+def test_chinese_uploads_are_hidden(library):
+    client, db, _, root = library
+    db.save_work(
+        KEY,
+        {
+            "title": "Test",
+            "volumeJp": [{"volumeId": "作品 2.epub"}],
+            "volumeZh": ["作品 02（台）.epub", "作品 短篇集.epub"],
+        },
+        1,
+    )
+    db.execute("UPDATE files SET volume_id='作品 2.epub'")
+    for name in ("作品 02（台）.epub", "作品 短篇集.epub"):
+        path = root / "downloads" / "book" / name
+        path.write_bytes(b"zh")
+        db.save_file(KEY, name, "zh-original", "hash", path, 2, "digest")
+    work = client.get("/api/works").json()["items"][0]
+    assert (work["volume_count"], work["file_count"]) == (1, 1)  # complete, Chinese hidden
+    detail = client.get(f"/api/works/{KEY}").json()
+    assert [v["volume_id"] for v in detail["volumes"]] == ["作品 2.epub"]
+    assert [f["mode"] for f in detail["files"]] == ["jp-zh"]

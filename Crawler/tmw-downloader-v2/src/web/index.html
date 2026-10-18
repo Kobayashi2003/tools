@@ -14,21 +14,24 @@
   <div class="bar-inner ident-row">
     <div class="ident">
       <span class="logo">TMW</span>
-      <label class="channel">
+      <div class="channel">
         <span class="hash">#</span>
-        <select id="channel-pick" aria-label="Channel"></select>
-      </label>
+        <button id="channel-pick" type="button" aria-label="Channel" aria-haspopup="listbox"
+                aria-expanded="false" aria-controls="channel-list"><span id="channel-name"></span></button>
+        <div id="channel-list" class="pick-list" role="listbox" aria-label="Channel"
+             tabindex="-1" hidden></div>
+      </div>
       <a id="channel-link" class="quiet" href="#" target="_blank" rel="noreferrer">Discord</a>
     </div>
 
     <div class="counts" id="counts"></div>
 
     <div class="acts">
-      <button id="marks-open" class="act ribbon" title="Bookmarks (b to add)">
-        Bookmarks <span id="marks-count">0</span>
+      <button id="marks-open" class="act" title="Bookmarks (b to add)">
+        Bookmarks <span id="marks-count" class="tally">0</span>
       </button>
       <button id="grabs-open" class="act" title="Downloads (d to queue the one under the cursor)">
-        Downloads <span id="grabs-count">0</span>
+        Downloads <span id="grabs-count" class="tally">0</span>
       </button>
       <button id="sync" class="act" title="Ask Discord for anything newer">Refresh</button>
       <button id="fetch-open" class="act" title="Read more of the channel">Fetch</button>
@@ -122,7 +125,7 @@
       <p class="fetch-line" id="fetch-progress"></p>
 
       <div class="fetch-go">
-        <button id="fetch-start" class="act">Start reading</button>
+        <button id="fetch-start" class="act primary">Start reading</button>
         <button id="fetch-stop" class="act" hidden>Stop</button>
       </div>
     </div>

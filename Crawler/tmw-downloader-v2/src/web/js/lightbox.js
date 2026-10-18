@@ -28,7 +28,15 @@ function paint() {
   box.textContent = "";
   const cover = lit.covers[lit.at];
   if (!cover) return;
-  box.appendChild(el("img", { src: cover.url, alt: cover.name || "" }));
+  // A full-size cover can take a while from Discord's CDN, and an expired link
+  // never arrives; either way the viewer says so rather than staying blank.
+  box.dataset.state = "loading";
+  box.appendChild(el("img", {
+    src: cover.url,
+    alt: cover.name || "",
+    onload: () => { box.dataset.state = ""; },
+    onerror: () => { box.dataset.state = "gone"; },
+  }));
   const many = lit.covers.length > 1;
   $("#light-count").textContent = many ? `${lit.at + 1} / ${lit.covers.length}` : "";
   show($("#light-prev"), many);

@@ -1,13 +1,14 @@
+import copy
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.client import Deferred, NetworkError, Rejected, ServerError
+from app.client import DamagedUpload, Deferred, NetworkError, Rejected, ServerError
 from app.database import Database
 from app.schema import JobRequest, Settings
-from app.worker import window_opens
-from tests.conftest import KEY, epub
+from app.worker import CatalogTail, window_opens
+from tests.conftest import KEY
 
 
 def run(db, worker, **kwargs):
@@ -29,6 +30,42 @@ def test_full_then_incremental_detects_old_work_new_and_changed_volumes(system):
     assert len(db.rows("SELECT * FROM files")) == 2
     assert len(upstream.checked) == 3
     assert db.setting("last_incremental_at")
+
+
+def test_catalog_tail_finds_works_moved_to_the_front():
+    old = [f"w{i}" for i in range(6000)]
+    # The catalog on 2026-10-16: four works got new volumes; the rest kept their order.
+    listing = ["w59", "w1898", "w4812", "w3905", *[k for k in old if k not in ("w59",)][:20]]
+    tail = CatalogTail(old, [])
+    assert tail.feed(listing[:12]) == (["w59", "w1898", "w4812", "w3905"], True)
+    # A brand-new work is checked; a run broken by a moved work is checked too, to be safe.
+    tail = CatalogTail(old, [])
+    assert tail.feed(["new", "w0", "w1", "w900", "w2", "w3", "w4", "w5", "w6"]) == (
+        ["new", "w0", "w1", "w900"],
+        True,
+    )
+
+
+def test_update_sweep_reads_only_until_the_previous_order(system):
+    db, worker, upstream = system
+    keys = [f"wenku/{i:024x}" for i in range(1, 31)]
+    for key in keys:
+        upstream.works[key] = copy.deepcopy(upstream.works[KEY])
+    upstream.pages = {1: keys[:10], 2: keys[10:20], 3: keys[20:]}
+    assert run(db, worker, kind="full")["status"] == "completed"
+    upstream.checked.clear()
+    upstream.listed.clear()
+    order = [keys[25], keys[12], *[k for k in keys if k not in (keys[25], keys[12])]]
+    upstream.pages = {1: order[:10], 2: order[10:20], 3: order[20:]}
+    upstream.works[keys[25]]["volumeJp"].append({"volumeId": "new.epub", "sakura": 1})
+    assert run(db, worker, kind="incremental")["status"] == "completed"
+    assert upstream.listed == [(1, 1)]
+    assert upstream.checked == [keys[25], keys[12]]
+    assert (keys[25], "new.epub", False) in upstream.downloads
+    assert db.setting("catalog_order") == order
+    upstream.checked.clear()
+    assert run(db, worker, kind="incremental")["status"] == "completed"
+    assert upstream.checked == []
 
 
 def test_listing_resume_does_not_skip_failed_page(system):
@@ -75,39 +112,38 @@ def test_cancel_preserves_sources_and_resumes_pending_work(system):
     assert len(upstream.downloads) == 2
 
 
-def test_bulk_conversion_restores_css_verifies_and_keeps_source(system):
+def test_bulk_conversion_keeps_source_and_downloads_nothing(system):
     db, worker, upstream = system
     run(db, worker, kind="full")
     assert run(db, worker, kind="convert")["status"] == "completed"
     file = db.row("SELECT * FROM files")
-    assert file["verification"] == "verified"
     assert Path(file["raw_path"]).exists()
-    assert Path(file["ja_path"]).exists()
+    assert Path(file["ja_path"]).parent.parent.name == "Japanese"
     report = json.loads(file["report"])
-    assert report["kept_ja"] == 1 and report["dropped_zh"] == 1 and report["restored_css"] == 1
+    assert report["kept_ja"] == 1 and report["dropped_zh"] == 1 and report["vertical"]
     run(db, worker, kind="convert")
-    assert len(upstream.downloads) == 2
+    assert len(upstream.downloads) == 1
+    configure(db, vertical=False)
+    run(db, worker, kind="convert")  # the layout changed, so it is built again
+    assert not json.loads(db.row("SELECT report FROM files")["report"])["vertical"]
 
 
-def test_missing_reference_is_not_reported_as_verified(system):
+def test_download_formats_and_chinese_conversion(system):
     db, worker, upstream = system
-    run(db, worker, kind="full")
-    upstream.fail_reference = True
-    assert run(db, worker, kind="convert")["status"] == "completed_with_errors"
-    file = db.row("SELECT * FROM files")
-    assert file["verification"] == "unverified"
-    assert "UNVERIFIED" in file["ja_path"]
-    assert Path(file["raw_path"]).exists()
-
-
-def test_mismatch_preserves_raw_and_marks_output(system):
-    db, worker, upstream = system
-    run(db, worker, kind="full")
-    epub(upstream.original, False, paragraph="違う日本語")
-    assert run(db, worker, kind="convert")["status"] == "completed_with_errors"
-    file = db.row("SELECT * FROM files")
-    assert file["verification"] == "unverified"
-    assert "differ" in json.loads(file["report"])["verification_detail"]
+    configure(db, download_japanese=True, download_chinese=True)
+    assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed"
+    modes = sorted(r["mode"] for r in db.rows("SELECT mode FROM files"))
+    assert modes == ["jp-original", "jp-zh", "zh"]
+    upstream.works[KEY]["volumeJp"][0]["sakura"] += 1
+    run(db, worker, kind="manual", keys=[KEY])
+    # Translation progress changes Novelia's builds, not the upload.
+    assert [d[2] for d in upstream.downloads[3:]] == [False, "zh"]
+    downloads = len(upstream.downloads)
+    job = run(db, worker, kind="convert", convert_japanese=False, convert_chinese=True)
+    assert job["status"] == "completed" and len(upstream.downloads) == downloads
+    file = db.row("SELECT * FROM files WHERE mode='jp-zh'")
+    assert file["ja_path"] is None and Path(file["raw_path"]).exists()
+    assert Path(file["zh_path"]).parent.parent.name == "Chinese"
 
 
 def test_category_guard_and_metadata_only(system):
@@ -173,10 +209,14 @@ def test_web_manual_and_chinese_uploads(system):
     }
     upstream.works[KEY]["volumeZh"] = ["chinese.epub"]
     run(db, worker, kind="manual", keys=[KEY, web])
-    assert len(db.rows("SELECT * FROM files")) == 3
-    assert db.row("SELECT * FROM files WHERE mode='zh-original'")
+    assert len(db.rows("SELECT * FROM files")) == 2  # Chinese-only uploads are off by default
+    configure(db, download_chinese_uploads=True)
+    run(db, worker, kind="manual", keys=[KEY])
+    chinese = db.row("SELECT * FROM files WHERE mode='zh-original'")
+    assert Path(chinese["raw_path"]).parent.parent.name == "Chinese"
     run(db, worker, kind="convert")
-    assert len([d for d in upstream.downloads if d[2]]) == 3
+    assert [d[1] for d in upstream.downloads if d[2]] == ["chinese.epub"]
+    assert len(db.rows("SELECT * FROM files WHERE ja_path IS NOT NULL")) == 2
 
 
 def test_convert_by_work_keys(system):
@@ -185,7 +225,7 @@ def test_convert_by_work_keys(system):
     assert job["status"] == "failed" and "no bilingual files" in job["error"]
     run(db, worker, kind="full")
     assert run(db, worker, kind="convert", keys=[KEY])["status"] == "completed"
-    assert db.row("SELECT verification FROM files")["verification"] == "verified"
+    assert db.row("SELECT ja_path FROM files")["ja_path"]
 
 
 def configure(db, **values):
@@ -383,6 +423,25 @@ def test_original_is_kept_when_bilingual_build_fails(system):
     run(db, worker, kind="incremental")
     assert [r["mode"] for r in db.rows("SELECT mode FROM files")] == ["jp-zh"]
     assert not Path(file["raw_path"]).exists()
+
+
+def test_damaged_uploads_are_skipped_until_they_change(system):
+    db, worker, upstream = system
+    upstream.raise_on["volume1.epub"] = DamagedUpload(
+        "Novelia's copy of this volume is cut off at 2.0 MB (damaged upload)."
+    )
+    assert run(db, worker, kind="full")["status"] == "completed_with_errors"
+    sweep = run(db, worker, kind="incremental")
+    assert sweep["status"] == "completed"  # broken upstream files no longer fail every sweep
+    skipped = (
+        "SELECT COUNT(*) AS n FROM logs WHERE job_id=? AND message LIKE 'Skipped volume1.epub:%'"
+    )
+    assert db.row(skipped, (sweep["id"],))["n"] == 1
+    upstream.raise_on.clear()
+    upstream.works[KEY]["volumeJp"][0]["total"] = 11  # uploaded again
+    assert run(db, worker, kind="incremental")["status"] == "completed"
+    assert upstream.downloads == [(KEY, "volume1.epub", False)]
+    assert not db.rows("SELECT * FROM damaged")
 
 
 def test_original_fallback_can_be_turned_off(system):

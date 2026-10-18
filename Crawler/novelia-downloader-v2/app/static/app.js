@@ -194,10 +194,7 @@ function collectionName(work) {
 function libraryCard(w) {
   const picked = state.selected.has(w.key);
   const raw = w.file_count - w.ja_count;
-  const badges = [
-    w.unverified_count ? `<span class="pill warn" title="Unverified Japanese editions">⚠ ${w.unverified_count}</span>` : "",
-    w.ja_count ? `<span class="pill ok" title="Japanese editions">JA ${w.ja_count}</span>` : "",
-  ].join("");
+  const badges = w.ja_count ? `<span class="pill ok" title="Japanese editions">JA ${w.ja_count}</span>` : "";
   return `<article class="book${picked ? " picked" : ""}">
     <label class="pick"><input type="checkbox" data-key="${esc(w.key)}" aria-label="Select ${esc(w.title)}" ${picked ? "checked" : ""}></label>
     <button class="book-open" data-work="${esc(w.key)}">
@@ -219,8 +216,7 @@ function libraryRow(w) {
       <div><button data-work="${esc(w.key)}">${esc(w.title)}</button><small>${esc(w.authors.join(", ") || w.title_zh || w.key)}</small></div></div></td>
     <td>${esc(collectionName(w))}</td>
     <td class="num">${w.file_count} / ${w.volume_count}</td>
-    <td>${w.ja_count ? `<span class="pill ok">${w.ja_count} Japanese</span>` : '<span class="pill">None</span>'}
-      ${w.unverified_count ? `<span class="pill warn">${w.unverified_count} unverified</span>` : ""}</td>
+    <td>${w.ja_count ? `<span class="pill ok">${w.ja_count} Japanese</span>` : '<span class="pill">None</span>'}</td>
     <td class="num">${esc(day(w.checked_at))}</td>
   </tr>`;
 }
@@ -271,6 +267,14 @@ async function loadLibrary(force = false) {
   applyWidths(list);
   if (force) UI.reveal(list);
   selectionBar();
+}
+
+// The pager sits below the grid, so a new page starts from the top of the grid.
+async function turnPage(load, selector) {
+  await load();
+  const list = $(selector);
+  list.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  list.focus({ preventScroll: true });
 }
 
 function selectionBar() {
@@ -359,7 +363,10 @@ function taskNote(j) {
 function taskActions(j) {
   const status = jobStatus(j);
   const remove = `<button class="ghost" data-delete="${j.id}" title="Remove from the list" aria-label="Remove task ${j.id}">✕</button>`;
-  const cancel = `<button class="danger" data-cancel="${j.id}" ${j.cancel_requested ? "disabled" : ""}>${j.cancel_requested ? "Stopping…" : "Cancel"}</button>`;
+  const armed = state.cancelArmed === j.id;
+  const cancel = j.cancel_requested
+    ? '<button class="danger" disabled>Stopping…</button>'
+    : `<button class="danger" data-cancel="${j.id}" data-confirmed="${armed}" title="${armed ? "Click again to stop the task" : "Stop the task; Resume continues where it stopped"}">${armed ? "Confirm cancel" : "Cancel"}</button>`;
   // A running task picks retried items up next, so failures can be retried at any time.
   const retry = j.failed
     ? `<button data-retry="${j.id}" title="Put failed items back in the queue">Retry ${j.failed} failed</button>`
@@ -398,7 +405,7 @@ function taskCard(j) {
 function renderTasks() {
   // Countdowns change without new data, so waiting tasks re-render every refresh.
   const ticking = state.jobs.some((j) => jobStatus(j) === "paused" || waiting(j));
-  const signature = JSON.stringify([state.jobs, state.taskFilter, ticking && Date.now()]);
+  const signature = JSON.stringify([state.jobs, state.taskFilter, state.cancelArmed, ticking && Date.now()]);
   if (state.taskSignature === signature) return;
   state.taskSignature = signature;
   const jobs = state.jobs.filter(TASK_FILTERS[state.taskFilter]);
@@ -614,36 +621,34 @@ function renderFailures(j) {
 
 /* Work detail */
 
-const FILE_LABELS = { "zh-original": "Chinese", "jp-original": "Japanese original" };
+const FILE_LABELS = { "zh-original": "Chinese upload", "jp-original": "Japanese original", zh: "Chinese" };
 const convertible = (f) => ["jp-zh", "zh-jp"].includes(f.mode);
 
 function volumeRow(key, volume, files) {
   const name = volume.volume_id.replace(/\.(epub|txt)$/i, "");
   const t = volume.translated;
   const coverage = t.total ? ENGINES.filter((e) => t[e]).map((e) => `${e} ${t[e]}/${t.total}`).join(", ") : "";
-  const status = !files.length
+  const status = !files.length && volume.damaged
+    ? `<span class="pill warn" title="${esc(volume.damaged)}">Broken on Novelia</span>`
+    : !files.length
     ? '<span class="pill">Not downloaded</span>'
-    : !files.some(f => f.raw_available || f.ja_available)
+    : !files.some(f => f.raw_available || f.ja_available || f.zh_available)
       ? '<span class="pill warn">Files missing</span>'
-    : files.some((f) => f.ja_available && f.verification === "verified")
-      ? '<span class="pill ok">Japanese verified</span>'
-      : files.some((f) => f.ja_available && f.verification === "unverified")
-        ? '<span class="pill warn">Unverified</span>'
-        : files.some((f) => f.ja_available)
-          ? '<span class="pill ok">Japanese</span>'
-          : '<span class="pill">Source only</span>';
+    : files.some((f) => f.ja_available)
+      ? '<span class="pill ok">Japanese</span>'
+      : files.some((f) => f.zh_available || (f.mode === "zh" && f.raw_available))
+        ? '<span class="pill ok">Chinese</span>'
+        : '<span class="pill">Source only</span>';
   const actions = files.length
     ? files.map((f) => [
         f.raw_available ? `<a href="/api/files/${f.id}/raw" download>${FILE_LABELS[f.mode] || "Bilingual"}</a>` : '<span class="error-text">Source missing</span>',
         f.ja_available && convertible(f) ? `<a href="/api/files/${f.id}/ja" download>Japanese</a>` : "",
+        f.zh_available ? `<a href="/api/files/${f.id}/zh" download>Chinese</a>` : "",
         convertible(f) && f.raw_available ? `<button data-convert-file="${f.id}">${f.ja_available ? "Reconvert" : "Convert"}</button>` : "",
         !f.raw_available && volume.index ? `<button data-download-volume="${volume.index}" data-key="${esc(key)}">Download again</button>` : "",
       ].join("")).join("")
-    : volume.index ? `<button data-download-volume="${volume.index}" data-key="${esc(key)}">Download</button>` : "";
-  const reports = files
-    .filter((f) => f.report?.verification_detail)
-    .map((f) => `<p class="report">${esc(f.report.verification_detail)}</p>`)
-    .join("");
+    : volume.index ? `<button data-download-volume="${volume.index}" data-key="${esc(key)}">${volume.damaged ? "Try again" : "Download"}</button>` : "";
+  const reports = files.length || !volume.damaged ? "" : `<p class="report">${esc(volume.damaged)}</p>`;
   const sizes = files.map((f) => `${(f.size / 1048576).toFixed(1)} MB`).join(" + ");
   return `<div class="volume">
     <div>
@@ -672,6 +677,8 @@ async function openWork(key, show = true) {
   ].filter(([, v]) => v);
   const intro = m.introductionJp || m.introduction || "";
   const bilingual = w.files.some(convertible);
+  const saved = new Set(w.files.map((f) => f.volume_id));
+  const broken = w.volumes.filter((v) => v.damaged && !saved.has(v.volume_id)).length;
   $("#work-detail").innerHTML = `
     <div class="work-summary">
       ${cover(w.cover, w.title)}
@@ -689,7 +696,7 @@ async function openWork(key, show = true) {
     </div>
     ${intro ? `<section class="introduction"><div id="intro-wrap" class="intro-wrap"><p class="intro" id="intro">${esc(intro)}</p></div><button class="link intro-toggle" id="intro-toggle" aria-expanded="false" aria-controls="intro-wrap">Read more</button></section>` : ""}
     <section class="volumes">
-      <h3>${plural(w.volumes.length, "volume")}, ${new Set(w.files.map((f) => f.volume_id)).size} saved</h3>
+      <h3>${[plural(w.volumes.length, "volume"), `${saved.size} saved`, broken && `${broken} broken on Novelia`].filter(Boolean).join(", ")}</h3>
       ${volumes.length ? volumes.map((v) => volumeRow(w.key, v, w.files.filter((f) => f.volume_id === v.volume_id))).join("") : '<p class="hint">Novelia lists no uploaded volumes for this work.</p>'}
     </section>`;
   const introElement = $("#intro");
@@ -804,7 +811,9 @@ async function switchView(view) {
     UI.reveal($("#" + view));
   }
   selectionBar();
-  if (view === "library") await loadLibrary(true);
+  // Coming back shows the last page at once and refreshes it quietly; a forced load would
+  // dim and fade the grid again right after the view itself fades in.
+  if (view === "library") await loadLibrary(!state.library.signature);
   if (view === "tasks") await loadTasks();
   if (view === "settings") await loadSettings();
   if (view === "catalog" && !state.catalog.loaded) await loadCatalog();
@@ -826,6 +835,35 @@ function fillCategories() {
   $("#catalog-category").innerHTML = options(lightFirst);
   $("#crawl-category").innerHTML = options(lightFirst);
 }
+
+const CONVERSION_FIELDS = ["convert_japanese", "convert_chinese"];
+let conversion = { request: {}, go: true, after: null };
+async function openConversion(request, description, { go = true, after = null } = {}) {
+  const settings = await api("/api/settings");
+  conversion = { request, go, after };
+  const form = $("#convert-form");
+  for (const name of CONVERSION_FIELDS) form.elements[name].checked = settings[name];
+  $("#convert-description").textContent = description;
+  UI.openDialog($("#convert-dialog"));
+}
+$("#convert-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $('[type="submit"]', form);
+  if (button.getAttribute("aria-busy") === "true") return;
+  const picked = Object.fromEntries(CONVERSION_FIELDS.map(name => [name, form.elements[name].checked]));
+  if (!picked.convert_japanese && !picked.convert_chinese) {
+    toast("Choose at least one edition.", true);
+    return;
+  }
+  UI.pending(button, true, "Starting…");
+  try {
+    await queue({ ...conversion.request, ...picked }, { go: conversion.go });
+    await UI.closeDialog($("#convert-dialog"));
+    conversion.after?.();
+  } catch (error) { toast(error.message, true); }
+  finally { UI.pending(button, false); }
+});
 
 let removal = { keys: [], cleanup: false };
 function openRemoval(keys, cleanup = false, works = state.library.items) {
@@ -890,18 +928,18 @@ const actions = {
     UI.openDialog($("#crawl-dialog"));
   },
   incremental: () => queue({ kind: "incremental" }),
-  "convert-all": () => queue({ kind: "convert" }),
+  "convert-all": () => openConversion({ kind: "convert" }, "Every bilingual volume in the library. Volumes already converted the same way are skipped."),
   "download-selected": async () => {
     const set = state.view === "catalog" ? state.catalogSelected : state.selected;
     await queue({ kind: "manual", keys: [...set] });
     set.clear();
     selectionBar();
   },
-  "convert-selected": async () => {
-    await queue({ kind: "convert", keys: [...state.selected] });
-    state.selected.clear();
-    selectionBar();
-  },
+  "convert-selected": () => openConversion(
+    { kind: "convert", keys: [...state.selected] },
+    `The bilingual volumes of ${plural(state.selected.size, "selected work")}.`,
+    { after: () => { state.selected.clear(); selectionBar(); } },
+  ),
   "clear-selection": async () => {
     if (state.view === "catalog") {
       state.catalogSelected.clear();
@@ -913,10 +951,10 @@ const actions = {
       await loadLibrary(true);
     }
   },
-  "library-prev": () => { state.library.page--; return loadLibrary(true); },
-  "library-next": () => { state.library.page++; return loadLibrary(true); },
-  "catalog-prev": () => { state.catalog.page--; return loadCatalog(); },
-  "catalog-next": () => { state.catalog.page++; return loadCatalog(); },
+  "library-prev": () => turnPage(() => { state.library.page--; return loadLibrary(true); }, "#library-list"),
+  "library-next": () => turnPage(() => { state.library.page++; return loadLibrary(true); }, "#library-list"),
+  "catalog-prev": () => turnPage(() => { state.catalog.page--; return loadCatalog(); }, "#catalog-list"),
+  "catalog-next": () => turnPage(() => { state.catalog.page++; return loadCatalog(); }, "#catalog-list"),
   "clear-tasks": async () => {
     const { removed } = await api("/api/jobs/clear", { method: "POST" });
     toast(`Removed ${plural(removed, "completed task")}.`);
@@ -943,6 +981,20 @@ document.addEventListener("click", async (event) => {
     if (!dialog.querySelector('[aria-busy="true"]')) await UI.closeDialog(dialog);
     return;
   }
+  if (d.cancel && d.confirmed !== "true") {
+    // The list re-renders every few seconds, so one stray click must not stop a long task.
+    const id = Number(d.cancel);
+    state.cancelArmed = id;
+    renderTasks();
+    $(`[data-cancel="${id}"]`)?.focus();
+    setTimeout(() => {
+      if (state.cancelArmed !== id) return;
+      state.cancelArmed = null;
+      renderTasks();
+    }, 5000);
+    return;
+  }
+  if (d.cancel) state.cancelArmed = null;
   const mutating = d.cancel || d.resume || d.retry || d.delete || d.downloadWork || d.downloadVolume || d.convertWork || d.convertFile || ["incremental", "convert-all", "download-selected", "convert-selected", "clear-tasks", "cleanup-library"].includes(d.action);
   if (mutating) UI.pending(button, true);
   try {
@@ -1001,9 +1053,9 @@ document.addEventListener("click", async (event) => {
     } else if (d.downloadVolume) {
       await queue({ kind: "manual", keys: [d.key], volumes: d.downloadVolume }, { go: false });
     } else if (d.convertWork) {
-      await queue({ kind: "convert", keys: [d.convertWork] }, { go: false });
+      await openConversion({ kind: "convert", keys: [d.convertWork] }, "Every bilingual volume of this work.", { go: false });
     } else if (d.convertFile) {
-      await queue({ kind: "convert", file_ids: [Number(d.convertFile)], force: true }, { go: false });
+      await openConversion({ kind: "convert", file_ids: [Number(d.convertFile)], force: true }, "This volume, built again even if already converted.", { go: false });
     } else if (d.move) {
       const i = Number(d.move), j = i + Number(d.dir);
       [state.engines[i], state.engines[j]] = [state.engines[j], state.engines[i]];

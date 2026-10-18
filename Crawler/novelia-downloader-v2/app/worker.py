@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import shutil
 import threading
 from collections.abc import Callable
 from dataclasses import asdict
@@ -12,6 +13,7 @@ from pathlib import Path
 from .client import (
     Cancelled,
     Client,
+    DamagedUpload,
     Deferred,
     NetworkError,
     Rejected,
@@ -21,9 +23,31 @@ from .client import (
     fingerprint,
     validate_epub,
 )
-from .converter import convert_epub, verify_against_jp
-from .database import BILINGUAL_MODES, BILINGUAL_SQL, ORIGINAL_JP, ORIGINAL_ZH, iso, now
-from .schema import LEVELS, PACING_FIELDS, JobRequest, Settings, normalize_key, parse_range
+from .converter import convert_epub
+from .database import (
+    BILINGUAL_MODES,
+    BILINGUAL_SQL,
+    CHINESE,
+    ORIGINAL_JP,
+    ORIGINAL_ZH,
+    iso,
+    now,
+)
+from .schema import (
+    ENGINES,
+    LEVELS,
+    PACING_FIELDS,
+    JobRequest,
+    Settings,
+    normalize_key,
+    parse_range,
+)
+from .storage import EDITION_FOLDERS, mode_folder
+
+DAMAGED_RECHECK = timedelta(days=30)
+STABLE_RUN = 5
+# Below this, a task pauses rather than failing item after item on a full disk.
+MIN_FREE_SPACE = 2 << 30
 
 
 class VolumeFailures(Exception):
@@ -76,16 +100,63 @@ def natural_key(value):
     return [(1, int(p)) if p.isdigit() else (0, p.casefold()) for p in re.split(r"(\d+)", value)]
 
 
-def ordered_volumes(key, data):
-    """(volume, chinese_only) pairs in the order volume ranges count them."""
+def ordered_volumes(key, data, chinese=False):
+    """(volume, chinese_only) pairs in the order volume ranges count them. Chinese-only uploads
+    are included only when `chinese`: Novelia's pages no longer list them, and many are broken."""
     if not key.startswith("wenku/"):
-        counts = {k: data.get(k) for k in ("jp", "sakura", "gpt", "youdao", "baidu", "updateAt")}
+        counts = {k: data.get(k) for k in ("jp", *ENGINES, "updateAt")}
         return [({"volumeId": "web.epub", "toc": data.get("toc", []), "counts": counts}, False)]
     volumes = [(v, False) for v in data.get("volumeJp", [])]
-    volumes += [
-        ({"volumeId": v} if isinstance(v, str) else v, True) for v in data.get("volumeZh", [])
-    ]
+    if chinese:
+        volumes += [
+            ({"volumeId": v} if isinstance(v, str) else v, True) for v in data.get("volumeZh", [])
+        ]
     return sorted(volumes, key=lambda pair: (pair[1], natural_key(pair[0]["volumeId"])))
+
+
+class CatalogTail:
+    """Where a catalog listing rejoins the previous sweep's order.
+
+    Novelia sorts the catalog by latest upload (translation progress does not move a work).
+    Works uploaded to since the last sweep come first; once STABLE_RUN works in a row follow
+    each other as they did then, everything after them is unchanged too."""
+
+    def __init__(self, previous: list[str], moved: list[str]):
+        self.previous = previous
+        self.index = {key: i for i, key in enumerate(previous)}
+        self.moved = set(moved)
+        self.run: list[str] = []
+
+    def follows(self, before: str, key: str) -> bool:
+        at = self.index[before] + 1
+        while at < len(self.previous) and self.previous[at] in self.moved:
+            at += 1
+        return at < len(self.previous) and self.previous[at] == key
+
+    def flush(self) -> list[str]:
+        """The pending run turned out not to be the old order: those works moved too."""
+        run, self.run = self.run, []
+        self.moved.update(run)
+        return run
+
+    def feed(self, keys: list[str]) -> tuple[list[str], bool]:
+        """Works on this page that need checking, and whether the old order was reached."""
+        moved = []
+        for key in keys:
+            if key in self.moved or key in self.run:
+                continue  # listed twice: a new upload shifted the pages while reading
+            if key in self.index and self.run and self.follows(self.run[-1], key):
+                self.run.append(key)
+                if len(self.run) >= STABLE_RUN:
+                    return moved, True
+                continue
+            moved += self.flush()
+            if key in self.index:
+                self.run = [key]
+            else:
+                self.moved.add(key)
+                moved.append(key)
+        return moved, False
 
 
 class Worker:
@@ -165,7 +236,7 @@ class Worker:
     def _run_job(self, job_id):
         job = self.db.job(job_id)
         request = JobRequest.model_validate_json(job["request"])
-        config = self.job_config(job)
+        config = self.job_config(job).model_copy(update=request.conversion())
         self.db.execute(
             "UPDATE jobs SET status='running',started_at=COALESCE(started_at,?),error=NULL,"
             "resume_at=NULL,wait_until=NULL,wait_reason=NULL WHERE id=?",
@@ -177,10 +248,12 @@ class Worker:
             lambda: self.check(job_id),
             lambda until, reason: self.db.set_wait(job_id, until, reason),
         )
+        # An update sweep only reads the catalog down to where it matches the last sweep's order.
+        baseline = self.catalog_order() if request.kind == "incremental" else None
         try:
             self.check(job_id)
             self.check_window(job_id, request, config)
-            self.discover(job_id, request, config, client)
+            self.discover(job_id, request, config, client, baseline)
             self.process_pending(job_id, request, config, client)
             self.retry_rounds(job_id, request, config, client)
             self.process_pending(job_id, request, config, client)  # retried by the user meanwhile
@@ -193,6 +266,8 @@ class Worker:
                 "UPDATE jobs SET status=?,finished_at=? WHERE id=?", (status, now(), job_id)
             )
             self.db.log(job_id, f"Task finished with {failed} failed item(s).")
+            if request.kind in ("full", "incremental"):
+                self.remember_catalog_order(job_id, baseline)
             if request.kind == "incremental" and not failed:
                 self.db.set_setting("last_incremental_at", now())
         except Deferred as exc:
@@ -227,12 +302,20 @@ class Worker:
         """Pause instead of failing every remaining item while the download drive is gone."""
         try:
             self.root.mkdir(parents=True, exist_ok=True)
+            free = shutil.disk_usage(self.root).free
         except OSError:
             raise Deferred(
                 f"The download directory {self.root} is unavailable; waiting for it to return.",
                 in_minutes(5),
                 counts=False,
             ) from None
+        if free < MIN_FREE_SPACE:
+            raise Deferred(
+                f"Only {free / 2**30:.1f} GB is free on the download drive; "
+                "free some space or move the library, then the task continues.",
+                in_minutes(15),
+                counts=False,
+            )
 
     def set_pending(self, job_id, targets):
         for target in targets:
@@ -320,7 +403,38 @@ class Worker:
             )
             self.process_pending(job_id, request, config, client)
 
-    def discover(self, job_id, request, config, client):
+    def catalog_order(self):
+        """The catalog order at the start of the last finished sweep, every work of which was
+        checked afterwards. Before any sweep recorded it, a finished full scan's list stands in."""
+        order = self.db.setting("catalog_order")
+        if order:
+            return order
+        job = self.db.row(
+            "SELECT id FROM jobs WHERE kind IN ('full','incremental') AND listing_done=1 "
+            "AND status IN ('completed','completed_with_errors') ORDER BY id DESC LIMIT 1"
+        )
+        if not job:
+            return None
+        return [
+            row["target"]
+            for row in self.db.rows(
+                "SELECT target FROM job_items WHERE job_id=? ORDER BY rowid", (job["id"],)
+            )
+        ] or None
+
+    def remember_catalog_order(self, job_id, baseline):
+        targets = [
+            row["target"]
+            for row in self.db.rows(
+                "SELECT target FROM job_items WHERE job_id=? ORDER BY rowid", (job_id,)
+            )
+        ]
+        # A quick sweep listed only the works uploaded to since; they moved to the front.
+        listed = set(targets)
+        tail = [key for key in baseline or [] if key not in listed]
+        self.db.set_setting("catalog_order", targets + tail)
+
+    def discover(self, job_id, request, config, client, baseline=None):
         job = self.db.job(job_id)
         if job["listing_done"]:
             return
@@ -352,6 +466,10 @@ class Worker:
             self.db.add_targets(job_id, request.keys)
         else:
             page = job["cursor"]
+            tail = None
+            if baseline:
+                listed = self.db.rows("SELECT target FROM job_items WHERE job_id=?", (job_id,))
+                tail = CatalogTail(baseline, [row["target"] for row in listed])
             while True:
                 self.check(job_id)
                 try:
@@ -368,11 +486,31 @@ class Worker:
                 targets = [normalize_key("wenku/" + item["id"]) for item in items]
                 if not items and page <= page_count:
                     raise ValueError(f"Catalog page {page} is unexpectedly empty; resume to retry.")
-                self.db.add_targets(job_id, targets, page + 1, page_count)
-                self.db.log(
-                    job_id, f"Catalog page {page}/{page_count}: discovered {len(targets)} work(s)."
-                )
-                if page >= page_count or (request.end_page and page >= request.end_page):
+                last = page >= page_count or bool(request.end_page and page >= request.end_page)
+                if tail:
+                    targets, caught_up = tail.feed(targets)
+                    if last and not caught_up:
+                        targets += tail.flush()
+                    self.db.add_targets(job_id, targets, page + 1, page_count)
+                    self.db.log(
+                        job_id,
+                        f"Catalog page {page}/{page_count}: {len(targets)} work(s) with uploads "
+                        "since the last sweep.",
+                    )
+                    if caught_up:
+                        self.db.log(
+                            job_id,
+                            "The rest of the catalog is unchanged since the last sweep; "
+                            "run Everything to also pick up translation progress.",
+                        )
+                        break
+                else:
+                    self.db.add_targets(job_id, targets, page + 1, page_count)
+                    self.db.log(
+                        job_id,
+                        f"Catalog page {page}/{page_count}: discovered {len(targets)} work(s).",
+                    )
+                if last:
                     break
                 page += 1
         self.db.execute("UPDATE jobs SET listing_done=1 WHERE id=?", (job_id,))
@@ -389,7 +527,7 @@ class Worker:
             return
         if not request.download:
             return
-        volumes = ordered_volumes(key, data)
+        volumes = ordered_volumes(key, data, config.download_chinese_uploads)
         picked = parse_range(request.volumes, len(volumes))
         if request.volumes and not picked:
             raise ValueError("Volume range matched no available files.")
@@ -403,7 +541,14 @@ class Worker:
             volume_id = volume["volumeId"]
             if volume_id in done:
                 continue  # finished by an earlier attempt of this task; never fetched twice, even when forced
-            if chinese_only and not config.download_chinese_uploads:
+            upload = fingerprint({"volume": volume})
+            if not request.force and (known := self.known_damage(job_id, key, volume_id, upload)):
+                self.db.log(
+                    job_id,
+                    f"Skipped {volume_id}: {known['error']} Checked {known['checked_at'][:10]}; "
+                    "tried again when the upload changes.",
+                    "warning",
+                )
                 continue
             try:
                 self.process_volume(
@@ -415,10 +560,35 @@ class Worker:
                 failures[volume_id] = exc
                 self.db.mark_part(job_id, key, volume_id, str(exc))
                 self.db.log(job_id, f"{volume_id}: {exc}", "error")
+                if isinstance(exc, DamagedUpload):
+                    self.db.mark_damaged(key, volume_id, upload, str(exc), job_id)
             else:
                 self.db.mark_part(job_id, key, volume_id)
+                self.db.clear_damaged(key, volume_id)
         if failures:
             raise VolumeFailures(failures, len(picked))
+
+    def known_damage(self, job_id, key, volume_id, upload):
+        """A broken upload recorded by an earlier task. Retrying it in the same task, or
+        a month later in case it was replaced under the same name, downloads it again."""
+        known = self.db.damaged(key, volume_id)
+        if (
+            known
+            and known["job_id"] != job_id
+            and known["fingerprint"] == upload
+            and datetime.fromisoformat(known["checked_at"]) > datetime.now(UTC) - DAMAGED_RECHECK
+        ):
+            return known
+        return None
+
+    def note_repairs(self, job_id, volume_id, client):
+        if client.repaired:
+            self.db.log(
+                job_id,
+                f"{volume_id}: Novelia's copy had {len(client.repaired)} broken part(s) "
+                f"({', '.join(client.repaired[:3])}); saved a repaired copy.",
+                "warning",
+            )
 
     def file_record(self, key, volume_id, mode):
         return self.db.row(
@@ -428,24 +598,19 @@ class Worker:
 
     @staticmethod
     def is_current(record, stamp):
-        return bool(
-            record
-            and record["fingerprint"] == stamp
-            and Path(record["raw_path"]).is_file()
-            and Path(record["raw_path"]).stat().st_size == record["size"]
-        )
+        if not record or record["fingerprint"] != stamp:
+            return False
+        raw = Path(record["raw_path"])
+        return raw.is_file() and raw.stat().st_size == record["size"]
 
-    def destination(self, key, data, volume_id, mode):
-        folder = self.root / component(key.replace("/", "_"), 50)
-        wenku = key.startswith("wenku/")
-        name = component(Path(volume_id).stem if wenku else data.get("titleJp") or key, 55)
-        extension = ".txt" if wenku and volume_id.lower().endswith(".txt") else ".epub"
-        return folder / f"{name}_{fingerprint(volume_id)[:10]} [{mode}]{extension}"
-
-    def process_volume(self, job_id, key, data, volume, chinese_only, request, config, client):
-        volume_id = volume["volumeId"]
-        mode = ORIGINAL_ZH if chinese_only else config.source_mode
-        stamp = fingerprint(
+    @staticmethod
+    def stamp(volume, mode, config):
+        """What a saved file depends on. An original changes only with its upload; Novelia's
+        builds also change with translation progress and the translation settings."""
+        if mode == ORIGINAL_JP:
+            upload = {k: v for k, v in volume.items() if k not in ENGINES}
+            return fingerprint({"volume": upload, "mode": mode})
+        return fingerprint(
             {
                 "volume": volume,
                 "mode": mode,
@@ -453,100 +618,146 @@ class Worker:
                 "translations_mode": config.translations_mode,
             }
         )
+
+    def destination(self, key, data, volume_id, mode):
+        folder = self.root / mode_folder(mode) / component(key.replace("/", "_"), 50)
+        wenku = key.startswith("wenku/")
+        name = component(Path(volume_id).stem if wenku else data.get("titleJp") or key, 55)
+        extension = ".txt" if wenku and volume_id.lower().endswith(".txt") else ".epub"
+        return folder / f"{name}_{fingerprint(volume_id)[:10]} [{mode}]{extension}"
+
+    def edition_path(self, source, edition):
+        """Where an edition converted from bilingual `source` goes: its language's tree, in a
+        folder named like the source's."""
+        return (
+            self.root
+            / EDITION_FOLDERS[edition]
+            / source.parent.name
+            / f"{source.stem} [{edition}]{source.suffix}"
+        )
+
+    def process_volume(self, job_id, key, data, volume, chinese_only, request, config, client):
+        if chinese_only:
+            self.fetch(job_id, key, data, volume, ORIGINAL_ZH, request, config, client)
+            return
+        if config.download_japanese:
+            self.fetch(job_id, key, data, volume, ORIGINAL_JP, request, config, client)
+        if config.download_bilingual:
+            self.fetch_bilingual(job_id, key, data, volume, request, config, client)
+        if config.download_chinese:
+            self.fetch(job_id, key, data, volume, CHINESE, request, config, client)
+
+    def fetch(self, job_id, key, data, volume, mode, request, config, client):
+        """Download one format of a volume unless the saved copy is current; return its record."""
+        volume_id = volume["volumeId"]
+        stamp = self.stamp(volume, mode, config)
         record = self.file_record(key, volume_id, mode)
         if not request.force and self.is_current(record, stamp):
-            self.db.log(job_id, f"Unchanged: {volume_id}")
+            self.db.log(job_id, f"Unchanged: {volume_id} [{mode}]")
+            return record
+        destination = self.destination(key, data, volume_id, mode)
+        size, sha = client.source(
+            key,
+            volume_id,
+            destination,
+            original=mode in (ORIGINAL_JP, ORIGINAL_ZH),
+            chinese=mode == CHINESE,
+        )
+        self.note_repairs(job_id, volume_id, client)
+        if mode == ORIGINAL_JP:
+            self.db.save_original(key, volume_id, stamp, destination, size, sha)
         else:
-            original = self.file_record(key, volume_id, ORIGINAL_JP)
-            original_stamp = fingerprint({"volume": volume, "mode": ORIGINAL_JP})
-            if not request.force and self.is_current(original, original_stamp):
-                # Same upload and counters as when the bilingual build failed: it would fail again.
-                self.db.log(job_id, f"Unchanged: {volume_id} (Japanese original kept)")
-                return
-            destination = self.destination(key, data, volume_id, mode)
-            try:
-                size, sha = client.source(key, volume_id, destination, original=chinese_only)
-            except Rejected, ServerError:
-                if chinese_only or not config.original_fallback or not key.startswith("wenku/"):
-                    raise
-                self.save_original(job_id, key, data, volume, original_stamp, client)
-                return
             self.db.save_file(key, volume_id, mode, stamp, destination, size, sha)
-            self.db.log(job_id, f"Downloaded {volume_id} ({size // 1024} KB).")
-            if original:
-                self.db.execute("DELETE FROM files WHERE id=?", (original["id"],))
-                Path(original["raw_path"]).unlink(missing_ok=True)
-            record = self.file_record(key, volume_id, mode)
-        if config.auto_convert and not chinese_only:
+        self.db.log(job_id, f"Downloaded {volume_id} [{mode}] ({size // 1024} KB).")
+        return self.file_record(key, volume_id, mode)
+
+    def fetch_bilingual(self, job_id, key, data, volume, request, config, client):
+        """Novelia cannot build the bilingual file of some uploads (a persistent HTTP 500 or
+        404). The original is what conversion would produce, so it is kept instead, and the
+        bilingual file is tried again only when the volume changes."""
+        volume_id, mode = volume["volumeId"], config.source_mode
+        stamp = self.stamp(volume, mode, config)
+        original = self.file_record(key, volume_id, ORIGINAL_JP)
+        failed = original and json.loads(original["report"] or "{}").get("bilingual_failed")
+        if (
+            not request.force
+            and failed == stamp
+            and self.is_current(original, self.stamp(volume, ORIGINAL_JP, config))
+        ):
+            self.db.log(job_id, f"Unchanged: {volume_id} (Japanese original kept)")
+            return
+        try:
+            record = self.fetch(job_id, key, data, volume, mode, request, config, client)
+        except Rejected, ServerError:
+            if not config.original_fallback or not key.startswith("wenku/"):
+                raise
+            self.db.log(
+                job_id,
+                f"{volume_id}: Novelia could not build the bilingual file; "
+                "keeping the Japanese original.",
+                "warning",
+            )
+            original = self.fetch(job_id, key, data, volume, ORIGINAL_JP, request, config, client)
+            self.db.execute(
+                "UPDATE files SET report=? WHERE id=?",
+                (json.dumps({"bilingual_failed": stamp}), original["id"]),
+            )
+            return
+        if failed and not config.download_japanese:
+            # The original only stood in for the bilingual file.
+            self.db.execute("DELETE FROM files WHERE id=?", (original["id"],))
+            Path(original["raw_path"]).unlink(missing_ok=True)
+        if config.auto_convert:
             self.convert_file(job_id, record["id"], config, client, request.force)
 
-    def save_original(self, job_id, key, data, volume, stamp, client):
-        """Novelia could not build the bilingual file (a persistent HTTP 500 or 404 for some
-        uploads). The Japanese original is what conversion would produce, so keep that."""
-        volume_id = volume["volumeId"]
-        self.db.log(
-            job_id,
-            f"{volume_id}: Novelia could not build the bilingual file; saving the Japanese original.",
-            "warning",
-        )
-        destination = self.destination(key, data, volume_id, ORIGINAL_JP)
-        size, sha = client.source(key, volume_id, destination, original=True)
-        self.db.save_original(key, volume_id, stamp, destination, size, sha)
-        self.db.log(job_id, f"Saved the Japanese original of {volume_id} ({size // 1024} KB).")
-
     def convert_file(self, job_id, file_id, config, client, force=False):
+        """Build the chosen editions of a bilingual file, for volumes Novelia has no usable
+        original of."""
         record = self.db.row("SELECT * FROM files WHERE id=?", (file_id,))
         if not record:
             raise ValueError(f"File {file_id} does not exist.")
         if record["mode"] not in BILINGUAL_MODES:
-            reason = (
-                "is already the Japanese original"
-                if record["mode"] == ORIGINAL_JP
-                else "is a Chinese-only upload with no Japanese text"
-            )
+            reason = {
+                ORIGINAL_JP: "is already the Japanese original",
+                CHINESE: "is already Novelia's Chinese edition",
+            }.get(record["mode"], "is a Chinese-only upload with no Japanese text")
             self.db.log(job_id, f"File {file_id} {reason}; nothing to convert.")
             return
+        text = Path(record["raw_path"]).suffix.lower() == ".txt"
+        if config.convert_japanese:
+            if text:
+                self.convert_text(job_id, record, client, force)
+            else:
+                self.convert_japanese(job_id, record, config, force)
+        if config.convert_chinese:
+            if text:
+                self.convert_text(job_id, record, client, force, chinese=True)
+            else:
+                self.convert_chinese(job_id, record, force)
+
+    def source_of(self, job_id, record):
         source = Path(record["raw_path"])
         if not source.is_file():
             raise FileNotFoundError("Source file is missing. Run a download task to restore it.")
-        if source.suffix.lower() == ".txt":
-            self.convert_text(job_id, record, client, force)
-            return
+        self.check(job_id)
+        validate_epub(source)
+        return source
+
+    def convert_japanese(self, job_id, record, config, force):
+        file_id = record["id"]
         previous = json.loads(record["report"] or "{}")
         if (
             not force
             and record["ja_path"]
             and Path(record["ja_path"]).is_file()
-            and (
-                record["verification"] == "verified"
-                or (not config.verify and record["verification"] == "disabled")
-            )
             and previous.get("vertical") == config.vertical
         ):
             self.db.log(job_id, f"File {file_id}: Japanese output already up to date.")
             return
-        self.check(job_id)
-        validate_epub(source)
+        source = self.source_of(job_id, record)
         work = self.db.row("SELECT * FROM works WHERE key=?", (record["work_key"],))
         data = json.loads(work["metadata"])
-        reference = source.with_name(source.stem + " [reference].epub")
-        has_reference = bool(record["reference_path"] and Path(record["reference_path"]).is_file())
-        if has_reference:
-            reference = Path(record["reference_path"])
-        reference_error, reference_transient = "", False
-        if (config.verify or (config.vertical and work["kind"] == "wenku")) and not has_reference:
-            try:
-                client.source(work["key"], record["volume_id"], reference, original=True)
-                has_reference = True
-                self.db.execute(
-                    "UPDATE files SET reference_path=? WHERE id=?", (str(reference), file_id)
-                )
-            except Cancelled, Deferred, PermissionError:
-                raise
-            except Exception as exc:
-                reference_error, reference_transient = str(exc), is_retryable(exc)
-                self.db.log(job_id, f"Reference unavailable: {reference_error}", "warning")
-        output = source.with_name(source.stem + " [ja].epub")
+        output = self.edition_path(source, "ja")
         report = convert_epub(
             source,
             output,
@@ -555,64 +766,66 @@ class Worker:
             introduction_jp=data.get("introductionJp", ""),
             authors=json.loads(work["authors"]),
             toc=data.get("toc", []),
-            restore_css_from=reference if has_reference else None,
         )
         if report.kept_ja == 0:
             output.unlink(missing_ok=True)
             raise ValueError("No Japanese paragraph markers found; source was preserved.")
         validate_epub(output)
-        passed, detail, verification = True, "Verification disabled by settings.", "disabled"
-        if config.verify:
-            if has_reference:
-                passed, detail = verify_against_jp(output, reference, "the Japanese reference")
-            else:
-                passed, detail = False, "Reference unavailable: " + reference_error
-            verification = "verified" if passed else "unverified"
-        if not passed:
-            suspect = output.with_name(output.stem + " [UNVERIFIED].epub")
-            output.replace(suspect)
-            output = suspect
         if record["ja_path"] and Path(record["ja_path"]) != output:
             Path(record["ja_path"]).unlink(missing_ok=True)
         self.db.execute(
-            "UPDATE files SET ja_path=?,status=?,verification=?,report=?,updated_at=? WHERE id=?",
-            (
-                str(output),
-                "converted" if passed else "unverified",
-                verification,
-                json.dumps({**asdict(report), "verification_detail": detail}),
-                now(),
-                file_id,
-            ),
+            "UPDATE files SET ja_path=?,status='converted',verification=NULL,report=?,updated_at=? "
+            "WHERE id=?",
+            (str(output), json.dumps(asdict(report)), now(), file_id),
         )
-        self.db.log(
-            job_id,
-            f"Converted file {file_id}: {report.describe()}; {detail}",
-            "info" if passed else "warning",
-        )
-        if not passed:
-            # A reference that failed to download may succeed later; a real mismatch will not.
-            raise (TransientError if reference_transient else ValueError)(detail)
+        self.db.log(job_id, f"Converted file {file_id}: {report.describe()}")
 
-    def convert_text(self, job_id, record, client, force):
+    def convert_chinese(self, job_id, record, force):
+        """The translations alone; Japanese lines without one stay as they are."""
+        file_id = record["id"]
+        if not force and record["zh_path"] and Path(record["zh_path"]).is_file():
+            self.db.log(job_id, f"File {file_id}: Chinese output already up to date.")
+            return
+        source = self.source_of(job_id, record)
+        output = self.edition_path(source, "zh")
+        report = convert_epub(
+            source, output, chinese=True, translation_first=record["mode"] == "zh-jp"
+        )
+        if report.kept_zh == 0:
+            output.unlink(missing_ok=True)
+            raise ValueError("No translated paragraphs found; source was preserved.")
+        validate_epub(output)
+        self.db.execute(
+            "UPDATE files SET zh_path=?,updated_at=? WHERE id=?", (str(output), now(), file_id)
+        )
+        self.db.log(job_id, f"Converted file {file_id} to Chinese: {report.describe()}")
+
+    def convert_text(self, job_id, record, client, force, chinese=False):
         """A text volume's bilingual file interleaves Japanese and Chinese lines without markers,
-        so the Japanese edition is the uploaded original text itself."""
+        so its editions are Novelia's own: the uploaded original, or its Chinese build."""
         source = Path(record["raw_path"])
-        output = source.with_name(source.stem + " [ja].txt")
+        column, label = ("zh_path", "Chinese") if chinese else ("ja_path", "Japanese")
+        output = self.edition_path(source, column[:2])
         if (
             not force
-            and record["verification"] == "original"
-            and record["ja_path"]
-            and Path(record["ja_path"]).is_file()
+            and record[column]
+            and Path(record[column]).is_file()
+            and (chinese or record["verification"] == "original")
         ):
-            self.db.log(job_id, f"File {record['id']}: Japanese text already saved.")
+            self.db.log(job_id, f"File {record['id']}: {label} text already saved.")
             return
-        work = self.db.row("SELECT key FROM works WHERE key=?", (record["work_key"],))
-        client.source(work["key"], record["volume_id"], output, original=True)
-        detail = "Japanese text is the uploaded original."
-        self.db.execute(
-            "UPDATE files SET ja_path=?,status='converted',verification='original',report=?,"
-            "updated_at=? WHERE id=?",
-            (str(output), json.dumps({"verification_detail": detail}), now(), record["id"]),
+        client.source(
+            record["work_key"], record["volume_id"], output, original=not chinese, chinese=chinese
         )
-        self.db.log(job_id, f"Saved the Japanese text of file {record['id']}.")
+        if chinese:
+            self.db.execute(
+                "UPDATE files SET zh_path=?,updated_at=? WHERE id=?",
+                (str(output), now(), record["id"]),
+            )
+        else:
+            self.db.execute(
+                "UPDATE files SET ja_path=?,status='converted',verification='original',report=NULL,"
+                "updated_at=? WHERE id=?",
+                (str(output), now(), record["id"]),
+            )
+        self.db.log(job_id, f"Saved the {label} text of file {record['id']}.")

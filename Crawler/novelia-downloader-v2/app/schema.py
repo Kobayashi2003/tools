@@ -1,7 +1,7 @@
 """Validated settings and task requests shared by the API and worker."""
 
 import re
-from typing import Literal
+from typing import Literal, get_args
 from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -18,6 +18,9 @@ CATEGORIES = {
 }
 LEVELS = {"一般向": 1, "轻文学": 2, "严肃向": 3, "非小说": 4, "成人向": 5, "成人向女": 6}
 PROVIDERS = ("kakuyomu", "syosetu", "novelup", "hameln", "pixiv", "alphapolis")
+Engine = Literal["sakura", "gpt", "youdao", "baidu"]
+# Translation engines; a volume's metadata counts the paragraphs each has translated.
+ENGINES: tuple[Engine, ...] = get_args(Engine)
 
 
 CLOCK = r"^([01]\d|2[0-3]):[0-5]\d$"
@@ -82,15 +85,22 @@ class Settings(BaseModel):
     # Content
     page_size: int = Field(default=24, ge=1, le=100)
     source_mode: Literal["jp-zh", "zh-jp"] = "jp-zh"
-    translations: list[Literal["sakura", "gpt", "youdao", "baidu"]] = Field(
+    translations: list[Engine] = Field(
         default_factory=lambda: ["sakura", "gpt", "youdao"], min_length=1
     )
     translations_mode: Literal["priority", "parallel"] = "priority"
-    download_chinese_uploads: bool = True
+    # Formats downloaded for each volume; at least one.
+    download_bilingual: bool = True
+    download_japanese: bool = False
+    download_chinese: bool = False
+    """Novelia's Chinese-only build."""
+    download_chinese_uploads: bool = False
     original_fallback: bool = True
     auto_convert: bool = False
+    # Editions built from a bilingual file; a convert task may choose otherwise.
+    convert_japanese: bool = True
+    convert_chinese: bool = False
     vertical: bool = True
-    verify: bool = True
     incremental_enabled: bool = False
     interval_hours: float = Field(default=24, ge=0.25, le=8760)
 
@@ -105,6 +115,10 @@ class Settings(BaseModel):
             raise ValueError("The backoff cap must be at least the first backoff.")
         if self.active_hours and self.active_start == self.active_end:
             raise ValueError("Active hours need different start and end times.")
+        if not (self.download_bilingual or self.download_japanese or self.download_chinese):
+            raise ValueError("Choose at least one format to download.")
+        if not (self.convert_japanese or self.convert_chinese):
+            raise ValueError("Choose at least one edition to convert to.")
         return self
 
 
@@ -153,6 +167,16 @@ class JobRequest(BaseModel):
     volumes: str = Field(default="", max_length=500)
     download: bool = True
     force: bool = False
+    # Convert tasks: override the settings of the same name when given.
+    convert_japanese: bool | None = None
+    convert_chinese: bool | None = None
+
+    def conversion(self) -> dict[str, bool]:
+        return {
+            name: value
+            for name in ("convert_japanese", "convert_chinese")
+            if (value := getattr(self, name)) is not None
+        }
 
     @model_validator(mode="after")
     def validate_scope(self):
@@ -170,6 +194,8 @@ class JobRequest(BaseModel):
             raise ValueError("Enter at least one work ID or URL.")
         if any(v < 1 for v in self.file_ids):
             raise ValueError("File IDs must be positive.")
+        if self.convert_japanese is False and self.convert_chinese is False:
+            raise ValueError("Choose at least one edition to convert to.")
         return self
 
 

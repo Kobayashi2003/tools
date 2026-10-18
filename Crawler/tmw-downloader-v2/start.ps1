@@ -1,6 +1,10 @@
-# Starts the server; .\stop.ps1 stops it from another window. Other arguments go to main.py.
+# Starts the server and opens it in the browser (-NoBrowser to skip); .\stop.ps1 stops it from
+# another window. Other arguments go to main.py.
 # The server steps up from 18040 by itself when that port is taken.
-param([Parameter(ValueFromRemainingArguments)][string[]]$Rest = @())
+param(
+    [switch]$NoBrowser,
+    [Parameter(ValueFromRemainingArguments)][string[]]$Rest = @()
+)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $runFile = Join-Path $PSScriptRoot '.running.json'
@@ -15,7 +19,10 @@ if (Test-Path -LiteralPath $runFile) {
 uv sync --locked
 if ($LASTEXITCODE -ne 0) { throw 'Could not install dependencies; check the network or proxy and run this again.' }
 
-$server = Start-Process uv -NoNewWindow -PassThru -ArgumentList (@('run', '--locked', 'python', 'main.py') + $Rest)
+# main.py opens the browser itself on whichever port it lands.
+$serverArgs = @('run', '--locked', 'python', 'main.py') + $Rest
+if ($NoBrowser) { $serverArgs += '--no-open' }
+$server = Start-Process uv -NoNewWindow -PassThru -ArgumentList $serverArgs
 @{ ProcessId = $server.Id; StartTicks = $server.StartTime.Ticks } | ConvertTo-Json | Set-Content -LiteralPath $runFile
 try {
     while (-not $server.HasExited) { Start-Sleep -Milliseconds 500 }

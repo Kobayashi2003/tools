@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.client import fingerprint
 from app.schema import JobRequest, normalize_key, parse_range
 from app.server import ProcessLock, create_app
 from tests.conftest import KEY
@@ -105,6 +106,42 @@ def test_settings_snapshot_and_csv(client):
     assert "'=1+1" in client.get("/api/export.csv").text
     assert client.get("/api/works?query=Test").json()["total"] == 1
     assert client.get(f"/api/works/{KEY}").json()["files"] == []
+
+
+def test_catalog_marks_local_works(client, monkeypatch):
+    class Catalog:
+        def __init__(self, *_, **__):
+            pass
+
+        def listing(self, page, category, query):
+            return {"items": [{"id": KEY.split("/")[1]}], "pageNumber": 1}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.server.Client", Catalog)
+    db = client.app.state.db
+    db.save_work(
+        KEY, {"title": "T", "volumeJp": [{"volumeId": "v.epub"}], "volumeZh": ["zh.epub"]}, 1
+    )
+    local = client.get("/api/catalog").json()["items"][0]["local"]
+    assert (local["volume_count"], local["file_count"]) == (1, 0)
+
+
+def test_work_detail_marks_broken_uploads_and_decodes_entities(client):
+    db = client.app.state.db
+    volume = {"volumeId": "v1.epub", "total": 3}
+    db.save_work(
+        KEY,
+        {"title": "T", "authors": [], "introduction": "大赏&lt；银赏&gt；", "volumeJp": [volume]},
+        1,
+    )
+    db.mark_damaged(KEY, "v1.epub", fingerprint({"volume": volume}), "Empty.", 1)
+    work = client.get(f"/api/works/{KEY}").json()
+    assert work["metadata"]["introduction"] == "大赏<；银赏>；"
+    assert work["volumes"][0]["damaged"] == "Empty."
+    db.mark_damaged(KEY, "v1.epub", "an older upload", "Empty.", 1)
+    assert client.get(f"/api/works/{KEY}").json()["volumes"][0]["damaged"] is None
 
 
 def test_file_delivery_rejects_outside_root(client, tmp_path):

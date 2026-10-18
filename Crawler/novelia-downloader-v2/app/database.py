@@ -24,7 +24,8 @@ def dump(value):
 # File modes. Bilingual files are converted; originals are kept as uploaded.
 BILINGUAL_MODES = ("jp-zh", "zh-jp")
 ORIGINAL_ZH = "zh-original"  # a volume uploaded only in Chinese
-ORIGINAL_JP = "jp-original"  # a Japanese upload whose bilingual file Novelia could not build
+ORIGINAL_JP = "jp-original"  # the uploaded Japanese original
+CHINESE = "zh"  # Novelia's Chinese-only build of a Japanese upload
 BILINGUAL_SQL = "mode IN ('jp-zh','zh-jp')"
 
 # Display title of a job item `i`; the `?` binds the job kind. Conversion targets are file IDs,
@@ -50,6 +51,10 @@ ADDED_COLUMNS = {
         "attempts": "INTEGER NOT NULL DEFAULT 0",
         "retryable": "INTEGER NOT NULL DEFAULT 0",
         "parts": "TEXT",
+    },
+    "files": {
+        # The Chinese edition converted from a bilingual file.
+        "zh_path": "TEXT",
     },
 }
 
@@ -92,6 +97,11 @@ class Database:
                 CREATE TABLE IF NOT EXISTS logs (
                     id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES jobs(id),
                     created_at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS damaged (
+                    work_key TEXT NOT NULL, volume_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                    error TEXT NOT NULL, job_id INTEGER NOT NULL, checked_at TEXT NOT NULL,
+                    PRIMARY KEY(work_key, volume_id)
                 );
                 CREATE INDEX IF NOT EXISTS log_job_idx ON logs(job_id, id);
                 CREATE INDEX IF NOT EXISTS item_status_idx ON job_items(job_id, status);
@@ -179,7 +189,6 @@ class Database:
         return self.rows("""SELECT (SELECT COUNT(*) FROM works) AS works,
             (SELECT COUNT(*) FROM files) AS files,
             (SELECT COUNT(*) FROM files WHERE ja_path IS NOT NULL) AS converted,
-            (SELECT COUNT(*) FROM files WHERE verification='unverified') AS unverified,
             (SELECT COALESCE(SUM(size),0) FROM files) AS bytes,
             (SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')) AS active_jobs""")[0]
 
@@ -287,37 +296,39 @@ class Database:
             ),
         )
 
-    def save_file(self, key, volume, mode, fingerprint, path, size, sha256, reference=None):
+    def save_file(self, key, volume, mode, fingerprint, path, size, sha256):
         self.execute(
             """INSERT INTO files(work_key,volume_id,mode,fingerprint,raw_path,size,sha256,
-            reference_path,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)
+            status,updated_at) VALUES (?,?,?,?,?,?,?,'downloaded',?)
             ON CONFLICT(work_key,volume_id,mode) DO UPDATE SET fingerprint=excluded.fingerprint,
             raw_path=excluded.raw_path,size=excluded.size,sha256=excluded.sha256,
-            reference_path=excluded.reference_path,ja_path=NULL,verification=NULL,report=NULL,
-            status='downloaded',updated_at=excluded.updated_at""",
-            (
-                key,
-                volume,
-                mode,
-                fingerprint,
-                str(path),
-                size,
-                sha256,
-                str(reference) if reference else None,
-                "downloaded",
-                now(),
-            ),
+            ja_path=NULL,zh_path=NULL,verification=NULL,report=NULL,status='downloaded',
+            updated_at=excluded.updated_at""",
+            (key, volume, mode, fingerprint, str(path), size, sha256, now()),
         )
 
     def save_original(self, key, volume, fingerprint, path, size, sha256):
-        """Record a Japanese original saved because the bilingual file could not be built.
-        It is its own Japanese edition, so there is nothing to convert."""
+        """Record a Japanese original. It is its own Japanese edition: nothing to convert."""
         self.save_file(key, volume, ORIGINAL_JP, fingerprint, path, size, sha256)
         self.execute(
             "UPDATE files SET ja_path=raw_path,status='original',verification='original' "
             "WHERE work_key=? AND volume_id=? AND mode=?",
             (key, volume, ORIGINAL_JP),
         )
+
+    def damaged(self, key, volume):
+        return self.row("SELECT * FROM damaged WHERE work_key=? AND volume_id=?", (key, volume))
+
+    def mark_damaged(self, key, volume, fingerprint, error, job_id):
+        """Remember a volume whose upload on Novelia is broken, so later sweeps skip it."""
+        self.execute(
+            "INSERT OR REPLACE INTO damaged(work_key,volume_id,fingerprint,error,job_id,checked_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (key, volume, fingerprint, error, job_id, now()),
+        )
+
+    def clear_damaged(self, key, volume):
+        self.execute("DELETE FROM damaged WHERE work_key=? AND volume_id=?", (key, volume))
 
     def next_job(self):
         """The oldest queued task that is not paused until later."""

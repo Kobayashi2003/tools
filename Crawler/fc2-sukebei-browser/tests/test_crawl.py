@@ -79,7 +79,7 @@ def test_older_walks_id_blocks_downward_and_resumes(env):
     http.requests.clear()
     run_job(client, kind="older", blocks=1)  # continues where it stopped
     assert searched(http) == ["4800*"]
-    assert app.state.store.get_meta("history_next") == 4799
+    assert app.state.store.get_meta("history_next") == "4799"
 
 
 def test_a_block_hitting_the_cap_is_split_into_ten(env):
@@ -89,7 +89,7 @@ def test_a_block_hitting_the_cap_is_split_into_ten(env):
     http.requests.clear()
     run_job(client, kind="older", blocks=1)
     assert searched(http) == ["4802*"] + [f"4802{d}*" for d in "9876543210"]
-    assert app.state.store.get_meta("history_next") == 4801
+    assert app.state.store.get_meta("history_next") == "4801"
 
 
 def test_a_failed_block_is_not_marked_done(env):
@@ -105,7 +105,7 @@ def test_a_failed_block_is_not_marked_done(env):
     http.text = broken
     job = run_job(client, kind="older", blocks=3)
     assert job["error"] and job["blocks_done"] == 1
-    assert app.state.store.get_meta("history_next") == 4801  # retried from 4801 next time
+    assert app.state.store.get_meta("history_next") == "4801"  # retried from 4801 next time
 
 
 def test_history_wraps_to_the_short_ids_above_its_start(env):
@@ -144,10 +144,10 @@ def test_history_completes_just_above_where_it_started(env):
 def test_next_block_covers_every_prefix_once():
     from app.crawler import next_block
 
-    seen, cursor = [], 4802
+    seen, cursor = [], "4802"
     while cursor is not None:
-        seen.append(cursor)
-        cursor = next_block(cursor, 4802)
+        seen.append(int(cursor))
+        cursor = next_block(cursor, "4802")
     assert sorted(seen) == list(range(1000, 10000))
 
 
@@ -293,3 +293,74 @@ def test_worker_hands_over_before_marking_the_stage_done(env):
     assert seen == [1]  # still counted while handing over
     assert crawler._queues["pp"].ids() == ["4802589"] and not crawler.idle()
     drain(crawler)
+
+
+def block_page(http, prefix, *names):
+    rows = [
+        fixtures.listing_row(4700000 + i, name, f"{i:02d}" * 20) for i, name in enumerate(names)
+    ]
+    http.pages[sukebei.search_url(f"{prefix}*")] = fixtures.listing_page(
+        rows, total=len(rows), has_next=False
+    )
+
+
+def test_older_can_read_everything_that_is_left(env):
+    client, app, http = env
+    run_job(client, kind="update")
+    store = app.state.store
+    store.set_meta("history_top", "101")
+    store.set_meta("history_next", "101")
+    http.requests.clear()
+    job = run_job(client, wait=60, kind="older", blocks=None, block_digits=3)
+    queries = searched(http)
+    assert queries[:3] == ["101*", "100*", "999*"] and queries[-1] == "102*"
+    assert sorted(int(q[:-1]) for q in queries) == list(range(100, 1000))
+    assert job["blocks_done"] == 900
+    assert client.get("/api/status").json()["coverage"]["history_complete"]
+
+
+def test_older_stops_at_the_first_empty_block(env):
+    client, app, http = env
+    run_job(client, kind="update")  # highest id held: 4802589 -> walk starts at 4802
+    block_page(http, "4802", "FC2-PPV-4802111 a")
+    http.requests.clear()
+    job = run_job(client, kind="older", blocks=None, stop_on_empty=True)
+    assert searched(http) == ["4802*", "4801*"]
+    assert job["stopped_empty"] == "4801" and job["blocks_done"] == 2
+    assert app.state.store.get_meta("history_next") == "4800"  # the empty block counts as read
+
+
+def test_block_size_can_change_mid_walk(env):
+    client, app, http = env
+    run_job(client, kind="update")
+    run_job(client, kind="older", blocks=2)  # 4802, 4801 at 4 digits
+    http.requests.clear()
+    run_job(client, kind="older", blocks=2, block_digits=5)
+    assert searched(http) == ["48009*", "48008*"]  # finer blocks start at the top of block 4800
+    coverage = client.get("/api/status").json()["coverage"]
+    assert coverage["history_digits"] == 5 and coverage["history_next"] == 48007
+    assert coverage["history_blocks"] == (48029 - 48007) and coverage["history_total"] == 90000
+    http.requests.clear()
+    run_job(client, kind="older", blocks=1, block_digits=4)  # back to 4 digits: block 4800 again
+    assert searched(http) == ["4800*"]
+
+
+def test_a_range_run_leaves_the_history_walk_alone(env):
+    client, app, http = env
+    run_job(client, kind="update")
+    block_page(http, "4801", "FC2-PPV-4801234 ranged")
+    http.requests.clear()
+    job = run_job(client, kind="older", range_from=4800000, range_to=4802999)
+    assert searched(http) == ["4802*", "4801*", "4800*"]
+    assert job["blocks_done"] == 3 and job["new_titles"] == 1
+    assert app.state.store.get_meta("history_next") is None
+
+
+def test_older_options_are_validated(env):
+    client, _, _ = env
+    bad_range = client.post(
+        "/api/jobs", json={"kind": "older", "range_from": 4800000, "range_to": 980000}
+    )
+    assert bad_range.status_code == 400 and "same number of digits" in bad_range.json()["detail"]
+    assert client.post("/api/jobs", json={"kind": "older", "block_digits": 6}).status_code == 422
+    assert client.post("/api/jobs", json={"kind": "older", "blocks": 0}).status_code == 422

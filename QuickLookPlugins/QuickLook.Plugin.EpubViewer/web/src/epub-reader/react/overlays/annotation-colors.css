@@ -1,0 +1,42 @@
+/* Swatch colours live in tokens.css; both surfaces read the same ones. */
+.epub-reader-selection-tool__colors button,
+.epub-reader-mark-popover__colors button {
+  background: var(--epub-highlight);
+}
+
+.epub-reader-shell
+  .epub-reader-selection-tool__colors
+  button:hover:not(:disabled),
+.epub-reader-shell
+  .epub-reader-mark-popover__colors
+  button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--epub-highlight);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--epub-color-text) 34%, transparent);
+}
+
+.epub-reader-selection-tool__colors button.is-yellow,
+.epub-reader-mark-popover__colors button.is-yellow {
+  --epub-highlight: var(--epub-highlight-yellow);
+}
+.epub-reader-selection-tool__colors button.is-orange,
+.epub-reader-mark-popover__colors button.is-orange {
+  --epub-highlight: var(--epub-highlight-orange);
+}
+.epub-reader-selection-tool__colors button.is-pink,
+.epub-reader-mark-popover__colors button.is-pink {
+  --epub-highlight: var(--epub-highlight-pink);
+}
+.epub-reader-selection-tool__colors button.is-green,
+.epub-reader-mark-popover__colors button.is-green {
+  --epub-highlight: var(--epub-highlight-green);
+}
+.epub-reader-selection-tool__colors button.is-blue,
+.epub-reader-mark-popover__colors button.is-blue {
+  --epub-highlight: var(--epub-highlight-blue);
+}
+.epub-reader-selection-tool__colors button.is-purple,
+.epub-reader-mark-popover__colors button.is-purple {
+  --epub-highlight: var(--epub-highlight-purple);
+}

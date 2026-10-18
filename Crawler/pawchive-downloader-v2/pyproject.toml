@@ -1,0 +1,37 @@
+[project]
+name = "pawchive-downloader-v2"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "curl-cffi>=0.13,<1",
+    "fastapi>=0.115,<1",
+    "pillow>=11",
+    "requests>=2.32,<3",
+    "uvicorn>=0.30,<1",
+    "websocket-client>=1.8,<2",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.2",
+    "httpx>=0.27,<1",
+    "pytest>=8,<10",
+    "ruff>=0.17.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP"]
+
+[tool.basedpyright]
+include = ["main.py", "app", "tests"]
+typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

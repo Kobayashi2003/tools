@@ -5,6 +5,7 @@ import io
 import json
 import os
 from contextlib import asynccontextmanager, contextmanager
+from html import unescape
 from pathlib import Path
 from typing import Literal
 
@@ -14,31 +15,43 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .client import Client, Deferred
+from .client import Client, Deferred, fingerprint
 from .database import Database, now
-from .schema import CATEGORIES, JobRequest, RetryRequest, Settings
+from .schema import CATEGORIES, ENGINES, JobRequest, RetryRequest, Settings
 from .storage import Storage
 from .worker import Worker, ordered_volumes
 
 PROJECT = Path(__file__).resolve().parent.parent
-FILE_STATS = """(SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key) AS file_count,
+
+
+def file_stats(chinese: bool) -> str:
+    """Per-work counts. Chinese-only uploads count only while the setting downloads them;
+    Novelia's own pages no longer list them."""
+    files = "" if chinese else " AND f.mode!='zh-original'"
+    volumes = (
+        "w.volume_count"
+        if chinese
+        else "w.volume_count-COALESCE(json_array_length(w.metadata,'$.volumeZh'),0)"
+    )
+    return f"""(SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key{files}) AS file_count,
     (SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key AND f.ja_path IS NOT NULL) AS ja_count,
     (SELECT COUNT(*) FROM files f WHERE f.work_key=w.key AND f.mode IN ('jp-zh','zh-jp') AND f.ja_path IS NULL)
         AS pending_count,
-    (SELECT COUNT(*) FROM files f WHERE f.work_key=w.key AND f.verification='unverified') AS unverified_count"""
+    {volumes} AS shown_volumes"""
+
+
 STATE_FILTERS = {
     "saved": "file_count>0",
-    "partial": "file_count>0 AND file_count<volume_count",
+    "partial": "file_count>0 AND file_count<shown_volumes",
     "metadata": "file_count=0",
     "japanese": "ja_count>0",
     "pending": "pending_count>0",
-    "unverified": "unverified_count>0",
 }
 SORTS = {
     "checked": "checked_at DESC",
     "added": "first_seen DESC",
     "title": "title COLLATE NOCASE",
-    "volumes": "volume_count DESC",
+    "volumes": "shown_volumes DESC",
 }
 
 
@@ -231,6 +244,9 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         worker.wake.set()
         return settings.model_dump()
 
+    def stats():
+        return file_stats(db.settings().download_chinese_uploads)
+
     @app.get("/api/catalog")
     def catalog(
         page: int = Query(1, ge=1, le=100000),
@@ -251,7 +267,8 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             {
                 r["key"]: r
                 for r in db.rows(
-                    f"SELECT key,volume_count,{FILE_STATS} FROM works w WHERE key IN ({','.join('?' * len(keys))})",
+                    f"SELECT *,shown_volumes AS volume_count FROM (SELECT key,{stats()} "
+                    f"FROM works w WHERE key IN ({','.join('?' * len(keys))}))",
                     keys,
                 )
             }
@@ -267,9 +284,7 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         query: str = "",
         category: int | None = None,
         kind: str = "",
-        state: Literal[
-            "", "saved", "partial", "metadata", "japanese", "pending", "unverified"
-        ] = "",
+        state: Literal["", "saved", "partial", "metadata", "japanese", "pending"] = "",
         sort: Literal["checked", "added", "title", "volumes"] = "checked",
         page: int = Query(1, ge=1),
         page_size: int = Query(48, ge=1, le=200),
@@ -287,11 +302,12 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         if state:
             clauses.append(STATE_FILTERS[state])
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        inner = f"SELECT w.*,{FILE_STATS} FROM works w"
+        inner = f"SELECT w.*,{stats()} FROM works w"
         total = db.rows(f"SELECT COUNT(*) AS n FROM ({inner}){where}", params)[0]["n"]
         items = db.rows(
-            f"""SELECT key,kind,category,title,title_zh,cover,authors,publisher,volume_count,
-            first_seen,checked_at,file_count,ja_count,pending_count,unverified_count
+            f"""SELECT key,kind,category,title,title_zh,cover,authors,publisher,
+            shown_volumes AS volume_count,
+            first_seen,checked_at,file_count,ja_count,pending_count
             FROM ({inner}){where} ORDER BY {SORTS[sort]},key LIMIT ? OFFSET ?""",
             [*params, page_size, (page - 1) * page_size],
         )
@@ -306,22 +322,38 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             raise HTTPException(404, "Work not found.")
         work["metadata"] = json.loads(work["metadata"])
         work["authors"] = json.loads(work["authors"])
-        work["files"] = db.rows("SELECT * FROM files WHERE work_key=? ORDER BY id", (key,))
+        chinese = db.settings().download_chinese_uploads
+        hidden = "" if chinese else " AND mode!='zh-original'"
+        work["files"] = db.rows(f"SELECT * FROM files WHERE work_key=?{hidden} ORDER BY id", (key,))
         for file in work["files"]:
             file["report"] = json.loads(file["report"] or "null")
             file["raw_available"] = Path(file["raw_path"]).is_file()
             file["ja_available"] = bool(file["ja_path"] and Path(file["ja_path"]).is_file())
-        work["volumes"] = [
-            {
-                "index": i,
-                "volume_id": v["volumeId"],
-                "chinese_only": zh,
-                "translated": {
-                    k: v[k] for k in ("sakura", "gpt", "youdao", "baidu", "total") if k in v
-                },
-            }
-            for i, (v, zh) in enumerate(ordered_volumes(key, work["metadata"]), 1)
-        ]
+            file["zh_available"] = bool(file["zh_path"] and Path(file["zh_path"]).is_file())
+        metadata = work["metadata"]
+        for field in ("introduction", "introductionJp"):
+            # Uploaders paste HTML entities, often malformed ("&lt；"); Novelia's page decodes them.
+            if isinstance(metadata.get(field), str):
+                metadata[field] = unescape(metadata[field])
+        damaged = {
+            row["volume_id"]: row
+            for row in db.rows("SELECT * FROM damaged WHERE work_key=?", (key,))
+        }
+        work["volumes"] = []
+        for i, (v, zh) in enumerate(ordered_volumes(key, metadata, chinese), 1):
+            known = damaged.get(v["volumeId"])
+            work["volumes"].append(
+                {
+                    "index": i,
+                    "volume_id": v["volumeId"],
+                    "chinese_only": zh,
+                    "translated": {k: v[k] for k in (*ENGINES, "total") if k in v},
+                    # Only while the upload is the one found broken.
+                    "damaged": known["error"]
+                    if known and known["fingerprint"] == fingerprint({"volume": v})
+                    else None,
+                }
+            )
         return work
 
     @app.get("/api/jobs")
@@ -410,7 +442,7 @@ def create_app(data_root=None, download_root=None, start_worker=True):
 
     @app.get("/api/files/{file_id}/{variant}")
     def artifact(file_id: int, variant: str):
-        if variant not in ("raw", "ja", "reference"):
+        if variant not in ("raw", "ja", "zh", "reference"):
             raise HTTPException(404, "File variant not found.")
         row = db.row("SELECT * FROM files WHERE id=?", (file_id,))
         raw = row[variant + "_path"] if row else None
@@ -430,32 +462,10 @@ def create_app(data_root=None, download_root=None, start_worker=True):
     def export():
         stream = io.StringIO(newline="")
         writer = csv.writer(stream)
-        writer.writerow(
-            [
-                "key",
-                "category",
-                "title",
-                "title_zh",
-                "authors",
-                "publisher",
-                "volumes",
-                "checked_at",
-            ]
-        )
+        columns = ["key", "category", "title", "title_zh", "authors", "publisher"]
+        writer.writerow([*columns, "volumes", "checked_at"])
         for row in db.rows("SELECT * FROM works ORDER BY key"):
-            values = [
-                row[k]
-                for k in (
-                    "key",
-                    "category",
-                    "title",
-                    "title_zh",
-                    "authors",
-                    "publisher",
-                    "volume_count",
-                    "checked_at",
-                )
-            ]
+            values = [row[k] for k in (*columns, "volume_count", "checked_at")]
             # Titles are remote data; prevent spreadsheet formula execution on export.
             writer.writerow(
                 [

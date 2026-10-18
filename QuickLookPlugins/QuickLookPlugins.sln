@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickLook.Plugin.FolderViewer", "QuickLook.Plugin.FolderViewer\QuickLook.Plugin.FolderViewer.csproj", "{5C9ED1AD-718A-41B3-A650-414441595469}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickLook.Plugin.FolderViewer.Tests", "QuickLook.Plugin.FolderViewer.Tests\QuickLook.Plugin.FolderViewer.Tests.csproj", "{0081A675-3032-40F0-94C6-8BA98192B536}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickLook.Plugin.EpubViewer", "QuickLook.Plugin.EpubViewer\QuickLook.Plugin.EpubViewer.csproj", "{AC6D2AC2-F1F2-4FBE-8D7C-21AA1E1B2148}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5C9ED1AD-718A-41B3-A650-414441595469}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5C9ED1AD-718A-41B3-A650-414441595469}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5C9ED1AD-718A-41B3-A650-414441595469}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5C9ED1AD-718A-41B3-A650-414441595469}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0081A675-3032-40F0-94C6-8BA98192B536}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0081A675-3032-40F0-94C6-8BA98192B536}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0081A675-3032-40F0-94C6-8BA98192B536}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0081A675-3032-40F0-94C6-8BA98192B536}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AC6D2AC2-F1F2-4FBE-8D7C-21AA1E1B2148}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AC6D2AC2-F1F2-4FBE-8D7C-21AA1E1B2148}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AC6D2AC2-F1F2-4FBE-8D7C-21AA1E1B2148}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AC6D2AC2-F1F2-4FBE-8D7C-21AA1E1B2148}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

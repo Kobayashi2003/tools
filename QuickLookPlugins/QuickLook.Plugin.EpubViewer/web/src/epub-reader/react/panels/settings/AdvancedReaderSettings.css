@@ -1,0 +1,82 @@
+.epub-settings-panel__advanced-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.epub-settings-panel__advanced-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.epub-settings-panel__advanced-head h3 {
+  margin: 0;
+  font-size: 0.88rem;
+}
+.epub-settings-panel__advanced-head span {
+  color: var(--epub-color-text-muted);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.epub-settings-panel__advanced-head button {
+  padding-inline: 8px;
+  font-size: 0.7rem;
+}
+.epub-settings-panel__advanced-head .epub-settings-panel__back {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 50%;
+  background: var(--epub-color-surface-raised);
+  color: var(--epub-color-accent-strong);
+}
+
+.epub-settings-panel__advanced-head
+  .epub-settings-panel__back
+  .epub-reader-tool-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.epub-settings-panel__apply-bar {
+  position: sticky;
+  bottom: calc(-1 * max(var(--epub-space-4), env(safe-area-inset-bottom)));
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 2px -14px
+    calc(-1 * max(var(--epub-space-4), env(safe-area-inset-bottom)));
+  padding: 10px 14px max(10px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--epub-color-line);
+  background: color-mix(
+    in srgb,
+    var(--epub-color-surface-raised) 96%,
+    transparent
+  );
+  box-shadow: 0 -8px 20px rgba(20, 22, 20, 0.07);
+}
+
+.epub-settings-panel__apply-bar > span {
+  color: var(--epub-color-text-muted);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+.epub-settings-panel__compatibility-apply {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border-color: var(--epub-color-accent) !important;
+  background: var(--epub-color-accent) !important;
+  color: #fff !important;
+  font-size: 0.72rem !important;
+  font-weight: 700 !important;
+}

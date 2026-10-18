@@ -23,9 +23,45 @@
       <button id="job-update" class="btn primary" type="button" data-i18n-title="updateHint">
         <span aria-hidden="true">⟳</span> <span data-i18n="update">Update</span>
       </button>
-      <button id="job-older" class="btn" type="button" data-i18n-title="olderHint">
-        <span aria-hidden="true">↓</span> <span data-i18n="older">Older</span>
-      </button>
+      <div class="split" id="older-group">
+        <button id="job-older" class="btn split-main" type="button" data-i18n-title="olderHint">
+          <span aria-hidden="true">↓</span> <span data-i18n="older">Older</span>
+        </button>
+        <button id="older-toggle" class="btn split-toggle" type="button" aria-expanded="false"
+                aria-controls="older-options" data-i18n-title="olderOptions" aria-label="History options">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+        </button>
+        <div id="older-options" class="popover older-options" hidden>
+          <div class="opt-head" data-i18n="olderOptions">History options</div>
+          <div class="opt-grid">
+            <label for="older-blocks" data-i18n="olderBlocks">Blocks per run</label>
+            <div class="opt-inline">
+              <input id="older-blocks" type="number" min="1" max="99999" value="5">
+              <label class="check"><input id="older-all" type="checkbox"><span data-i18n="olderAll">All that are left</span></label>
+            </div>
+            <label for="older-digits" data-i18n="olderSize">Block size</label>
+            <div class="opt-inline">
+              <select id="older-digits" aria-label="Block size">
+                <option value="3" data-i18n="size3">10,000 ids</option>
+                <option value="4" data-i18n="size4">1,000 ids</option>
+                <option value="5" data-i18n="size5">100 ids</option>
+              </select>
+            </div>
+          </div>
+          <label class="check"><input id="older-stop-empty" type="checkbox"><span data-i18n="olderStopEmpty">Stop at the first block with no results</span></label>
+          <label class="check"><input id="older-range-on" type="checkbox"><span data-i18n="olderRange">Read an id range instead</span></label>
+          <div class="opt-inline opt-range" id="older-range-fields">
+            <span class="dim">FC2</span>
+            <input id="older-range-from" type="number" min="10000" placeholder="4802999" aria-label="From FC2 id">
+            <span class="dim">→</span>
+            <input id="older-range-to" type="number" min="10000" placeholder="4800000" aria-label="Down to FC2 id">
+          </div>
+          <p id="older-summary" class="opt-note"></p>
+          <div class="opt-actions">
+            <button id="older-run" class="btn primary small" type="button" data-i18n="olderRun">Run</button>
+          </div>
+        </div>
+      </div>
       <form id="search-form" class="search" autocomplete="off">
         <input id="search-query" type="search" data-i18n-placeholder="searchPlaceholder" aria-label="Sukebei query">
       </form>

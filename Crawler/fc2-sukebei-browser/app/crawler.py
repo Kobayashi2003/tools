@@ -17,6 +17,12 @@ The library only grows, along two edges, so it stays complete between them:
            5-digit blocks. Progress is saved after every block, so the walk resumes where it
            stopped and never leaves holes.
 
+           A run reads a number of blocks or everything that is left, optionally stopping at the
+           first block with no results. Blocks can be 3, 4 or 5 digits (10,000, 1,000 or 100
+           ids); changing the size mid-walk rescales the saved position, rereading at most part
+           of one block. A range run reads the blocks between two ids instead and leaves the
+           walk's position alone.
+
 Metadata per title runs in two stages with separate queues:
 
     fc2 stage  (several workers)  title, cover, seller, tags, sample images — fills cards quickly
@@ -44,10 +50,9 @@ AUTO_RETRY_ATTEMPTS = 3
 AUTO_RETRY_SECONDS = 180
 STAGES = ("fc2", "pp")
 URGENT, NEW, HISTORY = 0, 1, 2  # queue priorities, lowest first
-BLOCK_DIGITS = 4  # history blocks are 4-digit id prefixes,
-LAST_BLOCK = 10 ** (BLOCK_DIGITS - 1)  # 1000 ...
-FIRST_BLOCK = 10**BLOCK_DIGITS - 1  # ... 9999
-TOTAL_BLOCKS = FIRST_BLOCK - LAST_BLOCK + 1
+# History blocks are id prefixes of this many digits: 4 gives blocks 1000 ... 9999.
+BLOCK_DIGITS = 4
+BLOCK_DIGIT_CHOICES = (3, 4, 5)
 MAX_PREFIX_DIGITS = 8
 UPDATE_RETRY_SECONDS = 600  # after a failed or cancelled automatic Update
 
@@ -56,19 +61,52 @@ class Cancelled(Exception):
     pass
 
 
-def next_block(cursor, top):
+def block_bounds(digits: int) -> tuple[int, int]:
+    """Lowest and highest block of a size: (1000, 9999) for 4 digits."""
+    return 10 ** (digits - 1), 10**digits - 1
+
+
+def next_block(cursor: str, top: str) -> str | None:
     """The block after `cursor` in a walk that started at `top`, or None when it is complete."""
-    following = cursor - 1 if cursor > LAST_BLOCK else FIRST_BLOCK
-    return None if following == top else following
+    low, high = block_bounds(len(cursor))
+    value = int(cursor)
+    following = value - 1 if value > low else high
+    return None if following == int(top) else str(following)
 
 
-def blocks_read(top, cursor, done):
-    """How many blocks a walk that started at `top` has read when `cursor` is next."""
+def rescale(prefix: str, digits: int) -> str:
+    """The same walk position at another block size.
+
+    Finer blocks start at the highest sub-block (4782 -> 47829), so nothing is skipped; coarser
+    ones cover the whole block again (47829 -> 4782).
+    """
+    return prefix[:digits] if len(prefix) >= digits else prefix + "9" * (digits - len(prefix))
+
+
+def block_span(id_range: tuple[int, int], digits: int) -> tuple[str, str]:
+    """The (first, last) blocks covering two FC2 ids, highest first.
+
+    Both ids need the same number of digits: blocks of different id lengths do not line up.
+    """
+    high, low = sorted((str(int(i)) for i in id_range), key=int, reverse=True)
+    if len(high) != len(low):
+        raise ValueError("Give both ids with the same number of digits.")
+    if len(high) < digits:
+        raise ValueError(f"Ids need at least {digits} digits for {digits}-digit blocks.")
+    return high[:digits], low[:digits]
+
+
+def blocks_read(top: str | None, cursor: str | None, done: bool) -> tuple[int, int]:
+    """(blocks read, blocks in all) for a walk that started at `top` with `cursor` next."""
+    digits = len(cursor or top or "x" * BLOCK_DIGITS)
+    low, high = block_bounds(digits)
+    total = high - low + 1
     if done:
-        return TOTAL_BLOCKS
+        return total, total
     if top is None or cursor is None:
-        return 0
-    return top - cursor if cursor <= top else (top - LAST_BLOCK + 1) + (FIRST_BLOCK - cursor)
+        return 0, total
+    t, c = int(top), int(cursor)
+    return (t - c if c <= t else (t - low + 1) + (high - c)), total
 
 
 class StageQueue:
@@ -362,11 +400,30 @@ class Crawler:
 
     # --- crawl jobs ---------------------------------------------------------------------
 
-    def start_job(self, kind, blocks=5, query="", pages=None, check_files=False, source=None):
-        """Start an `update`, `older` (history blocks) or `search` job; one runs at a time."""
+    def start_job(
+        self,
+        kind: str,
+        blocks: int | None = 5,
+        query: str = "",
+        pages: int | None = None,
+        check_files: bool = False,
+        source: str | None = None,
+        block_digits: int = BLOCK_DIGITS,
+        stop_on_empty: bool = False,
+        id_range: tuple[int, int] | None = None,
+    ) -> dict:
+        """Start an `update`, `older` (history blocks) or `search` job; one runs at a time.
+
+        For `older`: `blocks` is how many blocks to read (None: all that are left),
+        `block_digits` the block size, `stop_on_empty` ends the run at a block with no results,
+        and `id_range` (two FC2 ids) reads that span instead of continuing the walk.
+        """
         runners = {"update": self._run_update, "older": self._run_older, "search": self._run_search}
         if kind not in runners:
             raise ValueError(f"Unknown job {kind!r}")
+        if block_digits not in BLOCK_DIGIT_CHOICES:
+            raise ValueError(f"Blocks are {', '.join(map(str, BLOCK_DIGIT_CHOICES))} digits")
+        span = block_span(id_range, block_digits) if id_range else None
         source = source or self.store.get_meta("crawl_source", "nyaa")
         if source not in sukebei.SOURCES:
             raise ValueError(f"Unknown source {source!r}")
@@ -382,7 +439,11 @@ class Crawler:
                 "query": (query or "").strip() or self.settings.default_query,
                 "pages": page_limit,
                 "source": source,
-                "blocks": max(1, int(blocks)),
+                "blocks": None if blocks is None else max(1, int(blocks)),
+                "block_digits": block_digits,
+                "stop_on_empty": bool(stop_on_empty),
+                "range": span,
+                "stopped_empty": None,
                 "check_files": bool(check_files),
                 "page": 0,
                 "pages_read": 0,
@@ -469,44 +530,76 @@ class Crawler:
                 "warn",
             )
 
-    def _run_older(self, job):
-        """History: the next `blocks` id blocks of the walk (see the module docstring)."""
-        if self.store.get_meta("history_done"):
-            return
+    def _history_position(self, digits: int) -> tuple[str, str]:
+        """(top, next block) of the walk at this block size, starting it if needed."""
         top = self.store.get_meta("history_top")
         cursor = self.store.get_meta("history_next")
         if cursor is None:
             newest = self.store.max_fc2_id()
             if not newest:
                 raise RuntimeError("The library is empty; run Update first.")
-            top = cursor = int(str(newest)[:BLOCK_DIGITS])
-            self.store.set_meta("history_top", top)
-        for _ in range(job["blocks"]):
+            top = cursor = str(newest)[:digits]
+        top, cursor = rescale(str(top), digits), rescale(str(cursor), digits)
+        self.store.set_meta("history_top", top)
+        self.store.set_meta("history_next", cursor)
+        return top, cursor
+
+    def _run_older(self, job: dict) -> None:
+        """History: the walk's next blocks, or the blocks of an id range (module docstring)."""
+        if job["range"]:
+            self._run_range(job)
+            return
+        if self.store.get_meta("history_done"):
+            return
+        top, cursor = self._history_position(job["block_digits"])
+        while job["blocks"] is None or job["blocks_done"] < job["blocks"]:
             job["block"] = cursor
-            self._read_block(str(cursor), job)  # raises on failure: the block stays next
+            found = self._read_block(cursor, job)  # raises on failure: the block stays next
             job["blocks_done"] += 1
-            cursor = next_block(cursor, top)
-            self.store.set_meta("history_next", cursor)
-            if cursor is None:
+            following = next_block(cursor, top)
+            self.store.set_meta("history_next", following)
+            if following is None:
                 self.store.set_meta("history_done", True)
                 self.log("History is complete: every FC2 id block has been read.")
                 return
+            if self._stop_at_empty(job, cursor, found):
+                return
+            cursor = following
 
-    def _read_block(self, prefix, job):
-        page = 1
+    def _run_range(self, job: dict) -> None:
+        """The blocks from one id down to another; the history walk's position is not touched."""
+        start, end = job["range"]
+        for value in range(int(start), int(end) - 1, -1):
+            block = str(value)
+            job["block"] = block
+            found = self._read_block(block, job)
+            job["blocks_done"] += 1
+            if self._stop_at_empty(job, block, found):
+                return
+
+    def _stop_at_empty(self, job: dict, block: str, found: int) -> bool:
+        if found or not job["stop_on_empty"]:
+            return False
+        job["stopped_empty"] = block
+        self.log(f"Stopped at block {block}: it has no results.")
+        return True
+
+    def _read_block(self, prefix: str, job: dict) -> int:
+        """Read every page of one block; returns how many results it had."""
+        page, found = 1, 0
         while True:
             listing = self._read_page(f"{prefix}*", page, HISTORY, job)
+            found += len(listing.torrents)
             if (
                 page == 1
                 and job["source"] == "nyaa"
                 and listing.total >= sukebei.MAX_RESULTS
                 and len(prefix) < MAX_PREFIX_DIGITS
             ):
-                for digit in "9876543210":  # too broad for one query: split it
-                    self._read_block(prefix + digit, job)
-                return
+                # Too broad for one query: split it.
+                return found + sum(self._read_block(prefix + digit, job) for digit in "9876543210")
             if not listing.has_next:
-                return
+                return found
             page += 1
 
     def _run_search(self, job):
@@ -580,21 +673,25 @@ class Crawler:
     def coverage(self):
         nxt = self.store.get_meta("history_next")
         top = self.store.get_meta("history_top")
+        nxt, top = (None if nxt is None else str(nxt)), (None if top is None else str(top))
         newest = self.store.max_fc2_id()
         done = bool(self.store.get_meta("history_done", False))
+        read, total = blocks_read(top, nxt, done)
         return {
             "top_block": int(str(newest)[:BLOCK_DIGITS]) if newest else None,
+            "newest_id": newest,
+            "history_digits": len(nxt or top or "x" * BLOCK_DIGITS),
             "newest_view_id": self.store.get_meta("newest_view_id"),
             "last_update_at": self.store.get_meta("last_update_at"),
             "update_gap": bool(self.store.get_meta("update_gap", False)),
-            "history_top": top,
-            "history_next": nxt,
-            # "main": newest block down to 1000; "short": 9999 down to just above the start
+            "history_top": None if top is None else int(top),
+            "history_next": None if nxt is None else int(nxt),
+            # "main": newest block down to the lowest; "short": the highest down to above the start
             "history_phase": "short"
-            if nxt is not None and top is not None and nxt > top
+            if nxt is not None and top is not None and int(nxt) > int(top)
             else "main",
-            "history_blocks": blocks_read(top, nxt, done),
-            "history_total": TOTAL_BLOCKS,
+            "history_blocks": read,
+            "history_total": total,
             "history_complete": done,
         }
 

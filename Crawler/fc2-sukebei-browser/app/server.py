@@ -26,8 +26,16 @@ class SourceRequest(BaseModel):
 
 class JobRequest(BaseModel):
     kind: Literal["update", "older", "search"] = "update"
-    blocks: int = Field(5, ge=1, le=500)
-    """For `older`: id blocks to read."""
+    blocks: int | None = Field(5, ge=1)
+    """For `older`: id blocks to read; null reads every block that is left."""
+    block_digits: int = Field(4, ge=3, le=5)
+    """For `older`: block size as id-prefix digits (3: 10,000 ids, 4: 1,000, 5: 100)."""
+    stop_on_empty: bool = False
+    """For `older`: end the run at the first block with no results."""
+    range_from: int | None = Field(None, ge=10_000)
+    """For `older`: read the blocks from this FC2 id ...."""
+    range_to: int | None = Field(None, ge=10_000)
+    """... down to this one, without moving the history walk."""
     query: str = ""
     """For `search`: the sukebei query."""
     pages: int | None = Field(None, ge=1)
@@ -231,7 +239,14 @@ def create_app(settings=None, start_worker=True, http=None):
                 pages=body.pages,
                 check_files=body.check_files,
                 source=body.source,
+                block_digits=body.block_digits,
+                stop_on_empty=body.stop_on_empty,
+                id_range=(body.range_from, body.range_to)
+                if body.range_from is not None and body.range_to is not None
+                else None,
             )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
 

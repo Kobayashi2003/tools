@@ -1,0 +1,62 @@
+.epub-contents__summary {
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--epub-color-line);
+  border-radius: var(--epub-radius-sm);
+  background: var(--epub-color-surface-raised);
+  color: var(--epub-color-text-muted);
+  font-size: 0.72rem;
+}
+
+.epub-contents__summary button {
+  min-height: 28px;
+  padding: 3px 8px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.epub-contents__toc {
+  display: grid;
+  gap: var(--epub-space-3);
+}
+
+.epub-contents__tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 6px;
+}
+
+.epub-contents__tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 9px;
+  border-color: transparent;
+  background: var(--epub-color-surface-muted);
+  color: var(--epub-color-text-muted);
+  font-size: 0.72rem;
+}
+
+.epub-contents__tabs button[aria-selected='true'] {
+  border-color: color-mix(
+    in srgb,
+    var(--epub-color-accent) 35%,
+    var(--epub-color-line)
+  );
+  background: var(--epub-color-accent-soft);
+  color: var(--epub-color-accent-strong);
+  font-weight: 700;
+}
+
+.epub-contents__tabs small {
+  min-width: 20px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}

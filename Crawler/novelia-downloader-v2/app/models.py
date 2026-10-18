@@ -12,8 +12,20 @@ class ConversionReport:
     restored_css: int = 0
     vertical: bool = False
     warnings: list[str] = field(default_factory=list)
+    # Chinese editions
+    kept_zh: int = 0
+    untranslated: int = 0
+    """Japanese lines with no translation, kept as they are."""
 
     def describe(self) -> str:
+        if self.kept_zh:
+            text = (
+                f"{self.chapters} chapter(s): kept {self.kept_zh} translated paragraph(s), "
+                f"dropped their Japanese lines"
+            )
+            if self.untranslated:
+                text += f", kept {self.untranslated} untranslated Japanese line(s)"
+            return text
         text = (
             f"{self.chapters} chapter(s): kept {self.kept_ja} Japanese "
             f"paragraph(s) + {self.kept_blank} blank line(s), "

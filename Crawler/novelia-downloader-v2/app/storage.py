@@ -3,7 +3,18 @@ import shutil
 import tempfile
 from pathlib import Path
 
-PATH_COLUMNS = ("raw_path", "ja_path", "reference_path")
+from .database import CHINESE, ORIGINAL_JP, ORIGINAL_ZH
+
+PATH_COLUMNS = ("raw_path", "ja_path", "zh_path", "reference_path")
+# Each edition has its own tree under the download directory, one folder per work inside.
+JAPANESE_FOLDER, CHINESE_FOLDER, BILINGUAL_FOLDER = "Japanese", "Chinese", "Bilingual"
+EDITION_FOLDERS = {"ja": JAPANESE_FOLDER, "zh": CHINESE_FOLDER}
+
+
+def mode_folder(mode: str) -> str:
+    if mode == ORIGINAL_JP:
+        return JAPANESE_FOLDER
+    return CHINESE_FOLDER if mode in (CHINESE, ORIGINAL_ZH) else BILINGUAL_FOLDER
 
 
 class Storage:
@@ -47,7 +58,7 @@ class Storage:
             if records and not any(
                 row[col] and Path(row[col]).is_file()
                 for row in records
-                for col in ("raw_path", "ja_path")
+                for col in ("raw_path", "ja_path", "zh_path")
             ):
                 keys.append(work)
         return keys

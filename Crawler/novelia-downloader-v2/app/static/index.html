@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Novelia Library</title>
     <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=16" />
+    <link rel="stylesheet" href="/static/style.css?v=17" />
     <script src="/static/ui.js?v=10" defer></script>
-    <script src="/static/app.js?v=14" defer></script>
+    <script src="/static/app.js?v=21" defer></script>
   </head>
   <body>
     <aside class="rail" id="sidebar">
@@ -78,10 +78,9 @@
           <button role="radio" data-state="metadata">Metadata only</button>
           <button role="radio" data-state="pending">Needs conversion</button>
           <button role="radio" data-state="japanese">Has Japanese</button>
-          <button role="radio" data-state="unverified">Unverified</button>
         </div>
 
-        <div id="library-list" class="content-region"></div>
+        <div id="library-list" class="content-region" tabindex="-1"></div>
         <nav class="pager" aria-label="Library pages">
           <span id="library-total"></span>
           <div>
@@ -113,7 +112,7 @@
           <button type="submit">Search</button>
         </form>
         <p id="catalog-caption" class="caption"></p>
-        <div id="catalog-list" class="content-region"></div>
+        <div id="catalog-list" class="content-region" tabindex="-1"></div>
         <nav class="pager" aria-label="Catalog pages">
           <span id="catalog-total"></span>
           <div>
@@ -179,7 +178,7 @@
           <section>
             <header class="settings-group-head"><h2>Automatic updates</h2><p>Keep your library up to date.</p></header><div class="settings-group-body">
             <div class="row">
-              <div><strong id="label-incremental_enabled">Sweep the light novel collection</strong><p>Checks every catalog page and volume, then downloads anything new or changed.</p></div>
+              <div><strong id="label-incremental_enabled">Sweep the light novel collection</strong><p>Checks the works uploaded to since the last sweep and downloads their new volumes.</p></div>
               <label class="switch"><input aria-labelledby="label-incremental_enabled" name="incremental_enabled" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             <div class="row">
@@ -189,23 +188,39 @@
             </div>
           </section>
           <section>
-            <header class="settings-group-head"><h2>Japanese editions</h2><p>Choose how Japanese EPUBs are prepared.</p></header><div class="settings-group-body">
+            <header class="settings-group-head"><h2>Conversion</h2><p>Editions built from bilingual downloads, for volumes with no Japanese original. Each conversion task can choose differently.</p></header><div class="settings-group-body">
             <div class="row">
-              <div><strong id="label-auto_convert">Convert after downloading</strong><p>Builds a Japanese-only EPUB next to each bilingual source.</p></div>
+              <div><strong id="label-auto_convert">Convert after downloading</strong><p>Builds the editions below next to each bilingual download.</p></div>
               <label class="switch"><input aria-labelledby="label-auto_convert" name="auto_convert" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             <div class="row">
-              <div><strong id="label-vertical">Vertical reading</strong><p>Restores the publisher's vertical layout and right-to-left page order.</p></div>
-              <label class="switch"><input aria-labelledby="label-vertical" name="vertical" type="checkbox" /><span aria-hidden="true"></span></label>
+              <div><strong id="label-convert_japanese">Japanese edition</strong><p>The Japanese paragraphs alone.</p></div>
+              <label class="switch"><input aria-labelledby="label-convert_japanese" name="convert_japanese" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             <div class="row">
-              <div><strong id="label-verify">Verify against the original</strong><p>Mismatches and missing references are saved as UNVERIFIED. Sources are always kept.</p></div>
-              <label class="switch"><input aria-labelledby="label-verify" name="verify" type="checkbox" /><span aria-hidden="true"></span></label>
+              <div><strong id="label-convert_chinese">Chinese edition</strong><p>The translations in Novelia's layout; lines without a translation stay Japanese.</p></div>
+              <label class="switch"><input aria-labelledby="label-convert_chinese" name="convert_chinese" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong id="label-vertical">Vertical reading</strong><p>Japanese edition: vertical layout and right-to-left page order.</p></div>
+              <label class="switch"><input aria-labelledby="label-vertical" name="vertical" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             </div>
           </section>
           <section>
-            <header class="settings-group-head"><h2>Download source</h2><p>Set languages and translation priority.</p></header><div class="settings-group-body">
+            <header class="settings-group-head"><h2>Download source</h2><p>Set formats, languages and translation priority.</p></header><div class="settings-group-body">
+            <div class="row">
+              <div><strong id="label-download_bilingual">Bilingual</strong><p>Japanese with the Chinese translation; the conversions above start from it.</p></div>
+              <label class="switch"><input aria-labelledby="label-download_bilingual" name="download_bilingual" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong id="label-download_japanese">Japanese original</strong><p>The upload itself, as the publisher made it. Downloaded again only when the upload changes.</p></div>
+              <label class="switch"><input aria-labelledby="label-download_japanese" name="download_japanese" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
+            <div class="row">
+              <div><strong id="label-download_chinese">Chinese</strong><p>Novelia's Chinese-only build, using the translations below.</p></div>
+              <label class="switch"><input aria-labelledby="label-download_chinese" name="download_chinese" type="checkbox" /><span aria-hidden="true"></span></label>
+            </div>
             <div class="row">
               <div><strong>Bilingual order</strong><p>Which language comes first in downloaded EPUBs.</p></div>
               <select name="source_mode" aria-label="Bilingual order">
@@ -225,11 +240,11 @@
               </select>
             </div>
             <div class="row">
-              <div><strong id="label-download_chinese_uploads">Chinese-only uploads</strong><p>Also save volumes that were uploaded only in Chinese. They have no Japanese text to convert.</p></div>
+              <div><strong id="label-download_chinese_uploads">Chinese-only uploads</strong><p>Also list and save volumes uploaded only in Chinese, with the other Chinese books. Novelia's pages no longer show them, many are broken, and they have no Japanese text to convert.</p></div>
               <label class="switch"><input aria-labelledby="label-download_chinese_uploads" name="download_chinese_uploads" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             <div class="row">
-              <div><strong id="label-original_fallback">Keep the original when bilingual fails</strong><p>Some uploads make Novelia's bilingual builder fail every time. Save the Japanese original as that volume's Japanese edition instead; later sweeps try the bilingual file again when the volume changes.</p></div>
+              <div><strong id="label-original_fallback">Keep the original when bilingual fails</strong><p>Some uploads make Novelia's bilingual builder fail every time. Keep the Japanese original as that volume's edition instead; later sweeps try the bilingual file again when the volume changes.</p></div>
               <label class="switch"><input aria-labelledby="label-original_fallback" name="original_fallback" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             <div class="row">
@@ -307,7 +322,7 @@
               <label class="unit"><input name="max_pauses" type="number" min="0" max="100" required aria-label="Maximum pauses in a row" />times</label>
             </div>
             <div class="row">
-              <div><strong>Automatic retry rounds</strong><p>At the end of a task, temporarily failed items are tried again. Permanent errors such as 404 or failed verification are left for you.</p></div>
+              <div><strong>Automatic retry rounds</strong><p>At the end of a task, temporarily failed items are tried again. Permanent errors such as 404 are left for you.</p></div>
               <label class="unit"><input name="retry_rounds" type="number" min="0" max="10" required aria-label="Automatic retry rounds" />rounds</label>
             </div>
             <div class="row">
@@ -357,9 +372,20 @@
         <header class="dialog-head"><h2 id="remove-title">Remove from library</h2><button type="button" class="icon-button" data-close="remove-dialog" aria-label="Close">✕</button></header>
         <p id="remove-description"></p>
         <ul id="remove-items" class="removal-items"></ul>
-        <label class="check" id="delete-files-option"><input id="delete-local-files" type="checkbox" /> Also delete saved EPUB files, Japanese editions and references</label>
+        <label class="check" id="delete-files-option"><input id="delete-local-files" type="checkbox" /> Also delete saved files and converted editions</label>
         <p class="hint">Removed works can appear again in a later download or update sweep.</p>
         <footer class="dialog-foot"><button type="button" data-close="remove-dialog">Cancel</button><button type="submit" class="danger">Remove</button></footer>
+      </form>
+    </dialog>
+    <dialog id="convert-dialog" aria-labelledby="convert-title">
+      <form id="convert-form" class="management-form">
+        <header class="dialog-head"><h2 id="convert-title">Convert bilingual volumes</h2><button type="button" class="icon-button" data-close="convert-dialog" aria-label="Close">✕</button></header>
+        <p id="convert-description"></p>
+        <div class="fields checks">
+          <label class="check"><input name="convert_japanese" type="checkbox" /> Japanese edition <small>The Japanese paragraphs alone</small></label>
+          <label class="check"><input name="convert_chinese" type="checkbox" /> Chinese edition <small>The translations; untranslated lines stay Japanese</small></label>
+        </div>
+        <footer class="dialog-foot"><button type="button" data-close="convert-dialog">Cancel</button><button type="submit" class="primary">Start conversion</button></footer>
       </form>
     </dialog>
     <dialog id="crawl-dialog" aria-labelledby="crawl-title">
@@ -372,8 +398,8 @@
           <legend>What to download</legend>
           <label><input type="radio" name="kind" value="range" checked /><span><strong>Catalog pages</strong>A page range of one category</span></label>
           <label><input type="radio" name="kind" value="manual" /><span><strong>Specific works</strong>IDs or Novelia URLs</span></label>
-          <label><input type="radio" name="kind" value="incremental" /><span><strong>Update sweep</strong>New and changed light novels</span></label>
-          <label><input type="radio" name="kind" value="full" /><span><strong>Everything</strong>The whole light novel collection</span></label>
+          <label><input type="radio" name="kind" value="incremental" /><span><strong>Update sweep</strong>Works with uploads since the last sweep</span></label>
+          <label><input type="radio" name="kind" value="full" /><span><strong>Everything</strong>Every work, including newer translations</span></label>
         </fieldset>
         <div id="range-fields" class="fields">
           <label>Category<select name="category" id="crawl-category"></select></label>

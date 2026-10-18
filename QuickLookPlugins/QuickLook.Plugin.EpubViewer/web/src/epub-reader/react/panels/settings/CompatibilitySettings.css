@@ -1,0 +1,116 @@
+.epub-settings-panel__compatibility-option > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.epub-settings-panel__compatibility-option small {
+  color: var(--epub-color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.epub-settings-panel__advanced-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 13px 14px;
+  border: 1px solid
+    color-mix(in srgb, var(--epub-color-accent) 18%, var(--epub-color-line));
+  border-radius: var(--epub-radius-md);
+  background: var(--epub-color-accent-soft);
+}
+
+.epub-settings-panel__advanced-intro > div {
+  display: grid;
+  gap: 2px;
+}
+.epub-settings-panel__advanced-intro > div span {
+  color: var(--epub-color-accent-strong);
+  font-size: 0.6rem;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.epub-settings-panel__advanced-intro > div strong {
+  font-size: 0.82rem;
+}
+.epub-settings-panel__advanced-intro > button {
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 0.66rem;
+}
+.epub-settings-panel__advanced-intro > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--epub-color-text-muted);
+  font-size: 0.69rem;
+  line-height: 1.45;
+}
+
+.epub-settings-panel__compatibility-group {
+  gap: 8px;
+}
+
+.epub-settings-panel__compatibility-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+}
+
+.epub-settings-panel__compatibility-option
+  + .epub-settings-panel__compatibility-option {
+  border-top: 1px solid var(--epub-color-line);
+}
+
+.epub-settings-panel__compatibility-option input {
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--epub-color-line-strong);
+  border-radius: 999px;
+  background: var(--epub-color-surface-muted);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.epub-settings-panel__compatibility-option input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--epub-color-surface-raised);
+  box-shadow: 0 1px 3px rgba(20, 22, 20, 0.24);
+  transition: transform 140ms ease;
+}
+
+.epub-settings-panel__compatibility-option input:checked {
+  border-color: var(--epub-color-accent);
+  background: var(--epub-color-accent);
+}
+
+.epub-settings-panel__compatibility-option input:checked::after {
+  transform: translateX(16px);
+}
+
+.epub-settings-panel__compatibility-option.is-required > span:last-child {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--epub-color-surface-muted);
+  color: var(--epub-color-text-muted);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}

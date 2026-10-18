@@ -1,0 +1,296 @@
+.epub-marks-panel__meta i.is-yellow,
+.epub-mark-editor__colors button.is-yellow {
+  --epub-highlight: var(--epub-highlight-yellow);
+}
+.epub-marks-panel__meta i.is-orange,
+.epub-mark-editor__colors button.is-orange {
+  --epub-highlight: var(--epub-highlight-orange);
+}
+.epub-marks-panel__meta i.is-pink,
+.epub-mark-editor__colors button.is-pink {
+  --epub-highlight: var(--epub-highlight-pink);
+}
+.epub-marks-panel__meta i.is-green,
+.epub-mark-editor__colors button.is-green {
+  --epub-highlight: var(--epub-highlight-green);
+}
+.epub-marks-panel__meta i.is-blue,
+.epub-mark-editor__colors button.is-blue {
+  --epub-highlight: var(--epub-highlight-blue);
+}
+.epub-marks-panel__meta i.is-purple,
+.epub-mark-editor__colors button.is-purple {
+  --epub-highlight: var(--epub-highlight-purple);
+}
+
+.epub-mark-editor {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  border-top: 1px solid var(--epub-color-line);
+  background: var(--epub-color-surface-raised);
+}
+
+.epub-mark-editor__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  border-bottom: 1px solid var(--epub-color-line);
+  background: color-mix(
+    in srgb,
+    var(--epub-color-surface-muted) 58%,
+    var(--epub-color-surface-raised)
+  );
+}
+
+.epub-mark-editor__header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.epub-mark-editor__header strong {
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.epub-mark-editor__header span {
+  overflow: hidden;
+  color: var(--epub-color-text-muted);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epub-mark-editor .epub-mark-editor__close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--epub-color-text-muted);
+}
+
+.epub-mark-editor__close .epub-reader-tool-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.epub-mark-editor__body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.epub-mark-editor label,
+.epub-mark-editor fieldset {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.epub-mark-editor label > span,
+.epub-mark-editor legend {
+  color: var(--epub-color-text-muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+}
+
+.epub-mark-editor fieldset legend {
+  margin-bottom: 8px;
+}
+
+.epub-mark-editor textarea,
+.epub-mark-editor input,
+.epub-mark-editor select {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--epub-color-line);
+  border-radius: var(--epub-radius-sm);
+  background: var(--epub-color-surface-raised);
+  color: var(--epub-color-text);
+  font: inherit;
+}
+
+.epub-mark-editor textarea {
+  padding: 8px;
+  min-height: 62px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.epub-mark-editor input,
+.epub-mark-editor select {
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+.epub-mark-editor__colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.epub-mark-editor__colors button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--epub-highlight);
+}
+
+.epub-mark-editor__appearance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.epub-mark-editor__styles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.epub-mark-editor__styles button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border-color: var(--epub-color-line);
+  background: var(--epub-color-surface-raised);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.epub-mark-editor__styles button[aria-pressed='true'] {
+  border-color: var(--epub-color-accent);
+  background: var(--epub-color-accent-soft);
+  color: var(--epub-color-accent-strong);
+}
+
+.epub-mark-editor__styles button > span {
+  width: 24px;
+  flex: 0 0 auto;
+  color: var(--epub-color-text);
+  font-family: Georgia, serif;
+  text-align: center;
+}
+
+.epub-mark-editor__styles .is-solid {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--epub-highlight-yellow) 40%, transparent);
+}
+
+.epub-mark-editor__styles .is-underline {
+  text-decoration: underline 2px var(--epub-highlight-yellow);
+  text-underline-offset: 3px;
+}
+
+.epub-mark-editor__styles .is-strikethrough {
+  text-decoration: line-through 2px var(--epub-highlight-yellow);
+}
+
+.epub-mark-editor__styles .is-outline {
+  border: 1px solid #d2ae32;
+  border-radius: 3px;
+}
+
+.epub-mark-editor__colors button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--epub-highlight);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--epub-color-text) 34%, transparent);
+}
+
+.epub-mark-editor__colors button[aria-pressed='true'] {
+  border-color: var(--epub-color-surface-raised);
+  box-shadow: 0 0 0 2px var(--epub-color-accent-strong);
+}
+
+.epub-mark-editor footer,
+.epub-mark-editor footer > div,
+.epub-mark-editor__confirm,
+.epub-mark-editor__confirm > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.epub-mark-editor footer {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-top: 1px solid var(--epub-color-line);
+  background: var(--epub-color-surface-muted);
+}
+
+.epub-mark-editor footer button {
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.epub-mark-editor footer > div {
+  margin-left: auto;
+}
+
+.epub-mark-editor footer.is-confirming {
+  gap: 8px;
+  padding: 10px 14px;
+  background: #fbeae6;
+  color: #782d25;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.epub-mark-editor .is-danger-text {
+  border-color: transparent;
+  background: transparent;
+  color: var(--epub-color-danger);
+}
+.epub-mark-editor .is-danger {
+  border-color: #8d3b31;
+  background: #8d3b31;
+  color: #fff;
+}
+.epub-mark-editor__confirm > span {
+  min-width: 0;
+  color: inherit;
+  font-size: 0.66rem;
+  font-weight: inherit;
+  white-space: nowrap;
+}
+
+.epub-mark-editor footer > .epub-mark-editor__confirm {
+  justify-content: space-between;
+  width: 100%;
+  margin: 0;
+}
+
+.epub-mark-editor__confirm > div {
+  gap: 4px;
+  margin-left: auto;
+}
+
+.epub-mark-editor__confirm button {
+  min-height: var(--epub-control-sm);
+  padding: 6px 9px;
+}
+
+.epub-mark-editor__confirm button:not(.is-danger) {
+  border-color: transparent;
+  background: transparent;
+}

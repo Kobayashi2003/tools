@@ -1,0 +1,89 @@
+.epub-contents__toc ol {
+  list-style: none;
+  padding: 0;
+}
+
+.epub-contents__toc ol ol {
+  margin: 4px 0 0 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--epub-color-line);
+}
+
+.epub-contents__summary,
+.epub-contents__item {
+  display: flex;
+  align-items: center;
+}
+
+.epub-contents__item {
+  position: relative;
+  gap: 2px;
+}
+
+.epub-contents__disclosure,
+.epub-contents__leaf {
+  width: 25px;
+  flex: 0 0 25px;
+}
+
+.epub-contents__disclosure {
+  position: relative;
+  z-index: 1;
+  min-height: 31px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--epub-color-text-muted);
+}
+
+/* Root entries use the full panel width; the disclosure/leaf gutter is kept
+   inside the button so the visible cards remain optically centered. */
+.epub-contents__toc > ol > li > .epub-contents__item > .epub-contents__link,
+.epub-contents__toc > ol > li > .epub-contents__item > .epub-contents__label {
+  flex: 1 1 auto;
+  width: auto;
+  margin-inline-start: -27px;
+  padding-inline-start: 37px;
+}
+
+.epub-contents__disclosure span {
+  display: block;
+  font-size: 1.15rem;
+  transform: rotate(90deg);
+  transition: transform var(--epub-motion-fast);
+}
+
+.epub-contents__disclosure[aria-expanded='false'] span {
+  transform: rotate(0);
+}
+
+.epub-contents__link {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--epub-color-text-muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  border-radius: var(--epub-radius-sm);
+  text-align: left;
+}
+
+.epub-contents__label {
+  padding: 9px 10px;
+  color: var(--epub-color-text);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.epub-contents__link:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--epub-color-surface-muted);
+}
+
+.epub-contents__link[aria-current='location'] {
+  background: var(--epub-color-accent-soft);
+  color: var(--epub-color-accent-strong);
+  font-weight: 700;
+}

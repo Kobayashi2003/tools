@@ -6,6 +6,7 @@ import math
 import os
 import random
 import re
+import struct
 import threading
 import time
 import zipfile
@@ -55,6 +56,10 @@ class Rejected(RuntimeError):
     """A permanent HTTP refusal such as 404; retrying will not help."""
 
 
+class DamagedUpload(ValueError):
+    """Novelia's stored file is itself broken; downloading it again returns the same bytes."""
+
+
 def fingerprint(data):
     return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
@@ -69,28 +74,108 @@ def component(text, limit=65):
 def validate_epub(path):
     """Accept what e-readers open. Uploads are often rebuilt by tools such as calibre, which can
     leave an empty mimetype entry or a bad checksum on a directory entry; neither affects content."""
+    validate_text(path)
     try:
         with zipfile.ZipFile(path) as z:
             names = z.namelist()
+            if "META-INF/container.xml" not in names or not any(n.endswith(".opf") for n in names):
+                raise DamagedUpload("Novelia's copy of this volume has no EPUB package metadata.")
             mimetype = z.read("mimetype").strip() if "mimetype" in names else b""
             if mimetype and b"epub" not in mimetype:
-                raise ValueError("The file is not an EPUB.")
-            if "META-INF/container.xml" not in names or not any(n.endswith(".opf") for n in names):
-                raise ValueError("EPUB package metadata is missing.")
+                raise DamagedUpload("Novelia's copy of this volume has a corrupt mimetype entry.")
             for info in z.infolist():
                 if not info.is_dir():
                     with z.open(info) as entry:  # reading to the end checks the CRC
                         while entry.read(1 << 20):
                             pass
     except zipfile.BadZipFile, zlib.error, EOFError:
-        raise ValueError(
+        with path.open("rb") as raw:
+            starts_as_zip = raw.read(4) == b"PK\x03\x04"
+            raw.seek(max(0, path.stat().st_size - 65558))  # the end record and longest comment
+            truncated = starts_as_zip and b"PK\x05\x06" not in raw.read()
+        if truncated:
+            raise DamagedUpload(
+                f"Novelia's copy of this volume is cut off at {path.stat().st_size / 2**20:.1f} MB "
+                "(damaged upload)."
+            ) from None
+        raise DamagedUpload(
             "Novelia's copy of this volume is not a valid EPUB (damaged upload)."
         ) from None
 
 
 def validate_text(path):
     if not path.stat().st_size:
-        raise ValueError("Novelia's copy of this volume is empty.")
+        raise DamagedUpload("Novelia's copy of this volume is empty.")
+
+
+# Entries an e-reader can do without: a broken picture still leaves the book readable.
+MEDIA = re.compile(r"(?i)\.(?:jpe?g|png|gif|webp|bmp|svg|ttf|otf|woff2?|mp3|m4a|mp4)$")
+
+
+def recover_entry(raw, info):
+    """Whatever inflates from an entry whose checksum or compressed data is bad."""
+    raw.seek(info.header_offset)
+    header = raw.read(30)
+    if header[:4] != b"PK\x03\x04":
+        return b""
+    name_length, extra_length = struct.unpack("<HH", header[26:30])
+    raw.seek(info.header_offset + 30 + name_length + extra_length)
+    compressed = raw.read(info.compress_size)
+    if info.compress_type == zipfile.ZIP_STORED:
+        return compressed
+    if info.compress_type != zipfile.ZIP_DEFLATED:
+        return b""
+    inflater = zlib.decompressobj(-15)
+    chunks = []
+    for start in range(0, len(compressed), 1 << 16):
+        try:
+            chunks.append(inflater.decompress(compressed[start : start + (1 << 16)]))
+        except zlib.error:
+            break
+    return b"".join(chunks)
+
+
+def salvage_epub(path):
+    """Rebuild an upload whose text is intact but whose mimetype entry or some images or fonts
+    are corrupt. Return the repaired entry names, or None when the text itself is damaged."""
+    entries, repaired = [], []
+    try:
+        with zipfile.ZipFile(path) as z, path.open("rb") as raw:
+            mimetype = z.read("mimetype").strip() if "mimetype" in z.namelist() else b""
+            if mimetype and b"epub" not in mimetype:
+                repaired.append("mimetype")
+            for info in z.infolist():
+                if info.is_dir() or info.filename == "mimetype":
+                    continue
+                try:
+                    data = z.read(info)
+                except zipfile.BadZipFile, zlib.error, EOFError:
+                    if not MEDIA.search(info.filename):
+                        return None
+                    data = recover_entry(raw, info)
+                    repaired.append(info.filename)
+                entries.append((info.filename, data))
+    except zipfile.BadZipFile, zlib.error, EOFError, KeyError:
+        return None
+    if not repaired:
+        return None
+    rebuilt = path.with_suffix(path.suffix + ".fix")
+    try:
+        with zipfile.ZipFile(rebuilt, "w", zipfile.ZIP_DEFLATED) as out:
+            out.writestr(
+                zipfile.ZipInfo("mimetype"),
+                b"application/epub+zip",
+                compress_type=zipfile.ZIP_STORED,
+            )
+            for name, data in entries:
+                out.writestr(name, data)
+        validate_epub(rebuilt)
+        rebuilt.replace(path)
+    except DamagedUpload:
+        return None
+    finally:
+        rebuilt.unlink(missing_ok=True)
+    return repaired
 
 
 def validator(destination):
@@ -175,6 +260,8 @@ class Client:
         self.interactive = interactive
         self.downloads = 0
         self.rest_due = False
+        self.repaired: list[str] = []
+        """Entries rebuilt in the last download's file, for the caller to report."""
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -337,7 +424,7 @@ class Client:
         with self.get(path, params=params, stream=True) as response, temp.open("wb") as out:
             expected = response.headers.get("Content-Length")
             if expected == "0":
-                raise ValueError("Novelia's copy of this volume is empty.")
+                raise DamagedUpload("Novelia's copy of this volume is empty.")
             size = 0
             digest = hashlib.sha256()
             for chunk in response.iter_content(65536):
@@ -354,16 +441,23 @@ class Client:
         try:
             validate(temp)
         except ValueError as exc:
-            if verified_length:
-                raise  # the complete file arrived and is not an EPUB: retrying will not help
-            # Without a length to compare, a cut-off transfer only shows up as a broken archive.
-            raise IncompleteTransfer(str(exc)) from None
+            if not verified_length:
+                # Without a length to compare, a cut-off transfer only shows up as a broken archive.
+                raise IncompleteTransfer(str(exc)) from None
+            # The complete file arrived broken: retrying will not help, but repairing might.
+            repaired = salvage_epub(temp) if validate is validate_epub else None
+            if not repaired:
+                raise
+            self.repaired = repaired
+            with temp.open("rb") as rebuilt:
+                return temp.stat().st_size, hashlib.file_digest(rebuilt, "sha256").hexdigest()
         return size, digest.hexdigest()
 
     def download(self, path, destination, params=None):
         destination.parent.mkdir(parents=True, exist_ok=True)
         temp = destination.with_suffix(destination.suffix + ".part")
         validate = validator(destination)
+        self.repaired = []
         try:
             for attempt in range(1, self.config.retries + 1):
                 try:
@@ -392,12 +486,14 @@ class Client:
         )
         return size, digest
 
-    def source(self, key, volume, destination, original=False):
+    def source(self, key, volume, destination, original=False, chinese=False):
+        """Download the bilingual build of a volume, its uploaded original, or (`chinese`)
+        Novelia's Chinese-only build."""
         parts = key.split("/", 1)
         # Text volumes come back as text from the same endpoints (bilingual lines interleaved),
         # whatever the filename parameter says.
         params = [
-            ("mode", self.config.source_mode),
+            ("mode", "zh" if chinese else self.config.source_mode),
             ("translationsMode", self.config.translations_mode),
             ("filename", "download.epub"),
         ]

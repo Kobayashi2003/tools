@@ -143,7 +143,8 @@
   .chips button { border-color: transparent; border-radius: 4px; min-height: 28px; padding: 3px 9px; font-size: 12px; font-weight: 500; background: transparent; color: var(--muted); }
   .chips button[aria-checked="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .caption { color: var(--muted); margin-bottom: 16px; min-height: 1.5em; font-size: 13px; }
-  .content-region { position: relative; min-height: 180px; }
+  .content-region { position: relative; min-height: 180px; scroll-margin-top: 24px; }
+  .content-region:focus { outline: none; }
   .content-region[aria-busy="true"] { opacity: .55; pointer-events: none; }
   .content-region[aria-busy="true"]::before { content: "Loading…"; position: absolute; top: 8px; right: 8px; padding: 4px 8px; background: var(--surface); color: var(--ink); z-index: 3; border-radius: 4px; font-size: 12px; }
   .books { display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 28px 24px; }
