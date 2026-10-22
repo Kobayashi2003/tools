@@ -1,6 +1,9 @@
 .claude/
 .vscode/
 
+# Playwright
+.playwright-mcp
+
 # Python
 .venv/
 __pycache__/
