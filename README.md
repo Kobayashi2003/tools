@@ -1,6 +1,8 @@
 # tools
 
-Personal utilities, grouped by where they run. Ports follow [PORTS.md](../PORTS.md).
+Personal utilities, grouped by where they run. Each group's README lists its
+projects; `Crawler/` owns a port range ([PORTS.md](../PORTS.md)) and lists the
+slots there.
 
 | Folder | What it is |
 |---|---|

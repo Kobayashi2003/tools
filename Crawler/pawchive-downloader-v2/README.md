@@ -11,7 +11,7 @@ Needs [Python 3.14](https://www.python.org/downloads/). The first start sets up 
 ```powershell
 .\start.ps1     # http://127.0.0.1:18060/
 .\stop.ps1
-.venv\Scripts\python main.py import-v1 ..\pawchive-downloader   # bring over v1's state
+.venv\Scripts\python main.py import-v1 ..\..\..\garbage\crawler\pawchive-downloader   # bring over v1's state
 ```
 
 Unfinished jobs resume after a restart.
