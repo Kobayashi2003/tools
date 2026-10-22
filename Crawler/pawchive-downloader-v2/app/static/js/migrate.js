@@ -1,4 +1,4 @@
-import { api, at, attempt, esc, localTime, toast } from './api.js';
+import { api, at, attempt, esc, isActive, localTime, toast } from './api.js';
 import { on } from './live.js';
 
 const STATUS = {
@@ -141,7 +141,7 @@ function watchJob() {
     if (!M || M.job == null) return off();
     const j = jobs.find((x) => x.id === M.job);
     if (!j) return; // a snapshot from before the job was queued
-    if (j.status === 'queued' || j.status === 'running') {
+    if (isActive(j)) {
       M.progress = j.progress;
       const line = M.el.querySelector('#mig-progress');
       if (line) line.textContent = M.progress || 'Executing…';

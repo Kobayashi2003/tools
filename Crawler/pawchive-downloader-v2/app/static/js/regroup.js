@@ -54,7 +54,7 @@ async function confirmGroup(from, to, creators) {
 
 // The rename dialog takes a full path, so it also moves a group anywhere, or merges it into
 // one that exists.
-export async function editGroup(key, creators) {
+async function editGroup(key, creators) {
   const n = creators.filter((c) => inside(c.group || '', key)).length;
   const v = await dialog({
     title: `Rename or move ${leaf(key)}`,

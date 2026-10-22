@@ -77,9 +77,7 @@ def move_creator(
     alias: str | None = None,
     progress: Callable[[str], None] = lambda _m: None,
 ) -> str:
-    creator = ctx.creator(creator_id)
-    if creator is None:
-        raise KeyError(creator_id)
+    creator = ctx.require_creator(creator_id)
     group = clean_group(group)
     new_alias: str = creator["alias"] if alias is None else alias.strip()
     plan = preview(ctx, creator, group, new_alias)

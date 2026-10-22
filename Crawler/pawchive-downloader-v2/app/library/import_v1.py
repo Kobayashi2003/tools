@@ -125,8 +125,7 @@ def import_v1(ctx: Context, root: Path, progress=lambda _m: None) -> dict:
         cache = read_json(root / "cache" / f"{cid}_posts.json", []) or []
         if not cache:
             continue
-        creator = ctx.creator(cid)
-        assert creator is not None
+        creator = ctx.require_creator(cid)
         config = a.get("config") or {}
         base = Path(settings.download_dir) / creator_folder(
             config.get("artist_folder_template", settings.artist_folder_template),
@@ -175,7 +174,8 @@ def import_v1(ctx: Context, root: Path, progress=lambda _m: None) -> dict:
                 )
                 if p.get("done") and not failed:
                     conn.execute(
-                        "UPDATE files SET state='done', via='v1', done_at=? WHERE creator_id=? AND post_id=?",
+                        "UPDATE files SET state='done', via='pawchive', done_at=? "
+                        "WHERE creator_id=? AND post_id=?",
                         (now, cid, pid),
                     )
                     conn.execute(
@@ -193,7 +193,7 @@ def import_v1(ctx: Context, root: Path, progress=lambda _m: None) -> dict:
                     # Files v1 got before the failure are on disk; its post is undone only
                     # because of the failed ones.
                     conn.execute(
-                        f"UPDATE files SET state='done', via='v1', done_at=? WHERE creator_id=? "
+                        f"UPDATE files SET state='done', via='pawchive', done_at=? WHERE creator_id=? "
                         f"AND post_id=? AND state='pending' AND local_name NOT IN ({marks})",
                         (now, cid, pid, *failed),
                     )

@@ -51,17 +51,70 @@ class Storage:
             count = conn.execute(f"DELETE FROM works WHERE key IN ({marks})", keys).rowcount
         return {"removed": count}
 
-    def missing(self):
-        keys = []
-        for work in self.db.rows("SELECT key,title FROM works ORDER BY title"):
-            records = self.db.rows("SELECT * FROM files WHERE work_key=?", (work["key"],))
-            if records and not any(
-                row[col] and Path(row[col]).is_file()
-                for row in records
-                for col in ("raw_path", "ja_path", "zh_path")
-            ):
-                keys.append(work)
-        return keys
+    @staticmethod
+    def gone(record):
+        """What of a record is no longer on disk: whether the downloaded file is (with nothing
+        converted from it left either, so the record can go), and the converted editions."""
+        converted = [
+            col
+            for col in ("ja_path", "zh_path")
+            if record[col] and record[col] != record["raw_path"]
+        ]
+        missing = [col for col in converted if not Path(record[col]).is_file()]
+        raw = not Path(record["raw_path"]).is_file() and len(missing) == len(converted)
+        return raw, missing
+
+    def missing(self, keys=()):
+        """Works with files recorded as downloaded that are no longer on disk."""
+        where = f" AND f.work_key IN ({','.join('?' * len(keys))})" if keys else ""
+        works = {}
+        for record in self.db.rows(
+            "SELECT f.*,w.title,w.title_zh FROM files f JOIN works w ON w.key=f.work_key "
+            f"WHERE 1{where} ORDER BY w.title,f.volume_id",
+            list(keys),
+        ):
+            raw, columns = self.gone(record)
+            if not raw and not columns:
+                continue
+            work = works.setdefault(
+                record["work_key"],
+                {
+                    "key": record["work_key"],
+                    "title": record["title"],
+                    "title_zh": record["title_zh"],
+                    "files": [],
+                },
+            )
+            work["files"].append(
+                {
+                    "id": record["id"],
+                    "volume_id": record["volume_id"],
+                    "mode": record["mode"],
+                    "record": raw,
+                    "editions": [col.removesuffix("_path") for col in columns],
+                }
+            )
+        return list(works.values())
+
+    def forget(self, records):
+        """Drop what `gone` finds of these records, checked again now: a file restored since
+        is kept."""
+        removed = cleared = 0
+        for record in records:
+            raw, columns = self.gone(record)
+            with self.db.connect() as conn:
+                if raw:
+                    removed += conn.execute(
+                        "DELETE FROM files WHERE id=? AND raw_path=?",
+                        (record["id"], record["raw_path"]),
+                    ).rowcount
+                    continue
+                for col in columns:
+                    cleared += conn.execute(
+                        f"UPDATE files SET {col}=NULL WHERE id=? AND {col}=?",
+                        (record["id"], record[col]),
+                    ).rowcount
+        return {"records": removed, "editions": cleared}
 
     def change_directory(self, value, migrate):
         target = Path(value).expanduser()

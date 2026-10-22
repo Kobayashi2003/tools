@@ -1,4 +1,4 @@
-import { ago, api, attempt, esc, groupEvents, localTime } from './api.js';
+import { ago, api, attempt, esc, groupEvents, isActive, localTime } from './api.js';
 import { I } from './icons.js';
 import { on, patchRows } from './live.js';
 
@@ -18,7 +18,7 @@ function jobRow(j) {
     <td><span class="chip ${k}">${t}</span></td>
     <td><span class="clip ${j.error ? 'lvl-error' : ''}" title="${esc(text)}">${esc(text)}</span></td>
     <td class="muted nowrap">${esc(ago(j.started_at || j.created_at))}</td>
-    <td class="acts">${j.status === 'running' || j.status === 'queued' ? `<button class="linkbtn" type="button" data-cancel="${j.id}">Cancel</button>` : ''}</td></tr>`;
+    <td class="acts">${isActive(j) ? `<button class="linkbtn" type="button" data-cancel="${j.id}">Cancel</button>` : ''}</td></tr>`;
 }
 
 function logRow(g) {
@@ -31,6 +31,15 @@ function logRow(g) {
 }
 
 const placeholder = (cols, text) => [{ key: 'empty', html: `<tr><td colspan="${cols}" class="empty-cell">${text}</td></tr>` }];
+const moreRow = (key, cols, text, attr) => ({ key, html: `<tr class="more-row"><td colspan="${cols}"><button class="linkbtn" type="button" ${attr}>${text}</button></td></tr>` });
+
+// However many jobs are queued, the page shows every running one, a slice of the queue
+// and a slice of the history, each widened on request.
+const QUEUE_STEP = 20;
+const HISTORY_STEP = 50;
+const LOG_PAGE = 300;
+// Finished jobs the stream carries (the server's JOBS_SHOWN).
+const STREAM_HISTORY = 100;
 
 export function mountJobs(el) {
   unmount();
@@ -38,7 +47,7 @@ export function mountJobs(el) {
     <div class="view-head"><div><h1>Jobs</h1><p class="lede">One job per creator at a time. Unfinished jobs resume after a restart.</p></div>
       <div class="row-inline"><button class="btn" type="button" data-all="sync">${I.sync}Sync all</button><button class="btn" type="button" data-all="download">${I.dl}Download all</button><button class="btn danger" type="button" data-stopall disabled>${I.stop}Stop all</button></div></div>
     <section class="panel flush">
-      <div class="panel-head pad"><h2>Queue and history</h2>
+      <div class="panel-head pad"><h2>Queue and history <span class="muted" id="job-counts"></span></h2>
         <label class="check"><input type="checkbox" data-probes ${showProbes ? 'checked' : ''}> Show background Fanbox checks<span id="probe-n"></span></label></div>
       <div class="table fixed bare"><table>
         <colgroup><col style="width:56px"><col style="width:132px"><col style="width:22%"><col style="width:104px"><col><col style="width:104px"><col style="width:72px"></colgroup>
@@ -58,21 +67,65 @@ export function mountJobs(el) {
   const logBody = el.querySelector('#log-rows');
   let jobs = null;
   let events = null;
+  let queueShown = QUEUE_STEP;
+  let historyShown = HISTORY_STEP;
+  // Finished jobs and log lines older than the stream carries, paged in on request.
+  let olderJobs = [];
+  let olderJobsDone = false;
+  let olderEvents = [];
+  let olderEventsDone = false;
 
   const drawJobs = () => {
     if (!jobs) return;
     const probes = jobs.filter((j) => j.kind === 'probe').length;
-    const list = jobs.filter((j) => showProbes || j.kind !== 'probe').slice(0, 80);
+    const visible = (j) => showProbes || j.kind !== 'probe';
+    const running = jobs.filter((j) => j.status === 'running' && visible(j));
+    // The queue runs oldest first, so it is listed that way.
+    const queued = jobs.filter((j) => j.status === 'queued' && visible(j)).reverse();
+    const seen = new Set(jobs.map((j) => j.id));
+    const finished = jobs.filter((j) => !isActive(j));
+    const history = [...finished, ...olderJobs.filter((j) => !seen.has(j.id))].filter(visible);
     el.querySelector('#probe-n').textContent = probes ? ` (${probes})` : '';
-    el.querySelector('[data-stopall]').disabled = !jobs.some((j) => j.status === 'running' || j.status === 'queued');
-    patchRows(jobBody, list.length ? list.map((j) => ({ key: `j${j.id}`, html: jobRow(j) })) : placeholder(7, 'No jobs yet.'));
+    el.querySelector('#job-counts').textContent = running.length || queued.length ? `· ${running.length} running · ${queued.length} queued` : '';
+    el.querySelector('[data-stopall]').disabled = !jobs.some(isActive);
+    const row = (j) => ({ key: `j${j.id}`, html: jobRow(j) });
+    const rows = [...running.map(row), ...queued.slice(0, queueShown).map(row)];
+    if (queued.length > queueShown) rows.push(moreRow('more-q', 7, `${queued.length - queueShown} more queued · show ${Math.min(QUEUE_STEP * 5, queued.length - queueShown)} more`, 'data-more-queue'));
+    rows.push(...history.slice(0, historyShown).map(row));
+    // A stream holding fewer finished jobs than it could already holds them all.
+    const maybeOlder = !olderJobsDone && finished.length >= STREAM_HISTORY;
+    if (history.length > historyShown || maybeOlder) rows.push(moreRow('more-h', 7, 'Show older jobs', 'data-more-history'));
+    patchRows(jobBody, rows.length ? rows : placeholder(7, 'No jobs yet.'));
   };
   const drawLog = () => {
     if (!events) return;
-    const shown = events.filter((e) => level === 'all' || e.level === level || (level === 'warning' && e.level === 'error'));
+    const seen = new Set(events.map((e) => e.id));
+    const all = [...events, ...olderEvents.filter((e) => !seen.has(e.id))];
+    const shown = all.filter((e) => level === 'all' || e.level === level || (level === 'warning' && e.level === 'error'));
     // A group is keyed by its oldest line, which stays put while newer repeats fold into it.
     const groups = groupEvents(shown);
-    patchRows(logBody, groups.length ? groups.map((g) => ({ key: `e${g.first.id}`, html: logRow(g) })) : placeholder(4, 'No log lines.'));
+    const rows = groups.map((g) => ({ key: `e${g.first.id}`, html: logRow(g) }));
+    // The stream keeps the latest LOG_PAGE lines; with fewer there is nothing older.
+    if (!olderEventsDone && all.length >= LOG_PAGE) rows.push(moreRow('more-e', 4, 'Show older lines', 'data-more-log'));
+    patchRows(logBody, rows.length ? rows : placeholder(4, 'No log lines.'));
+  };
+  const moreHistory = async () => {
+    const finished = jobs.filter((j) => !isActive(j)).length;
+    historyShown += HISTORY_STEP;
+    // Fetch only once the stream's own history is used up.
+    if (historyShown > finished + olderJobs.length && !olderJobsDone) {
+      const page = await api(`jobs?offset=${finished + olderJobs.length}&limit=${HISTORY_STEP * 2}`);
+      olderJobs = [...olderJobs, ...page];
+      olderJobsDone = page.length < HISTORY_STEP * 2;
+    }
+    drawJobs();
+  };
+  const moreLog = async () => {
+    const oldest = Math.min(...events.map((e) => e.id), ...olderEvents.map((e) => e.id));
+    const page = await api(`events?before=${oldest}&limit=${LOG_PAGE}`);
+    olderEvents = [...olderEvents, ...page];
+    olderEventsDone = page.length < LOG_PAGE;
+    drawLog();
   };
 
   const subs = [
@@ -90,7 +143,10 @@ export function mountJobs(el) {
     if (box) { showProbes = box.checked; drawJobs(); return; }
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.cancel) await attempt(() => api(`jobs/${b.dataset.cancel}/cancel`, { method: 'POST' }), 'Cancel requested');
+    if (b.dataset.moreQueue !== undefined) { queueShown += QUEUE_STEP * 5; drawJobs(); }
+    else if (b.dataset.moreHistory !== undefined) await attempt(moreHistory);
+    else if (b.dataset.moreLog !== undefined) await attempt(moreLog);
+    else if (b.dataset.cancel) await attempt(() => api(`jobs/${b.dataset.cancel}/cancel`, { method: 'POST' }), 'Cancel requested');
     else if (b.dataset.stopall !== undefined) await attempt(() => api('jobs/cancel-all', { method: 'POST' }), 'Stopped all jobs');
     else if (b.dataset.all) await attempt(() => api('jobs', { method: 'POST', body: { kind: b.dataset.all } }), (o) => `Queued ${o.jobs.length} jobs`);
     else if (b.dataset.level) {

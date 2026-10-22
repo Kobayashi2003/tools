@@ -42,9 +42,11 @@ from .schema import (
     normalize_key,
     parse_range,
 )
-from .storage import EDITION_FOLDERS, mode_folder
+from .storage import EDITION_FOLDERS, PATH_COLUMNS, mode_folder
 
-DAMAGED_RECHECK = timedelta(days=30)
+UNAVAILABLE_RECHECK = timedelta(days=30)
+# Failures meaning Novelia cannot supply a format of a volume: another edition may stand in.
+UNAVAILABLE = (Rejected, ServerError, DamagedUpload)
 STABLE_RUN = 5
 # Below this, a task pauses rather than failing item after item on a full disk.
 MIN_FREE_SPACE = 2 << 30
@@ -541,15 +543,6 @@ class Worker:
             volume_id = volume["volumeId"]
             if volume_id in done:
                 continue  # finished by an earlier attempt of this task; never fetched twice, even when forced
-            upload = fingerprint({"volume": volume})
-            if not request.force and (known := self.known_damage(job_id, key, volume_id, upload)):
-                self.db.log(
-                    job_id,
-                    f"Skipped {volume_id}: {known['error']} Checked {known['checked_at'][:10]}; "
-                    "tried again when the upload changes.",
-                    "warning",
-                )
-                continue
             try:
                 self.process_volume(
                     job_id, key, data, volume, chinese_only, request, config, client
@@ -559,24 +552,21 @@ class Worker:
             except Exception as exc:
                 failures[volume_id] = exc
                 self.db.mark_part(job_id, key, volume_id, str(exc))
-                self.db.log(job_id, f"{volume_id}: {exc}", "error")
-                if isinstance(exc, DamagedUpload):
-                    self.db.mark_damaged(key, volume_id, upload, str(exc), job_id)
             else:
                 self.db.mark_part(job_id, key, volume_id)
-                self.db.clear_damaged(key, volume_id)
         if failures:
             raise VolumeFailures(failures, len(picked))
 
-    def known_damage(self, job_id, key, volume_id, upload):
-        """A broken upload recorded by an earlier task. Retrying it in the same task, or
-        a month later in case it was replaced under the same name, downloads it again."""
-        known = self.db.damaged(key, volume_id)
+    def known_unavailable(self, job_id, key, volume_id, mode, stamp):
+        """A format an earlier task found Novelia cannot supply. Retrying it in the same task,
+        or a month later in case it was replaced under the same name, downloads it again."""
+        known = self.db.unavailable(key, volume_id, mode)
         if (
             known
             and known["job_id"] != job_id
-            and known["fingerprint"] == upload
-            and datetime.fromisoformat(known["checked_at"]) > datetime.now(UTC) - DAMAGED_RECHECK
+            and known["fingerprint"] == stamp
+            and datetime.fromisoformat(known["checked_at"])
+            > datetime.now(UTC) - UNAVAILABLE_RECHECK
         ):
             return known
         return None
@@ -597,11 +587,15 @@ class Worker:
         )
 
     @staticmethod
-    def is_current(record, stamp):
+    def is_current(record, stamp, restore=False):
+        """Whether the saved copy is of this upload and settings. A file deleted from disk stays
+        downloaded, since that may have been on purpose, unless the task restores files."""
         if not record or record["fingerprint"] != stamp:
             return False
         raw = Path(record["raw_path"])
-        return raw.is_file() and raw.stat().st_size == record["size"]
+        if not raw.is_file():
+            return not restore
+        return raw.stat().st_size == record["size"]
 
     @staticmethod
     def stamp(volume, mode, config):
@@ -636,24 +630,102 @@ class Worker:
             / f"{source.stem} [{edition}]{source.suffix}"
         )
 
+    @staticmethod
+    def edition_modes(config, request):
+        """The modes to try, most wanted first, and how many of them a volume keeps."""
+        modes = {"japanese": ORIGINAL_JP, "bilingual": config.source_mode, "chinese": CHINESE}
+        if request.editions:
+            return [modes[edition] for edition in request.editions], len(request.editions)
+        return [modes[edition] for edition in config.editions], config.wanted_editions()
+
     def process_volume(self, job_id, key, data, volume, chinese_only, request, config, client):
-        if chinese_only:
-            self.fetch(job_id, key, data, volume, ORIGINAL_ZH, request, config, client)
-            return
-        if config.download_japanese:
-            self.fetch(job_id, key, data, volume, ORIGINAL_JP, request, config, client)
-        if config.download_bilingual:
-            self.fetch_bilingual(job_id, key, data, volume, request, config, client)
-        if config.download_chinese:
-            self.fetch(job_id, key, data, volume, CHINESE, request, config, client)
+        """Apply the download strategy: keep the first wanted editions Novelia can supply.
+
+        An edition Novelia cannot supply is remembered and passed over for the next one; one that
+        failed otherwise (a network error) keeps its place, so nothing stands in for it. Once
+        every place is taken, the editions after the kept ones are stand-ins no longer needed."""
+        volume_id = volume["volumeId"]
+        modes, wanted = ([ORIGINAL_ZH], 1) if chinese_only else self.edition_modes(config, request)
+        kept, failed, errors = [], 0, []
+        for mode in modes:
+            if len(kept) + failed == wanted:
+                break
+            stamp = self.stamp(volume, mode, config)
+            record = self.file_record(key, volume_id, mode)
+            current = self.is_current(record, stamp, request.restore)
+            if (
+                not request.force
+                and not request.editions  # asked for by name: always try
+                and not current
+                and (known := self.known_unavailable(job_id, key, volume_id, mode, stamp))
+            ):
+                self.db.log(
+                    job_id,
+                    f"Skipped {volume_id} [{mode}]: {known['error']} Checked "
+                    f"{known['checked_at'][:10]}; tried again when it changes.",
+                    "warning",
+                )
+                continue
+            try:
+                kept.append(self.fetch(job_id, key, data, volume, mode, request, config, client))
+            except Cancelled, Deferred, PermissionError:
+                raise
+            except UNAVAILABLE as exc:
+                self.db.mark_unavailable(key, volume_id, mode, stamp, str(exc), job_id)
+                self.db.log(job_id, f"{volume_id} [{mode}]: {exc}", "warning")
+                errors.append(exc)
+            except Exception as exc:
+                self.db.log(job_id, f"{volume_id} [{mode}]: {exc}", "error")
+                errors.append(exc)
+                failed += 1
+        if request.editions:
+            for record in kept:
+                self.db.pin(record["id"])
+        elif len(kept) == wanted:
+            self.drop_stand_ins(job_id, key, volume_id, modes, kept)
+        for record in kept:
+            if (
+                config.auto_convert
+                and record["mode"] in BILINGUAL_MODES
+                and Path(record["raw_path"]).is_file()
+            ):
+                self.convert_file(job_id, record["id"], config, client, request.force)
+        if len(kept) < wanted and errors:
+            raise next((e for e in errors if is_retryable(e)), errors[0])
+        if errors:
+            stand_ins = ", ".join(f"[{r['mode']}]" for r in kept)
+            self.db.log(job_id, f"{volume_id}: kept {stand_ins} instead.", "warning")
+
+    def drop_stand_ins(self, job_id, key, volume_id, modes, kept):
+        last = max(modes.index(record["mode"]) for record in kept)
+        for mode in modes[last + 1 :]:
+            record = self.file_record(key, volume_id, mode)
+            if not record or record["pinned"]:
+                continue
+            try:
+                for column in PATH_COLUMNS:
+                    if record[column]:
+                        Path(record[column]).unlink(missing_ok=True)
+            except OSError as exc:
+                # Often open in a reader. Caught here because a PermissionError would otherwise
+                # stop the task as if Novelia refused access; the next check tries again.
+                self.db.log(job_id, f"Could not remove {volume_id} [{mode}] yet: {exc}", "warning")
+                continue
+            self.db.execute("DELETE FROM files WHERE id=?", (record["id"],))
+            self.db.log(job_id, f"Removed {volume_id} [{mode}]: no longer needed as a stand-in.")
 
     def fetch(self, job_id, key, data, volume, mode, request, config, client):
         """Download one format of a volume unless the saved copy is current; return its record."""
         volume_id = volume["volumeId"]
         stamp = self.stamp(volume, mode, config)
         record = self.file_record(key, volume_id, mode)
-        if not request.force and self.is_current(record, stamp):
-            self.db.log(job_id, f"Unchanged: {volume_id} [{mode}]")
+        if not request.force and self.is_current(record, stamp, request.restore):
+            gone = (
+                ""
+                if Path(record["raw_path"]).is_file()
+                else " (deleted from disk; kept as downloaded)"
+            )
+            self.db.log(job_id, f"Unchanged: {volume_id} [{mode}]{gone}")
             return record
         destination = self.destination(key, data, volume_id, mode)
         size, sha = client.source(
@@ -669,46 +741,8 @@ class Worker:
         else:
             self.db.save_file(key, volume_id, mode, stamp, destination, size, sha)
         self.db.log(job_id, f"Downloaded {volume_id} [{mode}] ({size // 1024} KB).")
+        self.db.clear_unavailable(key, volume_id, mode)
         return self.file_record(key, volume_id, mode)
-
-    def fetch_bilingual(self, job_id, key, data, volume, request, config, client):
-        """Novelia cannot build the bilingual file of some uploads (a persistent HTTP 500 or
-        404). The original is what conversion would produce, so it is kept instead, and the
-        bilingual file is tried again only when the volume changes."""
-        volume_id, mode = volume["volumeId"], config.source_mode
-        stamp = self.stamp(volume, mode, config)
-        original = self.file_record(key, volume_id, ORIGINAL_JP)
-        failed = original and json.loads(original["report"] or "{}").get("bilingual_failed")
-        if (
-            not request.force
-            and failed == stamp
-            and self.is_current(original, self.stamp(volume, ORIGINAL_JP, config))
-        ):
-            self.db.log(job_id, f"Unchanged: {volume_id} (Japanese original kept)")
-            return
-        try:
-            record = self.fetch(job_id, key, data, volume, mode, request, config, client)
-        except Rejected, ServerError:
-            if not config.original_fallback or not key.startswith("wenku/"):
-                raise
-            self.db.log(
-                job_id,
-                f"{volume_id}: Novelia could not build the bilingual file; "
-                "keeping the Japanese original.",
-                "warning",
-            )
-            original = self.fetch(job_id, key, data, volume, ORIGINAL_JP, request, config, client)
-            self.db.execute(
-                "UPDATE files SET report=? WHERE id=?",
-                (json.dumps({"bilingual_failed": stamp}), original["id"]),
-            )
-            return
-        if failed and not config.download_japanese:
-            # The original only stood in for the bilingual file.
-            self.db.execute("DELETE FROM files WHERE id=?", (original["id"],))
-            Path(original["raw_path"]).unlink(missing_ok=True)
-        if config.auto_convert:
-            self.convert_file(job_id, record["id"], config, client, request.force)
 
     def convert_file(self, job_id, file_id, config, client, force=False):
         """Build the chosen editions of a bilingual file, for volumes Novelia has no usable
@@ -724,16 +758,25 @@ class Worker:
             self.db.log(job_id, f"File {file_id} {reason}; nothing to convert.")
             return
         text = Path(record["raw_path"]).suffix.lower() == ".txt"
-        if config.convert_japanese:
+        if config.convert_japanese and not self.supplied(job_id, record, ORIGINAL_JP, force):
             if text:
                 self.convert_text(job_id, record, client, force)
             else:
                 self.convert_japanese(job_id, record, config, force)
-        if config.convert_chinese:
+        if config.convert_chinese and not self.supplied(job_id, record, CHINESE, force):
             if text:
                 self.convert_text(job_id, record, client, force, chinese=True)
             else:
                 self.convert_chinese(job_id, record, force)
+
+    def supplied(self, job_id, record, mode, force):
+        """Whether Novelia's own edition of the volume is saved: it beats a converted one,
+        unless one is asked for anyway."""
+        saved = self.file_record(record["work_key"], record["volume_id"], mode)
+        if force or not saved or not Path(saved["raw_path"]).is_file():
+            return False
+        self.db.log(job_id, f"{record['volume_id']}: [{mode}] is saved; not converted.")
+        return True
 
     def source_of(self, job_id, record):
         source = Path(record["raw_path"])

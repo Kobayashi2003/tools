@@ -1,4 +1,4 @@
-import { ago, api, at, attempt, esc, fmtSize, localOffset, toast } from './api.js';
+import { ago, api, at, attempt, esc, fmtSize, localOffset, prefs, toast } from './api.js';
 import { dialog } from './dialog.js';
 import { I } from './icons.js';
 import * as L from './links.js';
@@ -8,8 +8,8 @@ import { allGroups } from './regroup.js';
 const P_LABEL = { full: 'Pawchive: has files', meta: 'Pawchive: metadata only', none: 'Pawchive: not listed', gone: 'Pawchive: gone' };
 const F_LABEL = { open: 'Fanbox: accessible', locked: 'Fanbox: not subscribed', gone: 'Fanbox: deleted', unknown: 'Fanbox: not checked', na: '' };
 const VIA = {
-  pawchive: ['Pawchive', 'vp', 'P'], fanbox: ['Fanbox', 'vf', 'F'], adopted: ['Adopted', 'va', 'A'],
-  v1: ['v1', 'va', 'v1'], local: ['On disk', 'va', 'D'], manual: ['Manual', 'va', 'M'],
+  pawchive: ['Pawchive', 'vp', 'P'], fanbox: ['Fanbox', 'vf', 'F'],
+  local: ['On disk', 'va', 'D'], manual: ['Manual', 'va', 'M'],
 };
 const PAGE = 150;
 
@@ -28,7 +28,7 @@ const FILTERS = {
     { id: 'u', label: '', fn: (r, v) => r.sub === v, opts: [['free', 'Free'], ['yes', 'Open to me'], ['no', 'Locked to me'], ['unknown', 'Not signed in']] },
   ] },
   via: { label: 'Got from', groups: [
-    { id: 'v', label: '', fn: (r, v) => (v === 'mix' ? r.via.length > 1 : v === 'nil' ? !r.via.length : r.via.includes(v)), opts: [['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['adopted', 'Adopted folder'], ['v1', 'v1'], ['local', 'Found on disk'], ['mix', 'Mixed'], ['nil', 'Nothing yet']] },
+    { id: 'v', label: '', fn: (r, v) => (v === 'mix' ? r.via.length > 1 : v === 'nil' ? !r.via.length : r.via.includes(v)), opts: [['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['local', 'Found on disk'], ['mix', 'Mixed'], ['nil', 'Nothing yet']] },
   ] },
 };
 const FLAG = {
@@ -49,13 +49,8 @@ const SORTS = {
 // Filters survive switching creators: "show me what is still pending" is a habit.
 const sel = { cov: new Set(), st: new Set(), sub: new Set(), via: new Set() };
 let sort = 'new';
-let showThumbs = true;
-let layout = 'list';
-try {
-  showThumbs = localStorage.getItem('thumbs') !== 'off';
-  layout = localStorage.getItem('postLayout') === 'grid' ? 'grid' : 'list';
-} catch { /* storage unavailable */ }
-const remember = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
+let showThumbs = prefs.get('thumbs') !== 'off';
+let layout = prefs.get('postLayout') === 'grid' ? 'grid' : 'list';
 
 let S = null;
 
@@ -158,7 +153,7 @@ function header() {
     : !d.fanbox_listed_at ? (d.fanbox_checked_at ? 'Not checked yet: the last check failed' : 'Not checked yet')
     : `${fc.open} accessible · ${fc.locked} locked${fc.gone ? ` · ${fc.gone} deleted` : ''}`;
   const loc = d.local || {};
-  const viaParts = [['adopted', 'adopted'], ['v1', 'v1'], ['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['found', 'on disk']].filter(([k]) => loc[k]).map(([k, l]) => `${loc[k].toLocaleString()} ${l}`);
+  const viaParts = [['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['found', 'on disk']].filter(([k]) => loc[k]).map(([k, l]) => `${loc[k].toLocaleString()} ${l}`);
   const fetchable = S.rows.filter((r) => ['pending', 'partial', 'failed'].includes(r.head.k)).length;
   const synced = d.synced_at || d.fanbox_checked_at;
   return `<div class="ch">
@@ -567,7 +562,7 @@ async function rowAction(act, r) {
   }
 }
 
-export async function openPath(path) {
+async function openPath(path) {
   const out = await attempt(() => api('open', { method: 'POST', body: { path } }));
   if (out && !out.exact) toast('That folder does not exist yet; opened the nearest parent');
 }
@@ -611,7 +606,7 @@ function onClick(e) {
   const lay = t.closest('[data-layout]');
   if (lay) {
     layout = lay.dataset.layout;
-    remember('postLayout', layout);
+    prefs.set('postLayout', layout);
     lay.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === lay)));
     S.el.querySelector('[data-thumbs]').hidden = layout === 'grid';
     S.el.classList.toggle('with-thumbs', showThumbs && layout === 'list');
@@ -620,7 +615,7 @@ function onClick(e) {
   const tb = t.closest('[data-thumbs]');
   if (tb) {
     showThumbs = !showThumbs;
-    remember('thumbs', showThumbs ? 'on' : 'off');
+    prefs.set('thumbs', showThumbs ? 'on' : 'off');
     tb.setAttribute('aria-pressed', String(showThumbs));
     tb.querySelector('.val').textContent = showThumbs ? 'On' : 'Off';
     S.el.classList.toggle('with-thumbs', showThumbs);

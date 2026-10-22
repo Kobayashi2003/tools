@@ -14,6 +14,7 @@ from app.engine.sync import sync_creator
 from app.engine.views import post_rows
 from app.library.imagesize import image_size
 from app.library.migrate import execute_adopt, norm_title, plan_adopt, resolve
+from app.sources.fanbox import FanboxListItem
 from app.sources.http import TransientError
 from app.store.db import load
 
@@ -165,6 +166,42 @@ def test_a_failed_fanbox_listing_leaves_posts_unchecked(
     assert post_rows(ctx, CID)[0]["f"] == "gone"
 
 
+def test_a_short_listing_is_read_again_before_posts_go(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+):
+    add_creator(ctx)
+    for pid in ("1", "2", "3"):
+        obs(ctx, pid, "fanbox", "open", "2020-01-01T00:00:00", [], detail=True)
+    reads: list[list[str]] = []
+
+    def listing(handle: str) -> list[FanboxListItem]:
+        return [
+            FanboxListItem(p, "t", 0, "2020-01-01T00:00:00", "", False, "", "", "")
+            for p in reads.pop(0)
+        ]
+
+    def states() -> dict[str, str]:
+        return {r["post_id"]: r["state"] for r in ctx.db.all("SELECT post_id, state FROM post_obs")}
+
+    monkeypatch.setattr(ctx.fanbox, "creator_id_of", lambda user_id: "intokuinfo")
+    monkeypatch.setattr(ctx.fanbox, "list_posts", listing)
+
+    def sync():
+        sync_creator(
+            ctx, CID, lambda *_: None, threading.Event(), sources=("fanbox",), details=False
+        )
+
+    # Two reads that disagree: a truncated page, so nothing is marked gone.
+    reads[:] = [["1"], ["1", "2"]]
+    sync()
+    assert states() == {"1": "open", "2": "open", "3": "open"}
+    # Two reads that agree: post 3 really was deleted.
+    reads[:] = [["1", "2"], ["1", "2"]]
+    sync()
+    assert states() == {"1": "open", "2": "open", "3": "gone"}
+    assert not reads
+
+
 def test_manual_done_survives_a_sync(ctx: Context):
     add_creator(ctx)
     obs(
@@ -225,7 +262,10 @@ def test_adopt_extension_folder_end_to_end(ctx: Context, tmp_path: Path):
     assert image_size(target / "2.png") == (40, 20)
     assert not folder.exists() and other.exists()
     row = next(r for r in post_rows(ctx, CID) if r["id"] == "468036")
-    assert row["head"]["k"] == "done" and row["via"] == ["adopted"]
+    # Adopted files are Fanbox's own and shown as such; the record still says adopted.
+    assert row["head"]["k"] == "done" and row["via"] == ["fanbox"]
+    kept = ctx.db.one("SELECT via FROM files WHERE post_id='468036' AND state='done'")
+    assert kept is not None and kept["via"] == "adopted"
 
 
 def test_resolve_settles_an_ambiguous_folder(ctx: Context, tmp_path: Path):

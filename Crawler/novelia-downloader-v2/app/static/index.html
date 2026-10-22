@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Novelia Library</title>
     <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=17" />
-    <script src="/static/ui.js?v=10" defer></script>
-    <script src="/static/app.js?v=21" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=20" />
+    <script src="/static/ui.js?v=11" defer></script>
+    <script src="/static/app.js?v=25" defer></script>
   </head>
   <body>
     <aside class="rail" id="sidebar">
@@ -66,6 +66,10 @@
             <option value="title">Title</option>
             <option value="volumes">Most volumes</option>
           </select>
+          <div class="view-switch title-switch" role="group" aria-label="Title language">
+            <button type="button" data-title-lang="ja" aria-label="Japanese titles" title="Japanese titles">日</button>
+            <button type="button" data-title-lang="zh" aria-label="Chinese titles" title="Chinese titles">中</button>
+          </div>
           <div class="view-switch" role="group" aria-label="Layout">
             <button type="button" data-layout="grid" aria-label="Cover grid" title="Cover grid">▦</button>
             <button type="button" data-layout="list" aria-label="List" title="List">☰</button>
@@ -76,8 +80,9 @@
           <button role="radio" data-state="saved">Saved</button>
           <button role="radio" data-state="partial">Missing volumes</button>
           <button role="radio" data-state="metadata">Metadata only</button>
-          <button role="radio" data-state="pending">Needs conversion</button>
           <button role="radio" data-state="japanese">Has Japanese</button>
+          <button role="radio" data-state="bilingual">Has bilingual</button>
+          <button role="radio" data-state="chinese">Has Chinese</button>
         </div>
 
         <div id="library-list" class="content-region" tabindex="-1"></div>
@@ -91,7 +96,7 @@
         </nav>
         <p class="footnote">
           <button class="link" data-action="convert-all">Convert every bilingual volume</button>
-          <button class="link" data-action="cleanup-library">Clean missing files</button>
+          <button class="link" data-action="check-files">Check local files</button>
           <a href="/api/export.csv">Export catalog CSV</a>
         </p>
       </section>
@@ -110,6 +115,10 @@
           <input id="catalog-query" type="search" placeholder="Search Novelia" aria-label="Search Novelia" />
           <select id="catalog-category" aria-label="Category"></select>
           <button type="submit">Search</button>
+          <div class="view-switch title-switch" role="group" aria-label="Title language">
+            <button type="button" data-title-lang="ja" aria-label="Japanese titles" title="Japanese titles">日</button>
+            <button type="button" data-title-lang="zh" aria-label="Chinese titles" title="Chinese titles">中</button>
+          </div>
         </form>
         <p id="catalog-caption" class="caption"></p>
         <div id="catalog-list" class="content-region" tabindex="-1"></div>
@@ -188,7 +197,7 @@
             </div>
           </section>
           <section>
-            <header class="settings-group-head"><h2>Conversion</h2><p>Editions built from bilingual downloads, for volumes with no Japanese original. Each conversion task can choose differently.</p></header><div class="settings-group-body">
+            <header class="settings-group-head"><h2>Conversion</h2><p>Editions built from bilingual downloads, for volumes without Novelia's own edition of that language. Each conversion task can choose differently.</p></header><div class="settings-group-body">
             <div class="row">
               <div><strong id="label-auto_convert">Convert after downloading</strong><p>Builds the editions below next to each bilingual download.</p></div>
               <label class="switch"><input aria-labelledby="label-auto_convert" name="auto_convert" type="checkbox" /><span aria-hidden="true"></span></label>
@@ -208,19 +217,27 @@
             </div>
           </section>
           <section>
-            <header class="settings-group-head"><h2>Download source</h2><p>Set formats, languages and translation priority.</p></header><div class="settings-group-body">
+            <header class="settings-group-head"><h2>Download strategy</h2><p>Which editions each volume gets, and what stands in when Novelia cannot supply one.</p></header><div class="settings-group-body">
             <div class="row">
-              <div><strong id="label-download_bilingual">Bilingual</strong><p>Japanese with the Chinese translation; the conversions above start from it.</p></div>
-              <label class="switch"><input aria-labelledby="label-download_bilingual" name="download_bilingual" type="checkbox" /><span aria-hidden="true"></span></label>
+              <div><strong>Editions</strong><p>Tick the editions to download; order sets preference. Japanese original: the upload itself, downloaded again only when it changes. Bilingual and Chinese: Novelia's builds with the translations below.</p></div>
+              <ol id="edition-list" class="engines"></ol>
             </div>
             <div class="row">
-              <div><strong id="label-download_japanese">Japanese original</strong><p>The upload itself, as the publisher made it. Downloaded again only when the upload changes.</p></div>
-              <label class="switch"><input aria-labelledby="label-download_japanese" name="download_japanese" type="checkbox" /><span aria-hidden="true"></span></label>
+              <div><strong id="label-editions_per_volume">Keep per volume</strong><p>Each volume keeps the first editions Novelia can supply. When one cannot be supplied (a broken upload, or a build that always fails), the next ticked edition stands in; it is removed once the preferred one arrives.</p></div>
+              <select name="editions_per_volume" aria-labelledby="label-editions_per_volume">
+                <option value="1">The first available</option>
+                <option value="2">The first two available</option>
+                <option value="3">Every ticked edition</option>
+              </select>
             </div>
             <div class="row">
-              <div><strong id="label-download_chinese">Chinese</strong><p>Novelia's Chinese-only build, using the translations below.</p></div>
-              <label class="switch"><input aria-labelledby="label-download_chinese" name="download_chinese" type="checkbox" /><span aria-hidden="true"></span></label>
+              <div><strong id="label-download_chinese_uploads">Chinese-only uploads</strong><p>Also list and save volumes uploaded only in Chinese, with the other Chinese books. Novelia's pages no longer show them, many are broken, and they have no Japanese text to convert.</p></div>
+              <label class="switch"><input aria-labelledby="label-download_chinese_uploads" name="download_chinese_uploads" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
+            </div>
+          </section>
+          <section>
+            <header class="settings-group-head"><h2>Download source</h2><p>Set the bilingual layout and translation priority.</p></header><div class="settings-group-body">
             <div class="row">
               <div><strong>Bilingual order</strong><p>Which language comes first in downloaded EPUBs.</p></div>
               <select name="source_mode" aria-label="Bilingual order">
@@ -238,14 +255,6 @@
                 <option value="priority">Priority</option>
                 <option value="parallel">Parallel</option>
               </select>
-            </div>
-            <div class="row">
-              <div><strong id="label-download_chinese_uploads">Chinese-only uploads</strong><p>Also list and save volumes uploaded only in Chinese, with the other Chinese books. Novelia's pages no longer show them, many are broken, and they have no Japanese text to convert.</p></div>
-              <label class="switch"><input aria-labelledby="label-download_chinese_uploads" name="download_chinese_uploads" type="checkbox" /><span aria-hidden="true"></span></label>
-            </div>
-            <div class="row">
-              <div><strong id="label-original_fallback">Keep the original when bilingual fails</strong><p>Some uploads make Novelia's bilingual builder fail every time. Keep the Japanese original as that volume's edition instead; later sweeps try the bilingual file again when the volume changes.</p></div>
-              <label class="switch"><input aria-labelledby="label-original_fallback" name="original_fallback" type="checkbox" /><span aria-hidden="true"></span></label>
             </div>
             <div class="row">
               <div><strong>Works per catalog page</strong><p>Page ranges in download tasks are counted with this size.</p></div>
@@ -361,6 +370,8 @@
 
     <div id="selection-bar" class="selection-bar" hidden>
       <span id="selection-count"></span>
+      <small class="selection-hint">Click covers to add more · Shift-click a run · Esc clears</small>
+      <button data-action="select-page" id="select-page-button">Select page</button>
       <button data-action="download-selected">Download</button>
       <button data-action="convert-selected" id="convert-selected">Convert</button>
       <button data-action="remove-selected" id="remove-selected">Remove</button>
@@ -376,6 +387,23 @@
         <p class="hint">Removed works can appear again in a later download or update sweep.</p>
         <footer class="dialog-foot"><button type="button" data-close="remove-dialog">Cancel</button><button type="submit" class="danger">Remove</button></footer>
       </form>
+    </dialog>
+    <dialog id="missing-dialog" aria-labelledby="missing-title">
+      <div class="management-form">
+        <header class="dialog-head"><h2 id="missing-title">Files missing from disk</h2><button type="button" class="icon-button" data-close="missing-dialog" aria-label="Close">✕</button></header>
+        <p id="missing-description"></p>
+        <ul id="missing-items" class="removal-items missing-items"></ul>
+        <p class="hint">Forgetting keeps the works and every file still on disk; a forgotten volume is downloaded again by the next task that checks its work.</p>
+        <footer class="dialog-foot"><button type="button" data-close="missing-dialog">Keep records</button><button type="button" class="danger" data-action="missing-forget">Forget them</button><button type="button" class="primary" id="missing-download" data-action="missing-download">Download again</button></footer>
+      </div>
+    </dialog>
+    <dialog id="gone-dialog" aria-labelledby="gone-title">
+      <div class="management-form">
+        <header class="dialog-head"><h2 id="gone-title">Not on disk</h2><button type="button" class="icon-button" data-close="gone-dialog" aria-label="Close">✕</button></header>
+        <p id="gone-description"></p>
+        <p class="gone-path"><code id="gone-path"></code></p>
+        <footer class="dialog-foot"><button type="button" data-close="gone-dialog">Keep record</button><button type="button" class="danger" data-action="gone-forget">Forget it</button><button type="button" class="primary" id="gone-again" data-action="gone-again">Download again</button></footer>
+      </div>
     </dialog>
     <dialog id="convert-dialog" aria-labelledby="convert-title">
       <form id="convert-form" class="management-form">
@@ -421,6 +449,7 @@
         <div class="fields checks">
           <label class="check"><input name="download" type="checkbox" checked /> Download EPUB files <small>Untick to record metadata only</small></label>
           <label class="check"><input name="force" type="checkbox" /> Download again even if unchanged</label>
+          <label class="check"><input name="restore" type="checkbox" /> Restore files deleted from disk <small>Otherwise they stay recorded as downloaded and are left alone</small></label>
         </div>
         <footer class="dialog-foot">
           <button type="button" data-close="crawl-dialog">Cancel</button>

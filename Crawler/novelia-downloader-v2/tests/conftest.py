@@ -66,6 +66,7 @@ class Upstream:
         self.fail_times = {}  # volume -> number of transient failures before success
         self.raise_on = {}  # volume -> exception raised on every attempt
         self.bilingual_errors = {}  # volume -> exception raised for the bilingual file only
+        self.original_errors = {}  # volume -> exception raised for the original only
         self.waits = []
         self.clients = []
 
@@ -100,8 +101,10 @@ class Upstream:
                     raise NetworkError("Temporary download error")
                 if volume in upstream.raise_on:
                     raise upstream.raise_on[volume]
-                if not original and volume in upstream.bilingual_errors:
+                if not original and not chinese and volume in upstream.bilingual_errors:
                     raise upstream.bilingual_errors[volume]
+                if original and volume in upstream.original_errors:
+                    raise upstream.original_errors[volume]
                 if upstream.fail_times.get(volume):
                     upstream.fail_times[volume] -= 1
                     raise NetworkError("Temporary download error")

@@ -6,7 +6,7 @@ Fanbox coverage     open · locked (restricted for you) · gone (deleted) · unk
 Subscription        free · yes (Fanbox opens it to you) · no · unknown (no cookie)
 Selection           kept · filtered (with the rule) · creator ignored
 Local               derived from the post's files
-Downloaded via      per file: pawchive · fanbox · adopted · v1
+Downloaded via      per file: pawchive · fanbox · adopted · local
 """
 
 from dataclasses import dataclass, field
@@ -89,9 +89,12 @@ def unavailable_reason(facts: PostFacts) -> str:
     return " · ".join(p for p in parts if p)
 
 
+def source_order(preference: str) -> list[str]:
+    return ["pawchive", "fanbox"] if preference == "pawchive-first" else ["fanbox", "pawchive"]
+
+
 def planned_source(facts: PostFacts, preference: str) -> str | None:
-    order = ["fanbox", "pawchive"] if preference == "fanbox-first" else ["pawchive", "fanbox"]
-    for source in order:
+    for source in source_order(preference):
         if source == "pawchive" and can_pawchive(facts):
             return source
         if source == "fanbox" and can_fanbox(facts):
@@ -102,14 +105,18 @@ def planned_source(facts: PostFacts, preference: str) -> str | None:
 VIA_LABEL = {
     "pawchive": "Pawchive",
     "fanbox": "Fanbox",
-    "adopted": "Adopted",
-    "v1": "v1",
     # Already on disk at the expected path and consistent with the sources.
     "local": "Found on disk",
 }
 
 
-def headline(facts: PostFacts, preference: str = "pawchive-first") -> dict:
+def shown_via(via: str) -> str:
+    """Adopted files are Fanbox's own, saved by the browser extension, so they are shown as
+    Fanbox; only the "Adopted · unverified" check still tells them apart."""
+    return "fanbox" if via == "adopted" else via
+
+
+def headline(facts: PostFacts, preference: str = "fanbox-first") -> dict:
     """`{k, t, why, progress}`: the state, its label, one line of reason, 0..1 or None."""
     progress = facts.done / facts.total if facts.total else None
     if facts.ignored:
@@ -118,8 +125,8 @@ def headline(facts: PostFacts, preference: str = "pawchive-first") -> dict:
         return {"k": "filtered", "t": "Filtered", "why": facts.filtered, "progress": None}
     if facts.local_done:
         why = facts.stale
-        if not why and "adopted" in facts.via:
-            why = "Adopted · unverified" if facts.unverified else "Adopted · verified"
+        if not why and "adopted" in facts.via and facts.unverified:
+            why = "Adopted · unverified"
         return {"k": "done", "t": "Done", "why": why, "progress": None}
     remaining = facts.total - facts.done
     # Every missing file is in its 404 deferral: that is a wait, even for files an earlier

@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 from ..config import Settings, SettingsStore, creator_value
-from ..domain.naming import creator_folder
+from ..domain.naming import creator_folder, post_folder
 from ..domain.timefmt import now_utc
 from ..net.limiter import Throttle
 from ..net.policy import StatusPolicies
@@ -18,6 +18,7 @@ from ..store.deferrals import Deferrals
 from .reconcile import Naming
 
 EVENTS_KEPT = 20_000
+NETWORK_KINDS = ("network", "timeout", "connection")
 
 
 class Events:
@@ -61,6 +62,20 @@ class Context:
             s.retry_delay, s.retry_backoff, s.retry_delay_cap, s.retry_jitter, s.max_retries
         )
         not_found = {"404": {"action": "permanent", "attempts": s.not_found_max_retries}}
+        policies = StatusPolicies.parse(s.status_policies, fallback=not_found)
+        # Fanbox answers 403 when it (or Cloudflare in front of it) wants a pause; asking
+        # forever under your own account is the wrong response, so give up after a few.
+        fanbox_policies = StatusPolicies.parse(
+            s.fanbox_status_policies,
+            fallback={
+                **not_found,
+                "403": {"action": "fail", "attempts": 3, "delay": 20, "backoff": 2},
+            },
+        )
+        # A failed connection says nothing about the host, so both sources treat it alike:
+        # the status_policies rows for it apply to Fanbox unless its own table sets them.
+        shared = {k: r for k, r in policies.rules.items() if k in NETWORK_KINDS}
+        fanbox_policies = StatusPolicies({**shared, **fanbox_policies.rules})
         self.pawchive_http = HttpClient(
             "Pawchive",
             {
@@ -79,7 +94,7 @@ class Context:
                 requests_per_second=s.max_file_requests_per_second,
                 request_burst=s.file_request_burst,
             ),
-            StatusPolicies.parse(s.status_policies, fallback=not_found),
+            policies,
             shape,
             s.request_timeout,
             log,
@@ -97,15 +112,7 @@ class Context:
                 requests_per_second=s.fanbox_requests_per_second,
                 request_burst=1,
             ),
-            # Fanbox (or Cloudflare in front of it) answers 403 when it wants a pause; asking
-            # forever under your own account is the wrong response, so give up after a few.
-            StatusPolicies.parse(
-                s.fanbox_status_policies,
-                fallback={
-                    **not_found,
-                    "403": {"action": "fail", "attempts": 3, "delay": 20, "backoff": 2},
-                },
-            ),
+            fanbox_policies,
             shape,
             s.request_timeout,
             log,
@@ -132,6 +139,13 @@ class Context:
     def creator(self, creator_id: str) -> sqlite3.Row | None:
         return self.db.one("SELECT * FROM creators WHERE id=?", (creator_id,))
 
+    def require_creator(self, creator_id: str) -> sqlite3.Row:
+        """The creator, or KeyError (which the server answers with 404)."""
+        creator = self.creator(creator_id)
+        if creator is None:
+            raise KeyError(creator_id)
+        return creator
+
     def value(self, creator: sqlite3.Row, key: str):
         return creator_value(self.settings, load(creator["config"], {}) or {}, key)
 
@@ -153,6 +167,21 @@ class Context:
             alias=creator["alias"] if alias is None else alias,
             user_id=creator["user_id"],
             group=creator["group_path"] if group is None else group,
+        )
+
+    def post_folder_name(
+        self, creator: sqlite3.Row, post: sqlite3.Row, published: str | None = None
+    ) -> str:
+        """The post's folder name under the creator's template; `published` overrides the
+        date it is named with."""
+        return post_folder(
+            self.value(creator, "post_folder_template"),
+            post_id=post["post_id"],
+            user=creator["user_id"],
+            service=creator["service"],
+            title=post["title"],
+            published=post["published"] if published is None else published,
+            fmt=self.value(creator, "date_format"),
         )
 
     def preference(self, creator: sqlite3.Row) -> str:

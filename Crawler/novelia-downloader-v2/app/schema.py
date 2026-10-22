@@ -21,6 +21,10 @@ PROVIDERS = ("kakuyomu", "syosetu", "novelup", "hameln", "pixiv", "alphapolis")
 Engine = Literal["sakura", "gpt", "youdao", "baidu"]
 # Translation engines; a volume's metadata counts the paragraphs each has translated.
 ENGINES: tuple[Engine, ...] = get_args(Engine)
+# What Novelia can supply for a Japanese upload: the upload itself, its bilingual build, and
+# its Chinese build.
+Edition = Literal["japanese", "bilingual", "chinese"]
+EDITIONS: tuple[Edition, ...] = get_args(Edition)
 
 
 CLOCK = r"^([01]\d|2[0-3]):[0-5]\d$"
@@ -89,13 +93,13 @@ class Settings(BaseModel):
         default_factory=lambda: ["sakura", "gpt", "youdao"], min_length=1
     )
     translations_mode: Literal["priority", "parallel"] = "priority"
-    # Formats downloaded for each volume; at least one.
-    download_bilingual: bool = True
-    download_japanese: bool = False
-    download_chinese: bool = False
-    """Novelia's Chinese-only build."""
+    # Download strategy
+    editions: list[Edition] = Field(default_factory=lambda: ["bilingual", "japanese"], min_length=1)
+    """Editions to download, most wanted first."""
+    editions_per_volume: int = Field(default=1, ge=1, le=len(EDITIONS))
+    """How many of `editions` each volume keeps: the first ones Novelia can supply. A later
+    edition stands in for an earlier one Novelia cannot supply, until that one arrives."""
     download_chinese_uploads: bool = False
-    original_fallback: bool = True
     auto_convert: bool = False
     # Editions built from a bilingual file; a convert task may choose otherwise.
     convert_japanese: bool = True
@@ -104,10 +108,38 @@ class Settings(BaseModel):
     incremental_enabled: bool = False
     interval_hours: float = Field(default=24, ge=0.25, le=8760)
 
-    @field_validator("translations")
+    @model_validator(mode="before")
     @classmethod
-    def unique_translations(cls, value):
+    def migrate_formats(cls, data):
+        """Settings saved before strategies had a switch per format and a fallback switch."""
+        if not isinstance(data, dict) or "editions" in data:
+            return data
+        old = ("download_bilingual", "download_japanese", "download_chinese", "original_fallback")
+        if not any(name in data for name in old):
+            return data
+        editions = [
+            edition
+            for edition, name, default in (
+                ("bilingual", "download_bilingual", True),
+                ("japanese", "download_japanese", False),
+                ("chinese", "download_chinese", False),
+            )
+            if data.get(name, default)
+        ] or ["bilingual"]
+        count = len(editions)
+        # The fallback kept the original in place of a bilingual file Novelia could not build.
+        fallback = data.get("original_fallback", True)
+        if fallback and "bilingual" in editions and "japanese" not in editions:
+            editions.append("japanese")
+        return {**data, "editions": editions, "editions_per_volume": count}
+
+    @field_validator("translations", "editions")
+    @classmethod
+    def unique(cls, value):
         return list(dict.fromkeys(value))
+
+    def wanted_editions(self) -> int:
+        return min(self.editions_per_volume, len(self.editions))
 
     @model_validator(mode="after")
     def consistent_limits(self):
@@ -115,8 +147,6 @@ class Settings(BaseModel):
             raise ValueError("The backoff cap must be at least the first backoff.")
         if self.active_hours and self.active_start == self.active_end:
             raise ValueError("Active hours need different start and end times.")
-        if not (self.download_bilingual or self.download_japanese or self.download_chinese):
-            raise ValueError("Choose at least one format to download.")
         if not (self.convert_japanese or self.convert_chinese):
             raise ValueError("Choose at least one edition to convert to.")
         return self
@@ -167,6 +197,10 @@ class JobRequest(BaseModel):
     volumes: str = Field(default="", max_length=500)
     download: bool = True
     force: bool = False
+    restore: bool = False
+    """Download files again that are recorded as downloaded but no longer on disk."""
+    editions: list[Edition] = Field(default_factory=list, max_length=len(EDITIONS))
+    """Download just these editions, in place of the strategy, and keep each of them."""
     # Convert tasks: override the settings of the same name when given.
     convert_japanese: bool | None = None
     convert_chinese: bool | None = None
@@ -182,6 +216,7 @@ class JobRequest(BaseModel):
     def validate_scope(self):
         self.query = self.query.strip()
         self.keys = list(dict.fromkeys(normalize_key(v) for v in self.keys))
+        self.editions = list(dict.fromkeys(self.editions))
         if self.volumes:
             parse_range(self.volumes, 0)
         if self.kind in ("full", "incremental"):

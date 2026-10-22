@@ -19,6 +19,19 @@ export async function api(path, { method = 'GET', body } = {}) {
   return res.json();
 }
 
+export const isActive = (job) => job.status === 'queued' || job.status === 'running';
+
+// Per-browser view preferences. Storage can be unavailable (private mode, blocked site
+// data); the page then simply forgets them.
+export const prefs = {
+  get(key, fallback = null) {
+    try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+  },
+};
+
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 

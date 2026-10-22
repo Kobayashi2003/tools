@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from ..domain.match import Entry, pawchive_entries
 from ..domain.timefmt import to_utc
-from .http import HttpClient, TransientError
+from .http import HttpClient, TransientError, carry
 
 PAGE_SIZE = 50
 
@@ -67,7 +67,9 @@ class Pawchive:
                 pages = [self._page(service, user_id, offsets[0])]
             else:
                 with ThreadPoolExecutor(max_workers=len(offsets)) as pool:
-                    pages = list(pool.map(lambda o: self._page(service, user_id, o), offsets))
+                    pages = list(
+                        pool.map(carry(lambda o: self._page(service, user_id, o)), offsets)
+                    )
             for page_offset, page in zip(offsets, pages, strict=True):
                 posts.extend(page)
                 if len(page) == PAGE_SIZE:

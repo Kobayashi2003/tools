@@ -7,7 +7,7 @@ import os
 from contextlib import asynccontextmanager, contextmanager
 from html import unescape
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -15,10 +15,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .client import Client, Deferred, fingerprint
-from .database import Database, now
-from .schema import CATEGORIES, ENGINES, JobRequest, RetryRequest, Settings
-from .storage import Storage
+from .client import Client, Deferred
+from .database import BILINGUAL_SQL, Database, now
+from .desktop import open_path
+from .schema import (
+    CATEGORIES,
+    ENGINES,
+    LEVELS,
+    JobRequest,
+    RetryRequest,
+    Settings,
+    normalize_key,
+)
+from .storage import BILINGUAL_FOLDER, CHINESE_FOLDER, JAPANESE_FOLDER, Storage
 from .worker import Worker, ordered_volumes
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -33,10 +42,14 @@ def file_stats(chinese: bool) -> str:
         if chinese
         else "w.volume_count-COALESCE(json_array_length(w.metadata,'$.volumeZh'),0)"
     )
-    return f"""(SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key{files}) AS file_count,
-    (SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key AND f.ja_path IS NOT NULL) AS ja_count,
-    (SELECT COUNT(*) FROM files f WHERE f.work_key=w.key AND f.mode IN ('jp-zh','zh-jp') AND f.ja_path IS NULL)
-        AS pending_count,
+
+    def count(condition):
+        return f"(SELECT COUNT(DISTINCT volume_id) FROM files f WHERE f.work_key=w.key{files} AND ({condition}))"
+
+    return f"""{count("1")} AS file_count,
+    {count("f.ja_path IS NOT NULL")} AS ja_count,
+    {count(BILINGUAL_SQL)} AS bilingual_count,
+    {count("f.mode IN ('zh','zh-original') OR f.zh_path IS NOT NULL")} AS zh_count,
     {volumes} AS shown_volumes"""
 
 
@@ -45,12 +58,14 @@ STATE_FILTERS = {
     "partial": "file_count>0 AND file_count<shown_volumes",
     "metadata": "file_count=0",
     "japanese": "ja_count>0",
-    "pending": "pending_count>0",
+    "bilingual": "bilingual_count>0",
+    "chinese": "zh_count>0",
 }
 SORTS = {
     "checked": "checked_at DESC",
     "added": "first_seen DESC",
     "title": "title COLLATE NOCASE",
+    "title_zh": "COALESCE(NULLIF(title_zh,''),title) COLLATE NOCASE",
     "volumes": "shown_volumes DESC",
 }
 
@@ -63,6 +78,16 @@ class RemoveWorks(BaseModel):
 class StorageRequest(BaseModel):
     directory: str = Field(min_length=1, max_length=4096)
     migrate: bool = True
+
+
+class ForgetMissing(BaseModel):
+    keys: list[str] = Field(default_factory=list, max_length=10000)
+    """Works to forget missing files of; every work when empty."""
+
+
+class FolderRequest(BaseModel):
+    folder: str = Field(min_length=1, max_length=4096)
+    """One of the work's `folders`."""
 
 
 class ProcessLock:
@@ -182,15 +207,24 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         with maintenance():
             return storage.remove(request.keys, request.delete_files)
 
+    # Forgetting touches only records whose files are gone, so it need not wait for tasks.
     @app.get("/api/library/missing")
-    def missing_works():
-        return {"items": storage.missing()}
+    def missing_files(keys: Annotated[list[str] | None, Query(max_length=10000)] = None):
+        """Every work's missing files, or those of `keys`."""
+        return {"items": storage.missing(keys or ())}
 
-    @app.post("/api/library/cleanup")
-    def cleanup_works(request: RemoveWorks):
-        with maintenance():
-            missing = {w["key"] for w in storage.missing()}
-            return storage.remove([key for key in request.keys if key in missing])
+    @app.post("/api/library/forget-missing")
+    def forget_missing(request: ForgetMissing):
+        ids = [f["id"] for work in storage.missing(request.keys) for f in work["files"]]
+        result = {"records": 0, "editions": 0}
+        for start in range(0, len(ids), 500):  # within SQLite's limit on bound variables
+            batch = ids[start : start + 500]
+            records = db.rows(
+                f"SELECT * FROM files WHERE id IN ({','.join('?' * len(batch))})", batch
+            )
+            for name, count in storage.forget(records).items():
+                result[name] += count
+        return result
 
     @app.put("/api/storage")
     def change_storage(request: StorageRequest):
@@ -209,7 +243,7 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             **db.stats(),
             "running": running[0] if running else None,
             "paused": paused,
-            "capabilities": ["library_remove", "library_cleanup", "storage_migration", "job_retry"],
+            "capabilities": ["library_remove", "library_missing", "storage_migration", "job_retry"],
             "incremental_enabled": settings.incremental_enabled,
             "interval_hours": settings.interval_hours,
             "last_incremental_at": db.setting("last_incremental_at"),
@@ -284,8 +318,8 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         query: str = "",
         category: int | None = None,
         kind: str = "",
-        state: Literal["", "saved", "partial", "metadata", "japanese", "pending"] = "",
-        sort: Literal["checked", "added", "title", "volumes"] = "checked",
+        state: Literal["", "saved", "partial", "metadata", "japanese", "bilingual", "chinese"] = "",
+        sort: Literal["checked", "added", "title", "title_zh", "volumes"] = "checked",
         page: int = Query(1, ge=1),
         page_size: int = Query(48, ge=1, le=200),
     ):
@@ -307,7 +341,7 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         items = db.rows(
             f"""SELECT key,kind,category,title,title_zh,cover,authors,publisher,
             shown_volumes AS volume_count,
-            first_seen,checked_at,file_count,ja_count,pending_count
+            first_seen,checked_at,file_count,ja_count,bilingual_count,zh_count
             FROM ({inner}){where} ORDER BY {SORTS[sort]},key LIMIT ? OFFSET ?""",
             [*params, page_size, (page - 1) * page_size],
         )
@@ -315,14 +349,76 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             row["authors"] = json.loads(row["authors"])
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
+    def live_work(key):
+        """A work not in the library, read from Novelia without adding it."""
+        try:
+            key = normalize_key(key)
+        except ValueError as exc:
+            raise HTTPException(404, "Work not found.") from exc
+        client = Client(db.settings(), interactive=True)
+        try:
+            data = client.metadata(key)
+        except Deferred as exc:
+            raise HTTPException(429, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, str(exc)) from exc
+        finally:
+            client.close()
+        level = LEVELS.get(data.get("level", "")) if key.startswith("wenku/") else None
+        return {
+            **db.work_fields(key, data),
+            "category": level,
+            "metadata": data,
+            "checked_at": None,
+        }
+
+    def work_folders(key):
+        """The folders on disk holding a work's files: one per edition tree it has files in."""
+        roots = [r.resolve() for r in storage.roots()]
+        folders = {
+            Path(row[col]).resolve().parent
+            for row in db.rows("SELECT * FROM files WHERE work_key=?", (key,))
+            for col in ("raw_path", "ja_path", "zh_path")
+            if row[col]
+        }
+        order = [JAPANESE_FOLDER, BILINGUAL_FOLDER, CHINESE_FOLDER]
+        return sorted(
+            (f for f in folders if f.is_dir() and any(f.is_relative_to(r) for r in roots)),
+            key=lambda f: (order.index(f.parent.name) if f.parent.name in order else 9, str(f)),
+        )
+
+    @app.post("/api/works/{key:path}/folder")
+    def open_folder(key: str, request: FolderRequest):
+        folder = Path(request.folder).resolve()
+        if folder not in work_folders(key):
+            raise HTTPException(404, "The folder is gone; nothing of this work is in it.")
+        try:
+            open_path(folder)
+        except OSError as exc:
+            raise HTTPException(500, f"Could not open the folder: {exc}") from exc
+        return {"opened": True}
+
     @app.get("/api/works/{key:path}")
-    def detail(key: str):
+    def detail(key: str, live: bool = False):
+        """A library work, or with `live` one read from Novelia when it is not in the library."""
         work = db.row("SELECT * FROM works WHERE key=?", (key,))
-        if not work:
+        if work:
+            work["metadata"] = json.loads(work["metadata"])
+            work["authors"] = json.loads(work["authors"])
+        elif live:
+            work = live_work(key)
+            key = work["key"]
+        else:
             raise HTTPException(404, "Work not found.")
-        work["metadata"] = json.loads(work["metadata"])
-        work["authors"] = json.loads(work["authors"])
-        chinese = db.settings().download_chinese_uploads
+        work["local"] = work.get("first_seen") is not None
+        settings = db.settings()
+        work["strategy"] = {
+            "editions": settings.editions,
+            "per_volume": settings.wanted_editions(),
+            "source_mode": settings.source_mode,
+            "translations": settings.translations,
+        }
+        chinese = settings.download_chinese_uploads
         hidden = "" if chinese else " AND mode!='zh-original'"
         work["files"] = db.rows(f"SELECT * FROM files WHERE work_key=?{hidden} ORDER BY id", (key,))
         for file in work["files"]:
@@ -330,28 +426,31 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             file["raw_available"] = Path(file["raw_path"]).is_file()
             file["ja_available"] = bool(file["ja_path"] and Path(file["ja_path"]).is_file())
             file["zh_available"] = bool(file["zh_path"] and Path(file["zh_path"]).is_file())
+        work["folders"] = [
+            {"name": folder.parent.name, "path": str(folder)} for folder in work_folders(key)
+        ]
         metadata = work["metadata"]
         for field in ("introduction", "introductionJp"):
             # Uploaders paste HTML entities, often malformed ("&lt；"); Novelia's page decodes them.
             if isinstance(metadata.get(field), str):
                 metadata[field] = unescape(metadata[field])
-        damaged = {
-            row["volume_id"]: row
-            for row in db.rows("SELECT * FROM damaged WHERE work_key=?", (key,))
-        }
+        unavailable = {}
+        for row in db.rows("SELECT * FROM unavailable WHERE work_key=?", (key,)):
+            unavailable.setdefault(row["volume_id"], []).append(row)
         work["volumes"] = []
         for i, (v, zh) in enumerate(ordered_volumes(key, metadata, chinese), 1):
-            known = damaged.get(v["volumeId"])
             work["volumes"].append(
                 {
                     "index": i,
                     "volume_id": v["volumeId"],
                     "chinese_only": zh,
                     "translated": {k: v[k] for k in (*ENGINES, "total") if k in v},
-                    # Only while the upload is the one found broken.
-                    "damaged": known["error"]
-                    if known and known["fingerprint"] == fingerprint({"volume": v})
-                    else None,
+                    # Formats Novelia could not supply, while the volume is unchanged.
+                    "unavailable": {
+                        row["mode"]: row["error"]
+                        for row in unavailable.get(v["volumeId"], [])
+                        if row["fingerprint"] == Worker.stamp(v, row["mode"], settings)
+                    },
                 }
             )
         return work
@@ -440,8 +539,8 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         worker.wake.set()
         return {"retried": count}
 
-    @app.get("/api/files/{file_id}/{variant}")
-    def artifact(file_id: int, variant: str):
+    def recorded_path(file_id, variant):
+        """The recorded path of one file of a record, inside the managed directories."""
         if variant not in ("raw", "ja", "zh", "reference"):
             raise HTTPException(404, "File variant not found.")
         row = db.row("SELECT * FROM files WHERE id=?", (file_id,))
@@ -449,7 +548,40 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         if not raw:
             raise HTTPException(404, "File not available.")
         path = Path(raw).resolve()
-        if not any(path.is_relative_to(r.resolve()) for r in storage.roots()) or not path.is_file():
+        if not any(path.is_relative_to(r.resolve()) for r in storage.roots()):
+            raise HTTPException(404, "File is outside the download directory.")
+        return path
+
+    @app.post("/api/files/{file_id}/{variant}/open")
+    def open_file(file_id: int, variant: str):
+        """Open a saved file on this computer; a file deleted from disk is reported, not
+        forgotten."""
+        path = recorded_path(file_id, variant)
+        if not path.is_file():
+            return {"opened": False, "missing": True, "path": str(path)}
+        try:
+            open_path(path)
+        except OSError as exc:
+            raise HTTPException(500, f"Could not open the file: {exc}") from exc
+        return {"opened": True, "missing": False, "path": str(path)}
+
+    @app.post("/api/files/{file_id}/forget")
+    def forget_file(file_id: int):
+        """Forget what of a record is no longer on disk."""
+        record = db.row("SELECT * FROM files WHERE id=?", (file_id,))
+        if not record:
+            raise HTTPException(404, "File not available.")
+        result = storage.forget([record])
+        if not any(result.values()):
+            raise HTTPException(
+                409, "Nothing to forget: the file, or an edition converted from it, is on disk."
+            )
+        return result
+
+    @app.get("/api/files/{file_id}/{variant}")
+    def artifact(file_id: int, variant: str):
+        path = recorded_path(file_id, variant)
+        if not path.is_file():
             raise HTTPException(404, "File is missing from the download directory.")
         text = path.suffix.lower() == ".txt"
         return FileResponse(

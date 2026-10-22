@@ -131,6 +131,39 @@ def _mark_gone(
     return len(missing)
 
 
+def _full_list[T](
+    ctx: Context,
+    creator: sqlite3.Row,
+    source: str,
+    read: Callable[[], list[T]],
+    key: Callable[[T], str],
+    label: str,
+) -> tuple[list[T], bool]:
+    """A source's whole post list, and whether it is complete enough to mark the posts
+    missing from it as gone.
+
+    Neither source gives a post count, so a list shorter than what is known is the only
+    sign of a truncated read. It is read once more: if both reads agree, the posts really
+    were deleted; otherwise the longer read is kept and nothing is marked gone."""
+    items = read()
+    row = ctx.db.one(
+        "SELECT COUNT(*) AS n FROM post_obs WHERE creator_id=? AND source=? AND state<>'gone'",
+        (creator["id"], source),
+    )
+    known = row["n"] if row else 0
+    if len(items) >= known:
+        return items, True
+    ctx.events.log(
+        "warning",
+        f"{label} listed {len(items)} posts, fewer than the {known} known; reading again",
+        creator["id"],
+    )
+    again = read()
+    if {key(i) for i in again} == {key(i) for i in items}:
+        return again, True
+    return max(items, again, key=len), len(again) >= known
+
+
 # ---------------------------------------------------------------- Pawchive
 
 
@@ -146,23 +179,17 @@ def sync_pawchive(ctx: Context, creator: sqlite3.Row, result: SyncResult, progre
         )
         result.notes.append("creator not found on Pawchive")
         return
-    raw, anomalies = ctx.pawchive.all_posts(creator["service"], creator["user_id"])
-    known = ctx.db.one(
-        "SELECT COUNT(*) AS n FROM post_obs WHERE creator_id=? AND source='pawchive' AND state<>'gone'",
-        (creator["id"],),
+    anomalies = 0
+
+    def read() -> list[dict]:
+        nonlocal anomalies
+        posts, seen = ctx.pawchive.all_posts(creator["service"], creator["user_id"])
+        anomalies += seen
+        return posts
+
+    raw, complete = _full_list(
+        ctx, creator, "pawchive", read, lambda p: str(p.get("id")), "Pawchive"
     )
-    if known and len(raw) < known["n"]:
-        # No post count exists, so a shortfall is the only truncation signal: refetch once
-        # and keep whichever scan saw more.
-        ctx.events.log(
-            "warning",
-            f"Pawchive listed {len(raw)} posts, fewer than the {known['n']} known; reading again",
-            creator["id"],
-        )
-        again, more = ctx.pawchive.all_posts(creator["service"], creator["user_id"])
-        if len(again) > len(raw):
-            raw, anomalies = again, anomalies + more
-    complete = not (known and len(raw) < known["n"])
     now = now_utc()
     parsed = [ctx.pawchive.parse(item) for item in raw]
     with ctx.db.tx() as conn:
@@ -267,8 +294,9 @@ def sync_fanbox(
         result.notes.append("no Fanbox page")
         return
     progress(f"Fanbox: reading @{handle}'s post list")
-    items: list[FanboxListItem] = []
-    try:
+
+    def read() -> list[FanboxListItem]:
+        items = []
         for item in ctx.fanbox.list_posts(handle):
             if cancel.is_set():
                 raise Stopped()
@@ -282,6 +310,10 @@ def sync_fanbox(
                     "the cached creatorId was cleared and is resolved again next sync"
                 )
             items.append(item)
+        return items
+
+    try:
+        items, complete = _full_list(ctx, creator, "fanbox", read, lambda i: i.id, "Fanbox")
     except PermanentError:
         ctx.db.run(
             "UPDATE creators SET fanbox_creator_id=NULL, fanbox_checked_at=? WHERE id=?",
@@ -327,14 +359,15 @@ def sync_fanbox(
             "UPDATE post_obs SET cover_url=? WHERE creator_id=? AND post_id=? AND source='fanbox'",
             [(i.cover_url, creator["id"], i.id) for i in items if i.cover_url],
         )
-        result.gone["Fanbox"] = _mark_gone(
-            conn, creator["id"], "fanbox", {i.id for i in items}, now
-        )
         conn.execute(
-            "UPDATE creators SET fanbox_state='ok', fanbox_error=NULL, fanbox_checked_at=?, "
-            "fanbox_listed_at=? WHERE id=?",
-            (now, now, creator["id"]),
+            "UPDATE creators SET fanbox_state='ok', fanbox_error=NULL, fanbox_checked_at=? WHERE id=?",
+            (now, creator["id"]),
         )
+        if complete:
+            result.gone["Fanbox"] = _mark_gone(
+                conn, creator["id"], "fanbox", {i.id for i in items}, now
+            )
+            conn.execute("UPDATE creators SET fanbox_listed_at=? WHERE id=?", (now, creator["id"]))
         # Shown before the bodies are read: newly opened posts can take hours to read.
         if details:
             reconcile_creator(conn, creator["id"], True, ctx.naming(creator), now)
@@ -413,9 +446,7 @@ def sync_creator(
 ) -> SyncResult:
     """`details=False` reads Fanbox's list only: the cheap status check run for every
     saved creator in the background (see JobRunner._probe)."""
-    creator = ctx.creator(creator_id)
-    if creator is None:
-        raise KeyError(creator_id)
+    creator = ctx.require_creator(creator_id)
     result = SyncResult()
     is_fanbox = creator["service"] == "fanbox"
     if "pawchive" in sources and creator["pawchive_state"] != "none":

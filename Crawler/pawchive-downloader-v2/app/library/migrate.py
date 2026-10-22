@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ..domain.naming import post_folder
 from ..domain.timefmt import format_offset, infer_offset, local_date, now_utc, shift
 from ..engine.context import Context
 from ..store.db import dump, load
@@ -105,9 +104,7 @@ def _file_plan(folder: Path, rows: list[sqlite3.Row]) -> tuple[list[dict], str]:
 
 
 def plan_adopt(ctx: Context, creator_id: str, root: Path, offset: int | None = None) -> int:
-    creator = ctx.creator(creator_id)
-    if creator is None:
-        raise KeyError(creator_id)
+    creator = ctx.require_creator(creator_id)
     if not root.is_dir():
         raise FileNotFoundError(f"No such folder: {root}")
     posts = ctx.db.all("SELECT * FROM posts WHERE creator_id=?", (creator_id,))
@@ -140,7 +137,9 @@ def plan_adopt(ctx: Context, creator_id: str, root: Path, offset: int | None = N
         pool = exact or loose
         on_date = [p for p in pool if local_date(p["published"], chosen) == f.date]
         near = [
-            p for p in pool if abs((shift(p["published"], chosen).date() - _day(f.date)).days) <= 1
+            p
+            for p in pool
+            if abs((shift(p["published"], chosen).date() - date.fromisoformat(f.date)).days) <= 1
         ]
         pick = on_date if len(on_date) == 1 else []
         if not pick and len(pool) == 1 and near:
@@ -205,24 +204,44 @@ def plan_adopt(ctx: Context, creator_id: str, root: Path, offset: int | None = N
         "counts": _counts(items),
         "missing_locally": len(missing),
     }
+    return _save_plan(
+        ctx, "adopt", creator_id, {"root": str(root), "offset": offset}, summary, items
+    )
+
+
+# ---------------------------------------------------------------- plans
+
+
+def _save_plan(
+    ctx: Context, kind: str, creator_id: str, params: dict, summary: dict, items: list[dict]
+) -> int:
     with ctx.db.tx() as conn:
         plan_id = conn.execute(
             "INSERT INTO migrations(kind, creator_id, params, created_at, summary, items) "
-            "VALUES('adopt',?,?,?,?,?)",
-            (
-                creator_id,
-                dump({"root": str(root), "offset": offset}),
-                now_utc(),
-                dump(summary),
-                dump(items),
-            ),
+            "VALUES(?,?,?,?,?,?)",
+            (kind, creator_id, dump(params), now_utc(), dump(summary), dump(items)),
         ).lastrowid
     assert plan_id is not None
     return plan_id
 
 
-def _day(iso: str) -> date:
-    return date.fromisoformat(iso)
+def _open_plan(ctx: Context, plan_id: int) -> sqlite3.Row:
+    """A plan that can still change: KeyError if there is none, RuntimeError once run."""
+    plan = ctx.db.one("SELECT * FROM migrations WHERE id=?", (plan_id,))
+    if plan is None:
+        raise KeyError(plan_id)
+    if plan["executed_at"]:
+        raise RuntimeError("This plan has already been executed")
+    return plan
+
+
+def _finish(ctx: Context, plan_id: int, items: list[dict], done: int, failed: int) -> dict:
+    result = {"done": done, "failed": failed}
+    ctx.db.run(
+        "UPDATE migrations SET items=?, executed_at=?, result=? WHERE id=?",
+        (dump(items), now_utc(), dump(result), plan_id),
+    )
+    return result
 
 
 def _cand(p: sqlite3.Row) -> dict:
@@ -247,16 +266,7 @@ def _counts(items: list[dict]) -> dict:
 def _target(ctx: Context, creator: sqlite3.Row, post: sqlite3.Row, folder: Path) -> Path:
     """Adopted folders stay where they are (an archive drive is the user's choice); only
     the fee level is dropped and the folder takes this project's name."""
-    parent = folder.parent.parent
-    return parent / post_folder(
-        ctx.value(creator, "post_folder_template"),
-        post_id=post["post_id"],
-        user=creator["user_id"],
-        service=creator["service"],
-        title=post["title"],
-        published=post["published"],
-        fmt=ctx.value(creator, "date_format"),
-    )
+    return folder.parent.parent / ctx.post_folder_name(creator, post)
 
 
 def _attach_files(ctx: Context, creator: sqlite3.Row, item: dict, accept: bool = False):
@@ -289,11 +299,8 @@ def _attach_files(ctx: Context, creator: sqlite3.Row, item: dict, accept: bool =
 
 def resolve(ctx: Context, plan_id: int, folder: str, post_id: str | None) -> dict:
     """Settle an ambiguous item by hand (`post_id=None` leaves it out)."""
-    plan = ctx.db.one("SELECT * FROM migrations WHERE id=?", (plan_id,))
-    if plan is None or plan["executed_at"]:
-        raise RuntimeError("No such plan, or already executed")
-    creator = ctx.creator(plan["creator_id"])
-    assert creator is not None
+    plan = _open_plan(ctx, plan_id)
+    creator = ctx.require_creator(plan["creator_id"])
     items = load(plan["items"], [])
     for item in items:
         if item["folder"] == folder:
@@ -327,11 +334,7 @@ def _move_dir(src: Path, dst: Path):
 
 
 def execute_adopt(ctx: Context, plan_id: int, progress=lambda _m: None) -> dict:
-    plan = ctx.db.one("SELECT * FROM migrations WHERE id=?", (plan_id,))
-    if plan is None:
-        raise KeyError(plan_id)
-    if plan["executed_at"]:
-        raise RuntimeError("This plan has already been executed")
+    plan = _open_plan(ctx, plan_id)
     creator_id = plan["creator_id"]
     items = load(plan["items"], [])
     todo = [i for i in items if i["status"] == "matched"]
@@ -385,11 +388,7 @@ def execute_adopt(ctx: Context, plan_id: int, progress=lambda _m: None) -> dict:
         except Exception as e:
             item["result"] = f"failed: {e}"
             failed += 1
-    result = {"done": done, "failed": failed}
-    ctx.db.run(
-        "UPDATE migrations SET items=?, executed_at=?, result=? WHERE id=?",
-        (dump(items), now_utc(), dump(result), plan_id),
-    )
+    result = _finish(ctx, plan_id, items, done, failed)
     ctx.events.log(
         "info", f"Adopted {done} folders" + (f", {failed} failed" if failed else ""), creator_id
     )
@@ -402,11 +401,7 @@ def execute_adopt(ctx: Context, plan_id: int, progress=lambda _m: None) -> dict:
 def plan_relayout(ctx: Context, creator_id: str, offset: int = 0) -> int:
     """Rename each downloaded post folder (in place, under its current parent) to the
     current template, with the folder date taken at `offset` minutes from UTC."""
-    creator = ctx.creator(creator_id)
-    if creator is None:
-        raise KeyError(creator_id)
-    template = ctx.value(creator, "post_folder_template")
-    fmt = ctx.value(creator, "date_format")
+    creator = ctx.require_creator(creator_id)
     items, targets = [], defaultdict(list)
     for post in ctx.db.all(
         "SELECT * FROM posts WHERE creator_id=? AND local_dir IS NOT NULL ORDER BY published",
@@ -416,15 +411,7 @@ def plan_relayout(ctx: Context, creator_id: str, offset: int = 0) -> int:
         if not current.is_dir():
             continue
         published = shift(post["published"], offset).isoformat() if post["published"] else ""
-        target = current.parent / post_folder(
-            template,
-            post_id=post["post_id"],
-            user=creator["user_id"],
-            service=creator["service"],
-            title=post["title"],
-            published=published,
-            fmt=fmt,
-        )
+        target = current.parent / ctx.post_folder_name(creator, post, published)
         if target == current:
             continue
         items.append(
@@ -446,20 +433,11 @@ def plan_relayout(ctx: Context, creator_id: str, offset: int = 0) -> int:
         if item["status"] == "matched" and Path(item["target"]).exists():
             item.update(status="conflict", note="target folder exists")
     summary = {"offset": offset, "offset_label": format_offset(offset), "counts": _counts(items)}
-    with ctx.db.tx() as conn:
-        plan_id = conn.execute(
-            "INSERT INTO migrations(kind, creator_id, params, created_at, summary, items) "
-            "VALUES('relayout',?,?,?,?,?)",
-            (creator_id, dump({"offset": offset}), now_utc(), dump(summary), dump(items)),
-        ).lastrowid
-    assert plan_id is not None
-    return plan_id
+    return _save_plan(ctx, "relayout", creator_id, {"offset": offset}, summary, items)
 
 
 def execute_relayout(ctx: Context, plan_id: int, progress=lambda _m: None) -> dict:
-    plan = ctx.db.one("SELECT * FROM migrations WHERE id=?", (plan_id,))
-    if plan is None or plan["executed_at"]:
-        raise RuntimeError("No such plan, or already executed")
+    plan = _open_plan(ctx, plan_id)
     items = load(plan["items"], [])
     done = failed = 0
     for n, item in enumerate(i for i in items if i["status"] == "matched"):
@@ -475,12 +453,7 @@ def execute_relayout(ctx: Context, plan_id: int, progress=lambda _m: None) -> di
         except Exception as e:
             item["result"] = f"failed: {e}"
             failed += 1
-    result = {"done": done, "failed": failed}
-    ctx.db.run(
-        "UPDATE migrations SET items=?, executed_at=?, result=? WHERE id=?",
-        (dump(items), now_utc(), dump(result), plan_id),
-    )
-    return result
+    return _finish(ctx, plan_id, items, done, failed)
 
 
 def execute(ctx: Context, plan_id: int, progress=lambda _m: None) -> dict:

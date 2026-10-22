@@ -25,7 +25,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import PROJECT, BadSetting
+from .config import PROJECT, SOURCE_PREFERENCES, BadSetting
 from .domain.match import parse_ref
 from .domain.timefmt import now_utc
 from .engine.context import Context
@@ -39,7 +39,9 @@ from .sources.http import PermanentError
 from .store.db import dump
 
 STATIC = Path(__file__).resolve().parent / "static"
-JOBS_SHOWN = 200
+# Finished jobs in the live stream; older ones are paged in through /api/jobs.
+JOBS_SHOWN = 100
+FINISHED = "status NOT IN ('queued','running')"
 EVENTS_SHOWN = 300
 STREAM_SECONDS = 300
 
@@ -147,6 +149,15 @@ def _not_found(e: KeyError) -> HTTPException:
     return HTTPException(404, f"Not found: {e.args[0] if e.args else ''}")
 
 
+def _migration(row: Any) -> dict:
+    """A migrations row with its JSON columns read."""
+    out = dict(row)
+    for key in ("params", "summary", "items", "result"):
+        if key in out:
+            out[key] = json.loads(out[key]) if out[key] else None
+    return out
+
+
 def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
     ctx = Context(data_dir)
     runner = JobRunner(ctx, ctx.settings.max_concurrent_creators)
@@ -193,9 +204,15 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
 
     # ---------------- overview ----------------
 
+    def _creator(cid: str) -> Any:
+        try:
+            return ctx.require_creator(cid)
+        except KeyError as e:
+            raise _not_found(e) from None
+
     @app.get("/api/state")
     def state():
-        jobs = ctx.db.all("SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY id")
+        jobs = ctx.db.all(f"SELECT * FROM jobs WHERE NOT ({FINISHED}) ORDER BY id")
         quota = ctx.pawchive_http.throttle.quota.snapshot()
         return {
             "session": ctx.session(),
@@ -227,7 +244,16 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
         ends after a while and the browser reconnects, which keeps shutdown prompt."""
 
         def snapshot(after: int) -> tuple[dict, list[dict], list[dict]]:
-            jobs = _jobs(ctx.db.all("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (JOBS_SHOWN,)))
+            # Every active job, however many are queued, then the latest to finish: a long
+            # job that ends must show up even when hundreds of newer ones finished before it.
+            jobs = _jobs(
+                ctx.db.all(f"SELECT * FROM jobs WHERE NOT ({FINISHED}) ORDER BY id DESC")
+                + ctx.db.all(
+                    f"SELECT * FROM jobs WHERE {FINISHED} ORDER BY finished_at DESC, id DESC "
+                    "LIMIT ?",
+                    (JOBS_SHOWN,),
+                )
+            )
             events = ctx.db.all(
                 "SELECT * FROM events WHERE id > ? ORDER BY id DESC LIMIT ?", (after, EVENTS_SHOWN)
             )
@@ -336,9 +362,7 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
     def _move(cid: str, group: str | None, alias: str | None) -> int | None:
         """Queue moving a creator's folder to a new group or alias; None if neither changes.
         A destination that another creator owns is refused before anything is queued."""
-        creator = ctx.creator(cid)
-        if creator is None:
-            raise HTTPException(404, "No such creator")
+        creator = _creator(cid)
         to: str = creator["group_path"] if group is None else clean_group(group)
         name: str = creator["alias"] if alias is None else alias.strip()
         if to == creator["group_path"] and name == creator["alias"]:
@@ -351,9 +375,7 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
 
     @app.get("/api/creators/{cid}/move")
     def move_preview(cid: str, group: str, alias: str | None = None):
-        creator = ctx.creator(cid)
-        if creator is None:
-            raise HTTPException(404, "No such creator")
+        creator = _creator(cid)
         try:
             return preview(
                 ctx, creator, clean_group(group), creator["alias"] if alias is None else alias
@@ -381,8 +403,7 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
             raise HTTPException(404, f"No creator is in {source}")
         # Checked as a whole first, so a refused move does not leave the group half moved.
         for cid, target in moves:
-            creator = ctx.creator(cid)
-            assert creator is not None
+            creator = _creator(cid)
             try:
                 preview(ctx, creator, target, creator["alias"])
             except ValueError as e:
@@ -391,8 +412,7 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
 
     @app.patch("/api/creators/{cid}")
     def patch_creator(cid: str, body: PatchCreator):
-        if ctx.creator(cid) is None:
-            raise HTTPException(404, "No such creator")
+        creator = _creator(cid)
         job = _move(cid, body.group, body.alias)
         sets: dict[str, Any] = {}
         if body.ignore is not None:
@@ -404,12 +424,10 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
         if body.timer is not None or body.clear_timer:
             sets["timer"] = None if body.clear_timer else dump(body.timer)
         if body.preference is not None:
-            creator = ctx.creator(cid)
-            assert creator is not None
             config = json.loads(creator["config"] or "{}")
             if body.preference in ("", "inherit"):
                 config.pop("source_preference", None)
-            elif body.preference in ("pawchive-first", "fanbox-first"):
+            elif body.preference in SOURCE_PREFERENCES:
                 config["source_preference"] = body.preference
             else:
                 raise HTTPException(400, "Unknown source preference")
@@ -446,8 +464,7 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
 
     @app.post("/api/creators/{cid}/posts/action")
     def post_action(cid: str, body: PostAction):
-        if ctx.creator(cid) is None:
-            raise HTTPException(404, "No such creator")
+        _creator(cid)
         if body.action in ("download", "redownload"):
             if body.source not in (None, "pawchive", "fanbox"):
                 raise HTTPException(400, "Unknown source")
@@ -494,8 +511,15 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
     # ---------------- jobs & events ----------------
 
     @app.get("/api/jobs")
-    def list_jobs(limit: int = 60):
-        return _jobs(ctx.db.all("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)))
+    def list_jobs(limit: int = 100, offset: int = 0):
+        """Finished jobs, the most recently finished first; the stream carries the newest."""
+        return _jobs(
+            ctx.db.all(
+                f"SELECT * FROM jobs WHERE {FINISHED} ORDER BY finished_at DESC, id DESC "
+                "LIMIT ? OFFSET ?",
+                (min(limit, 500), max(offset, 0)),
+            )
+        )
 
     @app.post("/api/jobs")
     def add_job(body: JobRequest):
@@ -519,9 +543,14 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
         return {"cancelled": runner.cancel_all()}
 
     @app.get("/api/events")
-    def events(limit: int = 200):
+    def events(limit: int = 200, before: int = 0):
+        """Newest first; `before` pages back past the lines the stream carries."""
         return [
-            dict(r) for r in ctx.db.all("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
+            dict(r)
+            for r in ctx.db.all(
+                "SELECT * FROM events WHERE ? = 0 OR id < ? ORDER BY id DESC LIMIT ?",
+                (before, before, min(limit, 1000)),
+            )
         ]
 
     # ---------------- settings & Fanbox ----------------
@@ -638,27 +667,14 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
             + "ORDER BY id DESC LIMIT 30",
             (creator_id,) if creator_id else (),
         )
-        return [
-            {
-                **dict(r),
-                "summary": json.loads(r["summary"]),
-                "result": json.loads(r["result"]) if r["result"] else None,
-            }
-            for r in rows
-        ]
+        return [_migration(r) for r in rows]
 
     @app.get("/api/migrations/{plan_id}")
     def get_migration(plan_id: int):
         row = ctx.db.one("SELECT * FROM migrations WHERE id=?", (plan_id,))
         if row is None:
             raise HTTPException(404, "No such plan")
-        return {
-            **dict(row),
-            "params": json.loads(row["params"]),
-            "summary": json.loads(row["summary"]),
-            "items": json.loads(row["items"]),
-            "result": json.loads(row["result"]) if row["result"] else None,
-        }
+        return _migration(row)
 
     @app.post("/api/migrations/{plan_id}/resolve")
     def resolve_item(plan_id: int, body: Resolve):

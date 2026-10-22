@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE creators(
@@ -110,7 +110,7 @@ CREATE TABLE files(
     local_name TEXT,
     -- pending | done | failed
     state TEXT NOT NULL DEFAULT 'pending',
-    -- pawchive | fanbox | adopted | v1
+    -- pawchive | fanbox | adopted | local
     via TEXT,
     local_size INTEGER,
     -- NULL unknown, 1 matches the sources' size / dimensions / hash, 0 does not
@@ -214,6 +214,10 @@ class Database:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
                         if name in BACKFILL:
                             db.execute(BACKFILL[name])
+            if 0 < version < 2:
+                # v1 fetched only from Pawchive, so what it got is shown as such.
+                db.execute("UPDATE files SET via='pawchive' WHERE via='v1'")
+                db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

@@ -1,4 +1,4 @@
-import { api, esc, toast } from './api.js';
+import { api, esc, isActive, prefs, toast } from './api.js';
 import { mountAdd } from './add.js';
 import { I } from './icons.js';
 import { mountJobs } from './jobs.js';
@@ -16,7 +16,7 @@ let creators = [];
 // Creators with a folder move queued or running; shown dimmed until it is done.
 let moving = new Set();
 let collapsed = new Set();
-try { collapsed = new Set(JSON.parse(localStorage.getItem('collapsed') || '[]')); } catch { /* storage unavailable */ }
+try { collapsed = new Set(JSON.parse(prefs.get('collapsed', '[]'))); } catch { /* not a list */ }
 
 function route() {
   const [path, query] = (location.hash.slice(1) || '/').split('?');
@@ -71,9 +71,7 @@ function renderTree() {
 
 mountRegroup(tree, () => creators);
 
-const saveCollapsed = () => {
-  try { localStorage.setItem('collapsed', JSON.stringify([...collapsed])); } catch { /* storage unavailable */ }
-};
+const saveCollapsed = () => prefs.set('collapsed', JSON.stringify([...collapsed]));
 
 tree.addEventListener('toggle', (e) => {
   const d = e.target;
@@ -174,7 +172,7 @@ function setCollapsed(collapsed) {
   document.documentElement.classList.toggle('side-collapsed', collapsed);
   toggle.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
   toggle.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
-  try { localStorage.setItem('side', collapsed ? 'collapsed' : 'open'); } catch { /* storage unavailable */ }
+  prefs.set('side', collapsed ? 'collapsed' : 'open');
 }
 toggle.addEventListener('click', () => setCollapsed(!document.documentElement.classList.contains('side-collapsed')));
 setCollapsed(document.documentElement.classList.contains('side-collapsed'));
@@ -189,25 +187,21 @@ document.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------- live state
 
 const foot = document.getElementById('side-foot');
-const active = (status) => status === 'queued' || status === 'running';
 
 // Finished jobs are found in the job history, not by watching the active list: a folder
 // move takes milliseconds and can start and end between two snapshots.
-let jobStatus = null;
+let wasActive = null;
 let reloadTimer = 0;
 on('jobs', (jobs) => {
   // Ended since the last snapshot: active then, or not seen before (the first snapshot
   // only records what is there).
-  const ended = (j) => {
-    const was = jobStatus.get(j.id);
-    return !active(j.status) && (was === undefined || active(was));
-  };
-  const finished = jobStatus ? jobs.filter(ended) : [];
-  jobStatus = new Map(jobs.map((j) => [j.id, j.status]));
+  const ended = (j) => !isActive(j) && wasActive.get(j.id) !== false;
+  const finished = wasActive ? jobs.filter(ended) : [];
+  wasActive = new Map(jobs.map((j) => [j.id, isActive(j)]));
   for (const id of new Set(finished.map((j) => j.creator_id).filter(Boolean))) refreshCreator(id);
   const moves = finished.filter((j) => j.kind === 'move');
   if (moves.length) reportMoves(moves);
-  const nowMoving = new Set(jobs.filter((j) => j.kind === 'move' && active(j.status)).map((j) => j.creator_id));
+  const nowMoving = new Set(jobs.filter((j) => j.kind === 'move' && isActive(j)).map((j) => j.creator_id));
   const movingChanged = nowMoving.size !== moving.size || [...nowMoving].some((id) => !moving.has(id));
   moving = nowMoving;
   if (finished.length) {

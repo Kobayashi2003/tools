@@ -128,9 +128,9 @@ def test_bulk_conversion_keeps_source_and_downloads_nothing(system):
     assert not json.loads(db.row("SELECT report FROM files")["report"])["vertical"]
 
 
-def test_download_formats_and_chinese_conversion(system):
+def test_every_ticked_edition_and_conversion_defers_to_novelia(system):
     db, worker, upstream = system
-    configure(db, download_japanese=True, download_chinese=True)
+    configure(db, editions=["japanese", "bilingual", "chinese"], editions_per_volume=3)
     assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed"
     modes = sorted(r["mode"] for r in db.rows("SELECT mode FROM files"))
     assert modes == ["jp-original", "jp-zh", "zh"]
@@ -139,11 +139,85 @@ def test_download_formats_and_chinese_conversion(system):
     # Translation progress changes Novelia's builds, not the upload.
     assert [d[2] for d in upstream.downloads[3:]] == [False, "zh"]
     downloads = len(upstream.downloads)
-    job = run(db, worker, kind="convert", convert_japanese=False, convert_chinese=True)
+    job = run(db, worker, kind="convert", convert_japanese=True, convert_chinese=True)
     assert job["status"] == "completed" and len(upstream.downloads) == downloads
     file = db.row("SELECT * FROM files WHERE mode='jp-zh'")
-    assert file["ja_path"] is None and Path(file["raw_path"]).exists()
+    assert file["ja_path"] is None and file["zh_path"] is None  # Novelia's editions are saved
+    run(db, worker, kind="convert", file_ids=[file["id"]], force=True, convert_chinese=True)
+    file = db.row("SELECT * FROM files WHERE mode='jp-zh'")
+    assert Path(file["raw_path"]).exists()
     assert Path(file["zh_path"]).parent.parent.name == "Chinese"
+
+
+def test_a_stand_in_is_removed_once_the_preferred_edition_arrives(system):
+    db, worker, upstream = system
+    configure(db, editions=["japanese", "bilingual"], editions_per_volume=1)
+    upstream.original_errors["volume1.epub"] = DamagedUpload("Novelia's copy is empty.")
+    assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed"
+    assert [r["mode"] for r in db.rows("SELECT mode FROM files")] == ["jp-zh"]
+    stand_in = db.row("SELECT raw_path FROM files")["raw_path"]
+    run(db, worker, kind="manual", keys=[KEY])
+    assert upstream.downloads == [(KEY, "volume1.epub", False)]  # the broken upload is skipped
+    upstream.original_errors.clear()
+    upstream.works[KEY]["volumeJp"][0]["total"] = 11  # uploaded again
+    run(db, worker, kind="manual", keys=[KEY])
+    assert [r["mode"] for r in db.rows("SELECT mode FROM files")] == ["jp-original"]
+    assert not Path(stand_in).exists() and not db.rows("SELECT * FROM unavailable")
+
+
+def test_an_edition_asked_for_by_name_is_kept_beside_the_strategy(system):
+    db, worker, upstream = system
+    configure(db, editions=["japanese", "bilingual"], editions_per_volume=1)
+    run(db, worker, kind="manual", keys=[KEY], editions=["bilingual"])
+    assert upstream.downloads == [(KEY, "volume1.epub", False)]
+    run(db, worker, kind="manual", keys=[KEY])
+    # The original arrives, and the bilingual file was asked for, so it is no stand-in.
+    assert sorted(r["mode"] for r in db.rows("SELECT mode FROM files")) == ["jp-original", "jp-zh"]
+
+
+def test_an_edition_asked_for_by_name_is_tried_even_if_once_unavailable(system):
+    db, worker, upstream = system
+    configure(db, editions=["japanese", "bilingual"], editions_per_volume=1)
+    upstream.original_errors["volume1.epub"] = DamagedUpload("Novelia's copy is empty.")
+    run(db, worker, kind="manual", keys=[KEY])
+    upstream.original_errors.clear()
+    run(db, worker, kind="manual", keys=[KEY], editions=["japanese"])
+    assert (KEY, "volume1.epub", True) in upstream.downloads
+
+
+def test_a_stand_in_open_elsewhere_is_left_without_stopping_the_task(system, monkeypatch):
+    db, worker, upstream = system
+    configure(db, editions=["japanese", "bilingual"], editions_per_volume=1)
+    upstream.original_errors["volume1.epub"] = DamagedUpload("Novelia's copy is empty.")
+    run(db, worker, kind="manual", keys=[KEY])
+    upstream.original_errors.clear()
+    upstream.works[KEY]["volumeJp"][0]["total"] = 11
+
+    def locked(self, missing_ok=False):
+        raise PermissionError("[WinError 32] The file is in use")
+
+    monkeypatch.setattr(Path, "unlink", locked)
+    assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed"
+    assert sorted(r["mode"] for r in db.rows("SELECT mode FROM files")) == ["jp-original", "jp-zh"]
+
+
+def test_a_file_deleted_from_disk_stays_downloaded_until_restored(system):
+    db, worker, upstream = system
+    run(db, worker, kind="manual", keys=[KEY])
+    path = Path(db.row("SELECT raw_path FROM files")["raw_path"])
+    path.unlink()
+    run(db, worker, kind="full")
+    assert len(upstream.downloads) == 1 and db.row("SELECT id FROM files")
+    run(db, worker, kind="manual", keys=[KEY], restore=True)
+    assert len(upstream.downloads) == 2 and path.is_file()
+
+
+def test_old_format_switches_become_a_strategy():
+    assert Settings.model_validate({"download_japanese": True, "download_bilingual": False})
+    old = Settings.model_validate({"download_bilingual": True, "original_fallback": True})
+    assert (old.editions, old.editions_per_volume) == (["bilingual", "japanese"], 1)
+    both = Settings.model_validate({"download_japanese": True, "download_chinese": True})
+    assert (both.editions, both.wanted_editions()) == (["bilingual", "japanese", "chinese"], 3)
 
 
 def test_category_guard_and_metadata_only(system):
@@ -434,19 +508,19 @@ def test_damaged_uploads_are_skipped_until_they_change(system):
     sweep = run(db, worker, kind="incremental")
     assert sweep["status"] == "completed"  # broken upstream files no longer fail every sweep
     skipped = (
-        "SELECT COUNT(*) AS n FROM logs WHERE job_id=? AND message LIKE 'Skipped volume1.epub:%'"
+        "SELECT COUNT(*) AS n FROM logs WHERE job_id=? AND message LIKE 'Skipped volume1.epub [%'"
     )
-    assert db.row(skipped, (sweep["id"],))["n"] == 1
+    assert db.row(skipped, (sweep["id"],))["n"] == 2  # the bilingual file and its stand-in
     upstream.raise_on.clear()
     upstream.works[KEY]["volumeJp"][0]["total"] = 11  # uploaded again
     assert run(db, worker, kind="incremental")["status"] == "completed"
     assert upstream.downloads == [(KEY, "volume1.epub", False)]
-    assert not db.rows("SELECT * FROM damaged")
+    assert not db.rows("SELECT * FROM unavailable WHERE mode='jp-zh'")
 
 
-def test_original_fallback_can_be_turned_off(system):
+def test_without_a_stand_in_a_failed_build_fails_the_volume(system):
     db, worker, upstream = system
-    configure(db, original_fallback=False)
+    configure(db, editions=["bilingual"])
     upstream.bilingual_errors["volume1.epub"] = Rejected("HTTP 404: not found on Novelia.")
     assert run(db, worker, kind="manual", keys=[KEY])["status"] == "completed_with_errors"
     assert not db.rows("SELECT * FROM files")

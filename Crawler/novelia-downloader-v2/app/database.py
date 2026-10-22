@@ -55,6 +55,8 @@ ADDED_COLUMNS = {
     "files": {
         # The Chinese edition converted from a bilingual file.
         "zh_path": "TEXT",
+        # Downloaded by name rather than by the strategy: never removed as a stand-in.
+        "pinned": "INTEGER NOT NULL DEFAULT 0",
     },
 }
 
@@ -98,10 +100,11 @@ class Database:
                     id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES jobs(id),
                     created_at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS damaged (
-                    work_key TEXT NOT NULL, volume_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-                    error TEXT NOT NULL, job_id INTEGER NOT NULL, checked_at TEXT NOT NULL,
-                    PRIMARY KEY(work_key, volume_id)
+                DROP TABLE IF EXISTS damaged;
+                CREATE TABLE IF NOT EXISTS unavailable (
+                    work_key TEXT NOT NULL, volume_id TEXT NOT NULL, mode TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL, error TEXT NOT NULL, job_id INTEGER NOT NULL,
+                    checked_at TEXT NOT NULL, PRIMARY KEY(work_key, volume_id, mode)
                 );
                 CREATE INDEX IF NOT EXISTS log_job_idx ON logs(job_id, id);
                 CREATE INDEX IF NOT EXISTS item_status_idx ON job_items(job_id, status);
@@ -263,17 +266,31 @@ class Database:
                     (next_page, page_count, job_id),
                 )
 
-    def save_work(self, key, data, category=None):
+    @staticmethod
+    def work_fields(key, data):
+        """The `works` columns taken from Novelia's metadata."""
         kind = "wenku" if key.startswith("wenku/") else "web"
         title = data.get("title", "") if kind == "wenku" else data.get("titleJp", "")
-        authors = [
-            a.get("name", "") if isinstance(a, dict) else str(a) for a in data.get("authors", [])
-        ]
-        volumes = (
-            len(data.get("volumeJp", [])) + len(data.get("volumeZh", []))
-            if kind == "wenku"
-            else sum(bool(c.get("chapterId")) for c in data.get("toc", []))
-        )
+        return {
+            "key": key,
+            "kind": kind,
+            "title": title or key,
+            "title_zh": data.get("titleZh", ""),
+            "cover": data.get("cover", ""),
+            "authors": [
+                a.get("name", "") if isinstance(a, dict) else str(a)
+                for a in data.get("authors", [])
+            ],
+            "publisher": data.get("publisher", ""),
+            "volume_count": (
+                len(data.get("volumeJp", [])) + len(data.get("volumeZh", []))
+                if kind == "wenku"
+                else sum(bool(c.get("chapterId")) for c in data.get("toc", []))
+            ),
+        }
+
+    def save_work(self, key, data, category=None):
+        work = self.work_fields(key, data)
         self.execute(
             """INSERT INTO works VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(key) DO UPDATE SET category=COALESCE(excluded.category,works.category),
@@ -282,15 +299,15 @@ class Database:
             volume_count=excluded.volume_count,checked_at=excluded.checked_at""",
             (
                 key,
-                kind,
+                work["kind"],
                 category,
-                title or key,
-                data.get("titleZh", ""),
-                data.get("cover", ""),
-                dump(authors),
-                data.get("publisher", ""),
+                work["title"],
+                work["title_zh"],
+                work["cover"],
+                dump(work["authors"]),
+                work["publisher"],
                 dump(data),
-                volumes,
+                work["volume_count"],
                 now(),
                 now(),
             ),
@@ -316,19 +333,29 @@ class Database:
             (key, volume, ORIGINAL_JP),
         )
 
-    def damaged(self, key, volume):
-        return self.row("SELECT * FROM damaged WHERE work_key=? AND volume_id=?", (key, volume))
+    def pin(self, file_id):
+        self.execute("UPDATE files SET pinned=1 WHERE id=?", (file_id,))
 
-    def mark_damaged(self, key, volume, fingerprint, error, job_id):
-        """Remember a volume whose upload on Novelia is broken, so later sweeps skip it."""
-        self.execute(
-            "INSERT OR REPLACE INTO damaged(work_key,volume_id,fingerprint,error,job_id,checked_at) "
-            "VALUES (?,?,?,?,?,?)",
-            (key, volume, fingerprint, error, job_id, now()),
+    def unavailable(self, key, volume, mode):
+        return self.row(
+            "SELECT * FROM unavailable WHERE work_key=? AND volume_id=? AND mode=?",
+            (key, volume, mode),
         )
 
-    def clear_damaged(self, key, volume):
-        self.execute("DELETE FROM damaged WHERE work_key=? AND volume_id=?", (key, volume))
+    def mark_unavailable(self, key, volume, mode, fingerprint, error, job_id):
+        """Remember a format Novelia could not supply (a broken upload, or a build that fails
+        every time), so later sweeps skip it until it changes."""
+        self.execute(
+            "INSERT OR REPLACE INTO unavailable(work_key,volume_id,mode,fingerprint,error,job_id,"
+            "checked_at) VALUES (?,?,?,?,?,?,?)",
+            (key, volume, mode, fingerprint, error, job_id, now()),
+        )
+
+    def clear_unavailable(self, key, volume, mode):
+        self.execute(
+            "DELETE FROM unavailable WHERE work_key=? AND volume_id=? AND mode=?",
+            (key, volume, mode),
+        )
 
     def next_job(self):
         """The oldest queued task that is not paused until later."""

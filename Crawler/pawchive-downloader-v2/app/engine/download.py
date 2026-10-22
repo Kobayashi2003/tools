@@ -1,9 +1,9 @@
 """Download a creator's undone posts, choosing a source per file.
 
-Order of sources comes from the preference (`pawchive-first` by default). A file
+Order of sources comes from the preference (`fanbox-first` by default). A file
 the first source cannot deliver is tried from the other one in the same run, so
-a Pawchive 404 on a post you subscribe to is fetched from Fanbox at once rather
-than waiting a day. A spent quota pauses the run; nothing is marked failed for it.
+a post Fanbox locks or lost is fetched from Pawchive at once, and a Pawchive 404
+on a post you subscribe to is fetched from Fanbox rather than waiting a day. A spent quota pauses the run; nothing is marked failed for it.
 """
 
 import hashlib
@@ -16,10 +16,10 @@ from pathlib import Path
 import requests
 
 from ..domain.filters import FilterTarget, combined, reason
-from ..domain.naming import post_folder
+from ..domain.status import source_order
 from ..domain.timefmt import now_utc
 from ..net.limiter import QuotaExceeded
-from ..sources.http import Cancelled, PermanentError
+from ..sources.http import Cancelled, PermanentError, carry
 from ..store.db import load
 from .context import Context
 from .sync import Stopped
@@ -49,15 +49,7 @@ class DownloadResult:
 def post_dir(ctx: Context, creator: sqlite3.Row, post: sqlite3.Row) -> Path:
     if post["local_dir"]:
         return Path(post["local_dir"])
-    return ctx.creator_dir(creator) / post_folder(
-        ctx.value(creator, "post_folder_template"),
-        post_id=post["post_id"],
-        user=creator["user_id"],
-        service=creator["service"],
-        title=post["title"],
-        published=post["published"],
-        fmt=ctx.value(creator, "date_format"),
-    )
+    return ctx.creator_dir(creator) / ctx.post_folder_name(creator, post)
 
 
 def filter_reason(
@@ -95,11 +87,8 @@ class Downloader:
         self.progress = progress
 
     def _candidates(self, row: sqlite3.Row, preference: str, force: str | None) -> list[str]:
-        order = ["fanbox", "pawchive"] if preference == "fanbox-first" else ["pawchive", "fanbox"]
-        if force:
-            order = [force]
         out = []
-        for source in order:
+        for source in [force] if force else source_order(preference):
             if source == "pawchive" and row["present_p"] and row["p_path"]:
                 if self.ctx.deferrals.due("pawchive", row["p_path"]):
                     out.append(source)
@@ -209,7 +198,8 @@ class Downloader:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             outcomes = list(
                 pool.map(
-                    lambda r: self._file(creator, folder, r, preference, force, redownload), todo
+                    carry(lambda r: self._file(creator, folder, r, preference, force, redownload)),
+                    todo,
                 )
             )
         for outcome in outcomes:
@@ -250,9 +240,7 @@ class Downloader:
         redownload: bool = False,
     ) -> DownloadResult:
         ctx = self.ctx
-        creator = ctx.creator(creator_id)
-        if creator is None:
-            raise KeyError(creator_id)
+        creator = ctx.require_creator(creator_id)
         result = DownloadResult()
         if creator["ignore"] and not post_ids:
             result.paused = "creator is ignored"

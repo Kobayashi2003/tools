@@ -8,7 +8,8 @@ from pathlib import Path
 import uvicorn
 
 import app.server as server
-from app.schema import JobRequest
+from app.schema import JobRequest, Settings
+from app.worker import Worker
 from tests.conftest import epub
 
 
@@ -18,7 +19,7 @@ def main():
         app = server.create_app(root / "data", root / "books", start_worker=False)
         db = app.state.db
         catalog = []
-        for index in range(8):
+        for index in range(10):
             key = f"wenku/{index + 1:024x}"
             title = "Japanese library " + str(index + 1)
             data = {
@@ -26,10 +27,15 @@ def main():
                 "titleZh": "Local preview",
                 "authors": ["Example author"],
                 "introduction": "A long introduction for testing expansion. " * 20,
-                "volumeJp": [{"volumeId": "Volume 1.epub"}, {"volumeId": "Volume 2.epub"}],
+                "volumeJp": [
+                    {"volumeId": "Volume 1.epub", "sakura": 40, "total": 40},
+                    {"volumeId": "Volume 2.epub", "total": 40},
+                ],
             }
-            db.save_work(key, data, 1)
             catalog.append({"id": key.split("/")[1], **data})
+            if index >= 8:
+                continue  # in the catalog only
+            db.save_work(key, data, 1)
             if index < 4:
                 source = epub(root / "books" / str(index) / "source.epub")
                 db.save_file(
@@ -37,6 +43,13 @@ def main():
                 )
                 if index == 3:
                     source.unlink()
+                if index == 0:
+                    original = epub(root / "books" / "0" / "original.epub", False)
+                    db.save_original(
+                        key, "Volume 1.epub", "hash", original, original.stat().st_size, "d"
+                    )
+                    stamp = Worker.stamp(data["volumeJp"][1], "jp-original", Settings())
+                    db.mark_unavailable(key, "Volume 2.epub", "jp-original", stamp, "Empty.", 1)
         for status in ("completed", "completed_with_errors", "failed", "interrupted"):
             job_id = db.create_job(
                 JobRequest(kind="manual", keys=["wenku/000000000000000000000001"])
@@ -130,6 +143,9 @@ def main():
                     ],
                     "pageNumber": 3,
                 }
+
+            def metadata(self, key):
+                return next(item for item in catalog if item["id"] == key.split("/")[1])
 
             def close(self):
                 pass

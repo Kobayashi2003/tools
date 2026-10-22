@@ -12,6 +12,14 @@ const store = {
 
 const SITE = "https://n.novelia.cc";
 const ENGINES = ["sakura", "gpt", "youdao", "baidu"];
+const EDITIONS = { japanese: "Japanese original", bilingual: "Bilingual", chinese: "Chinese" };
+const MODE_LABELS = { "jp-original": "Japanese original", "jp-zh": "Bilingual", "zh-jp": "Bilingual", zh: "Chinese", "zh-original": "Chinese upload" };
+// Library counts of volumes per edition: [field, badge, description].
+const EDITION_COUNTS = [
+  ["ja_count", "JA", "Volumes with a Japanese edition"],
+  ["bilingual_count", "BI", "Volumes with a bilingual file"],
+  ["zh_count", "ZH", "Volumes with a Chinese edition"],
+];
 const KINDS = {
   full: "Full collection",
   range: "Catalog pages",
@@ -52,7 +60,8 @@ const state = {
   taskFilter: "all",
   jobs: [],
   log: { id: null, after: 0 },
-  engines: [],
+  order: { engines: [], editions: [] },
+  titleLang: store.get("title-lang", "ja"),
   busy: false,
 };
 
@@ -74,6 +83,13 @@ const countdown = (value) => {
 const jobStatus = (j) => (j.status === "queued" && j.resume_at ? "paused" : j.status);
 const waiting = (j) => j.status === "running" && j.wait_until && secondsUntil(j.wait_until) > 0;
 const workUrl = (key) => `${SITE}/${key.startsWith("wenku/") ? key : "novel/" + key}`;
+// The title in the chosen language (Japanese when there is no Chinese one), and the other one.
+function titles(ja, zh) {
+  const [shown, other] = state.titleLang === "zh" && zh ? [zh, ja] : [ja, zh];
+  return [shown, other && other !== shown ? other : ""];
+}
+const editionBadges = (w) =>
+  EDITION_COUNTS.filter(([field]) => w[field]).map(([field, badge, hint]) => `<span class="pill ok" title="${hint}">${badge} ${w[field]}</span>`).join("");
 
 async function api(url, options = {}) {
   const response = await fetch(url, { headers: { "Content-Type": "application/json" }, ...options });
@@ -138,7 +154,7 @@ let settingsSaving = false;
 function settingsSnapshot() {
   return JSON.stringify([
     [...$("#settings-form").elements].filter(input => input.name).map(input => [input.name, input.type === "checkbox" ? input.checked : input.value]),
-    state.engines.map(engine => [engine.name, engine.on]),
+    state.order,
   ]);
 }
 function updateSettingsFeedback() {
@@ -193,16 +209,15 @@ function collectionName(work) {
 
 function libraryCard(w) {
   const picked = state.selected.has(w.key);
-  const raw = w.file_count - w.ja_count;
-  const badges = w.ja_count ? `<span class="pill ok" title="Japanese editions">JA ${w.ja_count}</span>` : "";
+  const [title, other] = titles(w.title, w.title_zh);
   return `<article class="book${picked ? " picked" : ""}">
-    <label class="pick"><input type="checkbox" data-key="${esc(w.key)}" aria-label="Select ${esc(w.title)}" ${picked ? "checked" : ""}></label>
+    <label class="pick"><input type="checkbox" data-key="${esc(w.key)}" aria-label="Select ${esc(title)}" ${picked ? "checked" : ""}></label>
     <button class="book-open" data-work="${esc(w.key)}">
-      ${cover(w.cover, w.title)}
-      <h3 title="${esc(w.title)}">${esc(w.title)}</h3>
-      <p class="by">${esc(w.authors.join(", ") || w.title_zh || w.key)}</p>
-      <span class="meter" aria-hidden="true"><span class="m-ja" data-w="${pct(w.ja_count, w.volume_count)}"></span><span data-w="${pct(raw, w.volume_count)}"></span></span>
-      <span class="count"><span>${w.file_count} / ${w.volume_count} saved</span><span class="ribbon-inline">${badges}</span></span>
+      ${cover(w.cover, title)}
+      <h3 title="${esc([title, other].filter(Boolean).join("\n"))}">${esc(title)}</h3>
+      <p class="by">${esc(w.authors.join(", ") || other || w.key)}</p>
+      <span class="meter" aria-hidden="true"><span data-w="${pct(w.file_count, w.volume_count)}"></span></span>
+      <span class="count"><span>${w.file_count} / ${w.volume_count} saved</span><span class="ribbon-inline">${editionBadges(w)}</span></span>
     </button>
   </article>`;
 }
@@ -210,13 +225,14 @@ function libraryCard(w) {
 function libraryRow(w) {
   const picked = state.selected.has(w.key);
   const src = safeImage(w.cover);
+  const [title, other] = titles(w.title, w.title_zh);
   return `<tr>
-    <td><input type="checkbox" data-key="${esc(w.key)}" aria-label="Select ${esc(w.title)}" ${picked ? "checked" : ""}></td>
+    <td><input type="checkbox" data-key="${esc(w.key)}" aria-label="Select ${esc(title)}" ${picked ? "checked" : ""}></td>
     <td><div class="row-work">${src ? `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="thumb"></span>'}
-      <div><button data-work="${esc(w.key)}">${esc(w.title)}</button><small>${esc(w.authors.join(", ") || w.title_zh || w.key)}</small></div></div></td>
+      <div><button data-work="${esc(w.key)}">${esc(title)}</button><small>${esc(w.authors.join(", ") || other || w.key)}</small></div></div></td>
     <td>${esc(collectionName(w))}</td>
     <td class="num">${w.file_count} / ${w.volume_count}</td>
-    <td>${w.ja_count ? `<span class="pill ok">${w.ja_count} Japanese</span>` : '<span class="pill">None</span>'}</td>
+    <td><span class="ribbon-inline">${editionBadges(w) || '<span class="pill">None</span>'}</span></td>
     <td class="num">${esc(day(w.checked_at))}</td>
   </tr>`;
 }
@@ -227,13 +243,13 @@ async function loadLibrary(force = false) {
     page: lib.page,
     page_size: lib.pageSize,
     query: $("#library-query").value.trim(),
-    sort: $("#library-sort").value,
+    sort: $("#library-sort").value === "title" && state.titleLang === "zh" ? "title_zh" : $("#library-sort").value,
     state: lib.filter,
   });
   if ($("#library-category").value) params.set("category", $("#library-category").value);
   const result = await latestList("library", "/api/works?" + params, $("#library-list"), force);
   if (!result) return;
-  const signature = JSON.stringify([result, [...state.selected], state.layout]);
+  const signature = JSON.stringify([result, [...state.selected], state.layout, state.titleLang]);
   if (!force && signature === lib.signature) return;
   lib.signature = signature;
   lib.total = result.total;
@@ -259,7 +275,7 @@ async function loadLibrary(force = false) {
     const all = result.items.every((w) => state.selected.has(w.key));
     list.innerHTML = `<div class="table-wrap"><table><thead><tr>
       <th><input type="checkbox" id="select-page" aria-label="Select every work on this page" ${all ? "checked" : ""}></th>
-      <th>Work</th><th>Collection</th><th>Saved</th><th>Japanese</th><th>Checked</th></tr></thead>
+      <th>Work</th><th>Collection</th><th>Saved</th><th>Editions</th><th>Checked</th></tr></thead>
       <tbody>${result.items.map(libraryRow).join("")}</tbody></table></div>`;
   } else {
     list.innerHTML = `<div class="books">${result.items.map(libraryCard).join("")}</div>`;
@@ -283,6 +299,8 @@ function selectionBar() {
   const visible = (state.view === "library" || onCatalog) && set.size > 0;
   UI.show($("#selection-bar"), visible);
   $("#selection-count").textContent = `${plural(set.size, "work")} selected`;
+  const page = onCatalog ? state.catalog.items.map(catalogKey) : state.library.items.map((w) => w.key);
+  $("#select-page-button").hidden = page.every((key) => set.has(key));
   $("#convert-selected").hidden = onCatalog;
   $("#remove-selected").hidden = onCatalog;
   $("#library-list").classList.toggle("selecting", state.selected.size > 0);
@@ -291,21 +309,30 @@ function selectionBar() {
 
 /* Catalog */
 
+const catalogKey = (w) => `wenku/${String(w.id).toLowerCase()}`;
+
 function catalogCard(w) {
-  const key = `wenku/${String(w.id).toLowerCase()}`;
+  const key = catalogKey(w);
   const picked = state.catalogSelected.has(key);
   const local = w.local
     ? `<span class="pill ${w.local.file_count >= w.local.volume_count && w.local.volume_count ? "ok" : ""}">In library ${w.local.file_count}/${w.local.volume_count}</span>`
     : "";
+  const [title, other] = titles(w.title, w.titleZh);
   return `<article class="book${picked ? " picked" : ""}">
-    <label class="pick"><input type="checkbox" data-catalog-key="${esc(key)}" aria-label="Select ${esc(w.title)}" ${picked ? "checked" : ""}></label>
-    <button class="book-open" ${w.local ? `data-work="${esc(key)}"` : `data-toggle="${esc(key)}"`}>
-      ${cover(w.cover, w.title)}
-      <h3 title="${esc(w.title)}">${esc(w.title)}</h3>
-      <p class="by" title="${esc(w.titleZh || "")}">${esc(w.titleZh || "")}</p>
+    <label class="pick"><input type="checkbox" data-catalog-key="${esc(key)}" aria-label="Select ${esc(title)}" ${picked ? "checked" : ""}></label>
+    <button class="book-open" data-work="${esc(key)}" data-live="true">
+      ${cover(w.cover, title)}
+      <h3 title="${esc(title)}">${esc(title)}</h3>
+      <p class="by" title="${esc(other)}">${esc(other)}</p>
     </button>
     <span class="count">${local || "<span></span>"}<a href="${SITE}/wenku/${esc(w.id)}" target="_blank" rel="noopener">Novelia ↗</a></span>
   </article>`;
+}
+
+function renderCatalog() {
+  $("#catalog-list").innerHTML = state.catalog.items.length
+    ? `<div class="books">${state.catalog.items.map(catalogCard).join("")}</div>`
+    : '<div class="empty"><h3>No matching works</h3><p>Try another keyword or category.</p></div>';
 }
 
 async function loadCatalog() {
@@ -320,7 +347,7 @@ async function loadCatalog() {
     cat.items = result.items;
     const owned = result.items.filter((w) => w.local).length;
     $("#catalog-caption").textContent = result.items.length
-      ? `${plural(result.items.length, "work")} on this page, ${owned} already in your library. Click a cover to select it.`
+      ? `${plural(result.items.length, "work")} on this page, ${owned} already in your library. Click a cover for its volumes and editions; tick its box or Ctrl-click to select, Shift-click to select a run.`
       : "";
     $("#catalog-page").value = cat.page;
     $("#catalog-page").max = Math.max(1, cat.pages);
@@ -328,9 +355,7 @@ async function loadCatalog() {
     $("#catalog-total").textContent = `${plural(cat.pages, "page")} at ${result.items.length || "—"} per page`;
     $('[data-action="catalog-prev"]').disabled = cat.page <= 1;
     $('[data-action="catalog-next"]').disabled = cat.page >= cat.pages;
-    $("#catalog-list").innerHTML = result.items.length
-      ? `<div class="books">${result.items.map(catalogCard).join("")}</div>`
-      : '<div class="empty"><h3>No matching works</h3><p>Try another keyword or category.</p></div>';
+    renderCatalog();
     UI.reveal($("#catalog-list"));
     selectionBar();
   } catch (error) {
@@ -350,7 +375,13 @@ function taskScope(j) {
         : j.kind === "convert"
           ? r.keys.length ? `Volumes of ${plural(r.keys.length, "work")}` : r.file_ids.length ? plural(r.file_ids.length, "volume") : "Every bilingual volume"
           : "Light novel collection";
-  const extras = [r.volumes && `volumes ${r.volumes}`, r.download === false && j.kind !== "convert" && "metadata only", r.force && "re-download"];
+  const extras = [
+    r.volumes && `volumes ${r.volumes}`,
+    r.editions?.length && r.editions.map((e) => EDITIONS[e]).join(", "),
+    r.download === false && j.kind !== "convert" && "metadata only",
+    r.force && "re-download",
+    r.restore && "restoring deleted files",
+  ];
   return [scope, ...extras.filter(Boolean)].join(", ");
 }
 
@@ -621,48 +652,83 @@ function renderFailures(j) {
 
 /* Work detail */
 
-const FILE_LABELS = { "zh-original": "Chinese upload", "jp-original": "Japanese original", zh: "Chinese" };
 const convertible = (f) => ["jp-zh", "zh-jp"].includes(f.mode);
+const EDITION_MODES = { japanese: ["jp-original"], bilingual: ["jp-zh", "zh-jp"], chinese: ["zh"] };
+const FOLDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const volumeName = (volume) => volume.volume_id.replace(/\.(epub|txt)$/i, "");
+// The editions in the order the strategy tries them, then the ones it leaves out.
+const editionOrder = (strategy) => [...strategy.editions, ...Object.keys(EDITIONS).filter((e) => !strategy.editions.includes(e))];
+// Converted editions recorded on a file; an original is its own Japanese edition.
+const conversions = (f) => [["ja", "Japanese (converted)"], ["zh", "Chinese (converted)"]]
+  .filter(([variant]) => f[`${variant}_path`] && f[`${variant}_path`] !== f.raw_path);
+// As the server's Storage.gone: a record stays while anything converted from it is on disk.
+const forgettable = (f) => !f.raw_available && conversions(f).every(([v]) => !f[`${v}_available`]);
+const goneCount = (files) => files.reduce((n, f) => n + forgettable(f) + conversions(f).filter(([v]) => !f[`${v}_available`]).length, 0);
 
-function volumeRow(key, volume, files) {
-  const name = volume.volume_id.replace(/\.(epub|txt)$/i, "");
+// A saved file opens on click, with a copy through the browser beside it. One
+// deleted from disk stays recorded as downloaded; clicking it asks what to do.
+function fileChip(f, variant, label, present, context) {
+  const keep = variant === "raw" && !forgettable(f);
+  const open = `data-open="${f.id}" data-variant="${variant}" data-label="${esc(label)}" data-pinned="${f.pinned ? "true" : ""}" data-keep="${keep ? "true" : ""}" ${context}`;
+  if (!present) return `<button class="edition warn" ${open} title="Recorded as downloaded, but no longer on disk">${esc(label)} · not on disk</button>`;
+  return `<span class="edition ok"><button ${open} title="Open">${esc(label)}</button><a href="/api/files/${f.id}/${variant}" download title="Save a copy" aria-label="Save a copy of ${esc(label)}">↓</a></span>`;
+}
+
+// Every edition Novelia offers for the volume, numbered in the strategy's order: saved ones
+// open, the others download on click.
+function volumeEditions(w, volume, files) {
+  const { strategy } = w;
+  const t = volume.translated || {};
+  const untranslated = t.total && !strategy.translations.some((e) => t[e]);
+  const context = (edition) => `data-key="${esc(w.key)}" data-index="${volume.index}" data-edition="${edition}" data-volume="${esc(volumeName(volume))}"`;
+  const editions = volume.chinese_only
+    ? [["", ["zh-original"], "Chinese upload"]]
+    : editionOrder(strategy).map((e) => [e, EDITION_MODES[e], EDITIONS[e]]);
+  const slots = editions.map(([edition, modes, label]) => {
+    const rank = strategy.editions.indexOf(edition) + 1;
+    const records = files.filter((f) => modes.includes(f.mode));
+    let chips = records.flatMap((f) => [
+      fileChip(f, "raw", MODE_LABELS[f.mode], f.raw_available, context(edition)),
+      ...conversions(f).map(([variant, name]) => fileChip(f, variant, name, f[`${variant}_available`], context(edition))),
+    ]).join("");
+    const error = modes.map((m) => volume.unavailable?.[m]).find(Boolean);
+    if (!chips && volume.index) {
+      const note = !volume.chinese_only && edition !== "japanese" && untranslated ? " · not translated yet" : "";
+      chips = error
+        ? `<button class="edition warn" data-get="${edition}" data-force="true" ${context(edition)} title="${esc(error)} Click to try again.">${esc(label)} · unavailable</button>`
+        : `<button class="edition idle" data-get="${edition}" ${context(edition)} title="Download this edition${rank ? "" : " (not in your download strategy)"}">↓ ${esc(label)}${note}</button>`;
+    }
+    if (!chips) return "";
+    return `<span class="edition-slot${rank || volume.chinese_only ? "" : " extra"}">${rank ? `<span class="rank" title="Choice ${rank} of your download strategy">${rank}</span>` : ""}${chips}</span>`;
+  });
+  return slots.join("");
+}
+
+function volumeRow(w, volume, files) {
   const t = volume.translated;
   const coverage = t.total ? ENGINES.filter((e) => t[e]).map((e) => `${e} ${t[e]}/${t.total}`).join(", ") : "";
-  const status = !files.length && volume.damaged
-    ? `<span class="pill warn" title="${esc(volume.damaged)}">Broken on Novelia</span>`
-    : !files.length
-    ? '<span class="pill">Not downloaded</span>'
-    : !files.some(f => f.raw_available || f.ja_available || f.zh_available)
-      ? '<span class="pill warn">Files missing</span>'
-    : files.some((f) => f.ja_available)
-      ? '<span class="pill ok">Japanese</span>'
-      : files.some((f) => f.zh_available || (f.mode === "zh" && f.raw_available))
-        ? '<span class="pill ok">Chinese</span>'
-        : '<span class="pill">Source only</span>';
-  const actions = files.length
-    ? files.map((f) => [
-        f.raw_available ? `<a href="/api/files/${f.id}/raw" download>${FILE_LABELS[f.mode] || "Bilingual"}</a>` : '<span class="error-text">Source missing</span>',
-        f.ja_available && convertible(f) ? `<a href="/api/files/${f.id}/ja" download>Japanese</a>` : "",
-        f.zh_available ? `<a href="/api/files/${f.id}/zh" download>Chinese</a>` : "",
-        convertible(f) && f.raw_available ? `<button data-convert-file="${f.id}">${f.ja_available ? "Reconvert" : "Convert"}</button>` : "",
-        !f.raw_available && volume.index ? `<button data-download-volume="${volume.index}" data-key="${esc(key)}">Download again</button>` : "",
-      ].join("")).join("")
-    : volume.index ? `<button data-download-volume="${volume.index}" data-key="${esc(key)}">${volume.damaged ? "Try again" : "Download"}</button>` : "";
-  const reports = files.length || !volume.damaged ? "" : `<p class="report">${esc(volume.damaged)}</p>`;
+  const download = volume.index && !files.length
+    ? `<button data-get="" data-key="${esc(w.key)}" data-index="${volume.index}" title="Download the editions your strategy picks">Download</button>`
+    : "";
+  const actions = files
+    .filter((f) => convertible(f) && f.raw_available)
+    .map((f) => `<button data-convert-file="${f.id}">${f.ja_available || f.zh_available ? "Reconvert" : "Convert"}</button>`)
+    .join("") + download;
   const sizes = files.map((f) => `${(f.size / 1048576).toFixed(1)} MB`).join(" + ");
   return `<div class="volume">
     <div>
-      <div class="name">${volume.index ? `<span class="muted">${volume.index}.</span> ` : ""}${esc(name)}</div>
-      <div class="detail">${status}${volume.chinese_only ? "<span>Chinese upload</span>" : ""}${coverage ? `<span>${esc(coverage)}</span>` : ""}${sizes ? `<span>${sizes}</span>` : ""}${volume.index ? "" : "<span>No longer listed on Novelia</span>"}</div>
+      <div class="name">${volume.index ? `<span class="muted">${volume.index}.</span> ` : ""}${esc(volumeName(volume))}</div>
+      <div class="editions">${volumeEditions(w, volume, files)}</div>
+      <div class="detail">${coverage ? `<span>${esc(coverage)}</span>` : ""}${sizes ? `<span>${sizes}</span>` : ""}${volume.index ? "" : "<span>No longer listed on Novelia</span>"}</div>
     </div>
     <div class="volume-actions">${actions}</div>
-    ${reports}
   </div>`;
 }
 
-async function openWork(key, show = true) {
-  const w = await latestList("detail", "/api/works/" + key, $("#work-detail"));
+async function openWork(key, show = true, live = state.detail?.key === key && state.detail.live) {
+  const w = await latestList("detail", `/api/works/${key}${live ? "?live=true" : ""}`, $("#work-detail"));
   if (!w) return;
+  state.detail = { key, live, strategy: w.strategy.editions };
   const m = w.metadata;
   const listed = new Set(w.volumes.map((v) => v.volume_id));
   const orphans = [...new Set(w.files.filter((f) => !listed.has(f.volume_id)).map((f) => f.volume_id))];
@@ -678,26 +744,31 @@ async function openWork(key, show = true) {
   const intro = m.introductionJp || m.introduction || "";
   const bilingual = w.files.some(convertible);
   const saved = new Set(w.files.map((f) => f.volume_id));
-  const broken = w.volumes.filter((v) => v.damaged && !saved.has(v.volume_id)).length;
+  const gone = goneCount(w.files);
+  const strategy = w.strategy.editions.map((e) => EDITIONS[e]).join(" → ");
+  const [title, other] = titles(w.title, w.title_zh);
   $("#work-detail").innerHTML = `
     <div class="work-summary">
-      ${cover(w.cover, w.title)}
+      ${cover(w.cover, title)}
       <div class="work-info">
-        <h2>${esc(w.title)}</h2>
-        ${w.title_zh && w.title_zh !== w.title ? `<p class="alt">${esc(w.title_zh)}</p>` : ""}
+        <h2>${esc(title)}</h2>
+        ${other ? `<p class="alt">${esc(other)}</p>` : ""}
       </div>
       <dl class="work-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
       <div class="work-actions">
-          <button class="primary" data-download-work="${esc(w.key)}">Check and download</button>
+          <button class="primary" data-download-work="${esc(w.key)}">${w.local ? "Check and download" : "Add and download"}</button>
+          ${w.folders.map((f) => `<button class="folder-button" data-folder="${esc(f.path)}" data-key="${esc(w.key)}" title="${esc(f.path)}">${FOLDER_ICON}${w.folders.length > 1 ? esc(f.name) : "Open folder"}</button>`).join("")}
           ${bilingual ? `<button data-convert-work="${esc(w.key)}">Convert all volumes</button>` : ""}
-          <button class="danger" data-remove-work="${esc(w.key)}">Remove from library</button>
+          ${w.local ? `<button class="danger" data-remove-work="${esc(w.key)}">Remove from library</button>` : ""}
           <a class="button-link" href="${esc(workUrl(w.key))}" target="_blank" rel="noopener">Novelia ↗</a>
       </div>
     </div>
+    ${w.local ? "" : '<p class="note-text live-note">Not in your library yet. Read live from Novelia; downloading adds it.</p>'}
     ${intro ? `<section class="introduction"><div id="intro-wrap" class="intro-wrap"><p class="intro" id="intro">${esc(intro)}</p></div><button class="link intro-toggle" id="intro-toggle" aria-expanded="false" aria-controls="intro-wrap">Read more</button></section>` : ""}
     <section class="volumes">
-      <h3>${[plural(w.volumes.length, "volume"), `${saved.size} saved`, broken && `${broken} broken on Novelia`].filter(Boolean).join(", ")}</h3>
-      ${volumes.length ? volumes.map((v) => volumeRow(w.key, v, w.files.filter((f) => f.volume_id === v.volume_id))).join("") : '<p class="hint">Novelia lists no uploaded volumes for this work.</p>'}
+      <h3>${[plural(w.volumes.length, "volume"), `${saved.size} saved`].join(", ")}${gone ? `, <button class="link" data-missing-work="${esc(w.key)}">${plural(gone, "file")} not on disk</button>` : ""}</h3>
+      <p class="hint volumes-hint">Editions in your download order (${esc(strategy)}, ${w.strategy.per_volume === 1 ? "first available kept" : `first ${w.strategy.per_volume} available kept`}). Click a saved one to open it, ↓ to save a copy; click any other to download just that edition.</p>
+      ${volumes.length ? volumes.map((v) => volumeRow(w, v, w.files.filter((f) => f.volume_id === v.volume_id))).join("") : '<p class="hint">Novelia lists no uploaded volumes for this work.</p>'}
     </section>`;
   const introElement = $("#intro");
   if (introElement) {
@@ -749,22 +820,37 @@ async function loadStatus() {
   return s;
 }
 
-function renderEngines() {
-  const list = $("#engine-list");
-  UI.reorder(list, () => state.engines.forEach((engine, index) => {
-    let row = $(`[data-engine-name="${engine.name}"]`, list);
+// Ordered, tickable settings lists: the list element and each entry's label.
+const ORDER_LISTS = {
+  engines: ["#engine-list", (name) => name],
+  editions: ["#edition-list", (name) => EDITIONS[name]],
+};
+// Ticked entries first, in their saved order, then the rest.
+const orderOf = (ticked, all) => [
+  ...ticked.map((name) => ({ name, on: true })),
+  ...all.filter((name) => !ticked.includes(name)).map((name) => ({ name, on: false })),
+];
+const ticked = (name) => state.order[name].filter((item) => item.on).map((item) => item.name);
+
+function renderOrder(name) {
+  const [selector, label] = ORDER_LISTS[name];
+  const list = $(selector);
+  const items = state.order[name];
+  UI.reorder(list, () => items.forEach((item, index) => {
+    let row = $(`[data-item="${item.name}"]`, list);
     if (!row) {
+      const text = esc(label(item.name));
       row = document.createElement("li");
-      row.dataset.engineName = engine.name;
-      row.innerHTML = `<label><input type="checkbox"> ${engine.name}</label><button type="button" data-dir="-1" aria-label="Move ${engine.name} up">↑</button><button type="button" data-dir="1" aria-label="Move ${engine.name} down">↓</button>`;
+      row.dataset.item = item.name;
+      row.innerHTML = `<label><input type="checkbox"> ${text}</label><button type="button" data-dir="-1" aria-label="Move ${text} up">↑</button><button type="button" data-dir="1" aria-label="Move ${text} down">↓</button>`;
     }
     const input = $("input", row);
-    input.dataset.engine = index;
-    input.checked = engine.on;
-    row.classList.toggle("off", !engine.on);
+    Object.assign(input.dataset, { order: name, index });
+    input.checked = item.on;
+    row.classList.toggle("off", !item.on);
     $$("button", row).forEach(button => {
-      button.dataset.move = index;
-      button.disabled = Number(button.dataset.dir) < 0 ? index === 0 : index === state.engines.length - 1;
+      Object.assign(button.dataset, { order: name, move: index });
+      button.disabled = Number(button.dataset.dir) < 0 ? index === 0 : index === items.length - 1;
     });
     list.append(row);
   }));
@@ -783,11 +869,11 @@ async function loadSettings(force = false) {
     if (input.type === "checkbox") input.checked = value;
     else input.value = value;
   }
-  state.engines = [
-    ...settings.translations.map((name) => ({ name, on: true })),
-    ...ENGINES.filter((e) => !settings.translations.includes(e)).map((name) => ({ name, on: false })),
-  ];
-  renderEngines();
+  state.order = {
+    engines: orderOf(settings.translations, ENGINES),
+    editions: orderOf(settings.editions, Object.keys(EDITIONS)),
+  };
+  Object.keys(ORDER_LISTS).forEach(renderOrder);
   settingsLoaded = true;
   settingsBaseline = settingsSnapshot();
   updateSettingsFeedback();
@@ -865,17 +951,61 @@ $("#convert-form").addEventListener("submit", async event => {
   finally { UI.pending(button, false); }
 });
 
-let removal = { keys: [], cleanup: false };
-function openRemoval(keys, cleanup = false, works = state.library.items) {
-  removal = { keys, cleanup };
-  $("#remove-title").textContent = cleanup ? "Clean missing files" : "Remove from library";
-  $("#remove-description").textContent = cleanup
-    ? "These works have no remaining source or Japanese EPUBs. Only their library records will be removed; metadata-only works are kept."
-    : `Remove ${plural(keys.length, "work")} from your library? Local files are kept unless you select the option below.`;
+let removal = { keys: [] };
+function openRemoval(keys, works = state.library.items) {
+  removal = { keys };
+  $("#remove-description").textContent = `Remove ${plural(keys.length, "work")} from your library? Local files are kept unless you select the option below.`;
   $("#remove-items").innerHTML = keys.map(key => `<li>${esc(works.find(w => w.key === key)?.title || key)}</li>`).join("");
   $("#delete-local-files").checked = false;
-  $("#delete-files-option").hidden = cleanup;
   UI.openDialog($("#remove-dialog"));
+}
+
+const refreshDetail = () => ($("#work-dialog").open && state.detail ? openWork(state.detail.key, false) : null);
+
+// Files recorded as downloaded but gone from disk, for every work or the given ones.
+let missing = { keys: [] };
+async function openMissing(only = null) {
+  const query = only ? "?" + new URLSearchParams(only.map((key) => ["keys", key])) : "";
+  const { items: works } = await api("/api/library/missing" + query);
+  if (!works.length) return toast("Every recorded file is on disk.");
+  missing = { keys: works.map((w) => w.key) };
+  const files = works.flatMap((w) => w.files);
+  const count = files.reduce((n, f) => n + f.record + f.editions.length, 0);
+  $("#missing-description").textContent = `${plural(count, "file")} of ${plural(works.length, "work")} ${count === 1 ? "is" : "are"} recorded as downloaded but no longer on disk. The records stay, and later tasks leave these volumes alone, until you forget them or download them again.`;
+  $("#missing-items").innerHTML = works.map((w) => `<li><strong>${esc(titles(w.title, w.title_zh)[0])}</strong><ul>${w.files.map((f) =>
+    `<li>${esc(f.volume_id.replace(/\.(epub|txt)$/i, ""))} <span class="muted">${[f.record && MODE_LABELS[f.mode], ...f.editions.map((e) => (e === "ja" ? "Japanese (converted)" : "Chinese (converted)"))].filter(Boolean).join(", ")}</span></li>`).join("")}</ul></li>`).join("");
+  $("#missing-download").hidden = !files.some((f) => f.record);
+  UI.openDialog($("#missing-dialog"));
+}
+
+// One file found missing when opened: download or convert it again, or forget the record.
+let gone = {};
+function openGone(d, path) {
+  gone = { ...d };
+  const converted = d.variant !== "raw";
+  $("#gone-description").textContent = d.keep === "true"
+    ? `${d.label} of ${d.volume} is recorded as downloaded, but the file is no longer on disk. Its record stays while an edition converted from it is still on disk.`
+    : `${d.label} of ${d.volume} is recorded as downloaded, but the file is no longer on disk. The record is kept, and later tasks leave it alone, until you forget it or ${converted ? "convert" : "download"} it again.`;
+  $('[data-action="gone-forget"]').hidden = d.keep === "true";
+  $("#gone-path").textContent = path;
+  const again = $("#gone-again");
+  again.textContent = converted ? "Convert again" : "Download again";
+  again.hidden = !converted && !Number(d.index);
+  UI.openDialog($("#gone-dialog"));
+}
+
+async function getEdition(d, restore = false) {
+  // A file asked for by name, or outside the strategy, is fetched by name; otherwise the
+  // strategy decides, so a stand-in is not kept for good.
+  const named = d.edition && (!restore || d.pinned === "true" || !state.detail?.strategy?.includes(d.edition));
+  await queue({
+    kind: "manual",
+    keys: [d.key],
+    volumes: String(d.index),
+    editions: named ? [d.edition] : [],
+    force: d.force === "true",
+    restore,
+  }, { go: false });
 }
 $("#remove-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -883,7 +1013,7 @@ $("#remove-form").addEventListener("submit", async event => {
   if (button.getAttribute("aria-busy") === "true") return;
   UI.pending(button, true, "Removing…");
   try {
-    const result = await api(removal.cleanup ? "/api/library/cleanup" : "/api/library/remove", {
+    const result = await api("/api/library/remove", {
       method: "POST", body: JSON.stringify({keys: removal.keys, delete_files: $("#delete-local-files").checked})
     });
     await UI.closeDialog($("#remove-dialog"));
@@ -918,10 +1048,41 @@ function setChip(group, button) {
 
 const actions = {
   "remove-selected": () => openRemoval([...state.selected]),
-  "cleanup-library": async () => {
-    const { items } = await api("/api/library/missing");
-    if (!items.length) return toast("No works with missing local files were found.");
-    openRemoval(items.map(w => w.key), true, items);
+  "check-files": () => openMissing(),
+  "missing-download": async () => {
+    const keys = missing.keys.slice(0, 1000);
+    await queue({ kind: "manual", keys, restore: true }, { go: false });
+    if (keys.length < missing.keys.length) toast(`Started with the first ${keys.length} works; run it again for the rest.`);
+    await UI.closeDialog($("#missing-dialog"));
+  },
+  "missing-forget": async () => {
+    const result = await api("/api/library/forget-missing", { method: "POST", body: JSON.stringify({ keys: missing.keys }) });
+    await UI.closeDialog($("#missing-dialog"));
+    toast(`Forgot ${plural(result.records, "download")}${result.editions ? ` and ${plural(result.editions, "converted edition")}` : ""}.`);
+    await Promise.all([loadLibrary(true), loadStatus(), refreshDetail()]);
+  },
+  "gone-again": async () => {
+    if (gone.variant === "raw") await getEdition(gone, true);
+    else await queue({ kind: "convert", file_ids: [Number(gone.open)], force: true, convert_japanese: gone.variant === "ja", convert_chinese: gone.variant === "zh" }, { go: false });
+    await UI.closeDialog($("#gone-dialog"));
+  },
+  "gone-forget": async () => {
+    const result = await api(`/api/files/${gone.open}/forget`, { method: "POST" });
+    await UI.closeDialog($("#gone-dialog"));
+    toast(result.records ? "Forgot the download; the next task that checks this work fetches it again." : "Forgot the converted edition.");
+    await Promise.all([loadLibrary(true), loadStatus(), refreshDetail()]);
+  },
+  "select-page": () => {
+    const onCatalog = state.view === "catalog";
+    const set = onCatalog ? state.catalogSelected : state.selected;
+    $$(onCatalog ? "#catalog-list [data-catalog-key]" : "#library-list input[data-key]").forEach((input) => {
+      input.checked = true;
+      set.add(input.dataset.catalogKey || input.dataset.key);
+      input.closest(".book")?.classList.add("picked");
+    });
+    const all = $("#select-page");
+    if (all) all.checked = true;
+    selectionBar();
   },
   "open-crawl": () => {
     crawlFields();
@@ -965,13 +1126,37 @@ const actions = {
 function togglePick(input, set, key) {
   input.checked ? set.add(key) : set.delete(key);
   input.closest(".book")?.classList.toggle("picked", input.checked);
+  if (input.closest(".book")) state.lastPick = { view: state.view, input };
   selectionBar();
+}
+const pickInput = (input) =>
+  togglePick(input, input.dataset.catalogKey ? state.catalogSelected : state.selected, input.dataset.catalogKey || input.dataset.key);
+
+// Ctrl-click, or any click once something is selected, picks a cover instead of opening it;
+// Shift-click picks every cover from the last one picked.
+function pickCard(card, range) {
+  const input = $('input[type="checkbox"]', card);
+  const inputs = $$('.book input[type="checkbox"]', card.closest(".books"));
+  const last = state.lastPick?.view === state.view ? inputs.indexOf(state.lastPick.input) : -1;
+  const at = inputs.indexOf(input);
+  const picks = range && last >= 0 ? inputs.slice(Math.min(last, at), Math.max(last, at) + 1) : [input];
+  const checked = range || !input.checked;
+  picks.forEach((el) => {
+    el.checked = checked;
+    pickInput(el);
+  });
+  state.lastPick = { view: state.view, input };
 }
 
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
   const d = button.dataset;
+  const card = d.work && button.closest(".book");
+  if (card && (event.ctrlKey || event.metaKey || event.shiftKey || card.closest(".selecting"))) {
+    pickCard(card, event.shiftKey);
+    return;
+  }
   if (button.id === "sidebar-toggle") {
     setSidebar(document.documentElement.dataset.sidebar !== "collapsed");
     return;
@@ -995,20 +1180,30 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (d.cancel) state.cancelArmed = null;
-  const mutating = d.cancel || d.resume || d.retry || d.delete || d.downloadWork || d.downloadVolume || d.convertWork || d.convertFile || ["incremental", "convert-all", "download-selected", "convert-selected", "clear-tasks", "cleanup-library"].includes(d.action);
+  const mutating = d.cancel || d.resume || d.retry || d.delete || d.downloadWork || d.get !== undefined || d.open || d.folder || d.missingWork || d.convertWork || d.convertFile ||
+    ["incremental", "convert-all", "download-selected", "convert-selected", "clear-tasks", "check-files", "missing-download", "missing-forget", "gone-again", "gone-forget"].includes(d.action);
   if (mutating) UI.pending(button, true);
   try {
     if (d.view) await switchView(d.view);
     else if (d.removeWork) {
       const work = await api(`/api/works/${d.removeWork}`);
       await UI.closeDialog($("#work-dialog"));
-      openRemoval([d.removeWork], false, [work]);
+      openRemoval([d.removeWork], [work]);
     }
-    else if (d.work) await openWork(d.work);
-    else if (d.toggle) {
-      const input = $(`[data-catalog-key="${CSS.escape(d.toggle)}"]`);
-      input.checked = !input.checked;
-      togglePick(input, state.catalogSelected, d.toggle);
+    else if (d.work) await openWork(d.work, true, d.live === "true");
+    else if (d.open) {
+      const result = await api(`/api/files/${d.open}/${d.variant}/open`, { method: "POST" });
+      if (result.missing) openGone(d, result.path);
+    } else if (d.folder) {
+      await api(`/api/works/${d.key}/folder`, { method: "POST", body: JSON.stringify({ folder: d.folder }) });
+    } else if (d.get !== undefined) {
+      await getEdition(d);
+    } else if (d.missingWork) {
+      await openMissing([d.missingWork]);
+    } else if (d.titleLang) {
+      setTitleLang(d.titleLang);
+      if (state.catalog.loaded) renderCatalog();
+      await loadLibrary(true);
     } else if (d.layout) {
       state.layout = d.layout;
       store.set("layout", d.layout);
@@ -1050,17 +1245,16 @@ document.addEventListener("click", async (event) => {
     } else if (d.downloadWork) {
       await UI.closeDialog($("#work-dialog"));
       await queue({ kind: "manual", keys: [d.downloadWork] });
-    } else if (d.downloadVolume) {
-      await queue({ kind: "manual", keys: [d.key], volumes: d.downloadVolume }, { go: false });
     } else if (d.convertWork) {
       await openConversion({ kind: "convert", keys: [d.convertWork] }, "Every bilingual volume of this work.", { go: false });
     } else if (d.convertFile) {
       await openConversion({ kind: "convert", file_ids: [Number(d.convertFile)], force: true }, "This volume, built again even if already converted.", { go: false });
     } else if (d.move) {
+      const items = state.order[d.order];
       const i = Number(d.move), j = i + Number(d.dir);
-      [state.engines[i], state.engines[j]] = [state.engines[j], state.engines[i]];
-      renderEngines();
-      $(`[data-move="${j}"][data-dir="${d.dir}"]`)?.focus();
+      [items[i], items[j]] = [items[j], items[i]];
+      renderOrder(d.order);
+      $(`button[data-order="${d.order}"][data-move="${j}"][data-dir="${d.dir}"]`)?.focus();
     } else if (actions[d.action]) await actions[d.action]();
   } catch (error) {
     toast(error.message, true);
@@ -1072,15 +1266,14 @@ document.addEventListener("click", async (event) => {
 document.addEventListener("change", (event) => {
   const input = event.target;
   if (input.id === "theme-select") setTheme(input.value);
-  else if (input.dataset.key && input.type === "checkbox") togglePick(input, state.selected, input.dataset.key);
-  else if (input.dataset.catalogKey) togglePick(input, state.catalogSelected, input.dataset.catalogKey);
+  else if ((input.dataset.key || input.dataset.catalogKey) && input.type === "checkbox") pickInput(input);
   else if (input.id === "select-page") {
     state.library.items.forEach((w) => (input.checked ? state.selected.add(w.key) : state.selected.delete(w.key)));
     $$("#library-list [data-key]").forEach((el) => (el.checked = input.checked));
     selectionBar();
-  } else if (input.dataset.engine) {
-    state.engines[Number(input.dataset.engine)].on = input.checked;
-    renderEngines();
+  } else if (input.dataset.order) {
+    state.order[input.dataset.order][Number(input.dataset.index)].on = input.checked;
+    renderOrder(input.dataset.order);
   } else if (input.name === "kind") crawlFields();
   else if (["library-category", "library-sort"].includes(input.id)) {
     state.library.page = 1;
@@ -1115,7 +1308,7 @@ $("#crawl-form").addEventListener("submit", async (event) => {
   if ($('button[type="submit"]', form).getAttribute("aria-busy") === "true") return;
   const f = new FormData(form);
   const kind = f.get("kind");
-  const request = { kind, download: form.elements.download.checked, force: form.elements.force.checked };
+  const request = { kind, download: form.elements.download.checked, force: form.elements.force.checked, restore: form.elements.restore.checked };
   if (kind === "range") {
     Object.assign(request, {
       category: Number(f.get("category")),
@@ -1161,8 +1354,11 @@ $("#settings-form").addEventListener("submit", async event => {
     if (!input.name) continue;
     settings[input.name] = input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value) : input.value;
   }
-  settings.translations = state.engines.filter(engine => engine.on).map(engine => engine.name);
+  settings.translations = ticked("engines");
+  settings.editions = ticked("editions");
+  settings.editions_per_volume = Number(settings.editions_per_volume);
   if (!settings.translations.length) return toast("Tick at least one translation engine.", true);
+  if (!settings.editions.length) return toast("Tick at least one edition to download.", true);
   const savedSnapshot = settingsSnapshot();
   const button = $("#save-settings");
   settingsSaving = true;
@@ -1193,7 +1389,13 @@ $("#work-detail").addEventListener("click", async event => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "/" || event.target.matches("input, textarea, select") || $("dialog[open]")) return;
+  if (event.target.matches("input, textarea, select") || $("dialog[open]")) return;
+  const selection = state.view === "catalog" ? state.catalogSelected : state.selected;
+  if (event.key === "Escape" && selection.size) {
+    actions["clear-selection"]().catch((e) => toast(e.message, true));
+    return;
+  }
+  if (event.key !== "/") return;
   const field = state.view === "library" ? $("#library-query") : state.view === "catalog" ? $("#catalog-query") : null;
   if (field) {
     event.preventDefault();
@@ -1209,6 +1411,12 @@ function setSidebar(collapsed, persist = true) {
   button.setAttribute("aria-label", label);
   button.title = label;
   if (persist) store.set("sidebar-collapsed", String(collapsed));
+}
+
+function setTitleLang(value, persist = true) {
+  state.titleLang = value === "zh" ? "zh" : "ja";
+  $$("[data-title-lang]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.titleLang === state.titleLang));
+  if (persist) store.set("title-lang", state.titleLang);
 }
 
 function setTheme(value, persist = true) {
@@ -1239,6 +1447,7 @@ async function refresh() {
 (async () => {
   setTheme(store.get("theme", "system"), false);
   setSidebar(store.get("sidebar-collapsed", "false") === "true", false);
+  setTitleLang(state.titleLang, false);
   try {
     await loadStatus();
     fillCategories();

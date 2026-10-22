@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.client import fingerprint
-from app.schema import JobRequest, normalize_key, parse_range
+from app.schema import JobRequest, Settings, normalize_key, parse_range
 from app.server import ProcessLock, create_app
+from app.worker import Worker
 from tests.conftest import KEY
 
 
@@ -128,7 +128,7 @@ def test_catalog_marks_local_works(client, monkeypatch):
     assert (local["volume_count"], local["file_count"]) == (1, 0)
 
 
-def test_work_detail_marks_broken_uploads_and_decodes_entities(client):
+def test_work_detail_marks_unavailable_formats_and_decodes_entities(client):
     db = client.app.state.db
     volume = {"volumeId": "v1.epub", "total": 3}
     db.save_work(
@@ -136,12 +136,60 @@ def test_work_detail_marks_broken_uploads_and_decodes_entities(client):
         {"title": "T", "authors": [], "introduction": "大赏&lt；银赏&gt；", "volumeJp": [volume]},
         1,
     )
-    db.mark_damaged(KEY, "v1.epub", fingerprint({"volume": volume}), "Empty.", 1)
+    stamp = Worker.stamp(volume, "jp-original", Settings())
+    db.mark_unavailable(KEY, "v1.epub", "jp-original", stamp, "Empty.", 1)
     work = client.get(f"/api/works/{KEY}").json()
     assert work["metadata"]["introduction"] == "大赏<；银赏>；"
-    assert work["volumes"][0]["damaged"] == "Empty."
-    db.mark_damaged(KEY, "v1.epub", "an older upload", "Empty.", 1)
-    assert client.get(f"/api/works/{KEY}").json()["volumes"][0]["damaged"] is None
+    assert work["volumes"][0]["unavailable"] == {"jp-original": "Empty."}
+    db.mark_unavailable(KEY, "v1.epub", "jp-original", "an older upload", "Empty.", 1)
+    assert client.get(f"/api/works/{KEY}").json()["volumes"][0]["unavailable"] == {}
+
+
+def test_catalog_works_open_live_without_joining_the_library(client, monkeypatch):
+    class Live:
+        def __init__(self, *_, **__):
+            pass
+
+        def metadata(self, key):
+            return {"title": "Live", "level": "一般向", "volumeJp": [{"volumeId": "v.epub"}]}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.server.Client", Live)
+    assert client.get(f"/api/works/{KEY}").status_code == 404
+    work = client.get(f"/api/works/{KEY}?live=true").json()
+    assert (work["title"], work["local"], work["category"]) == ("Live", False, 1)
+    assert [v["volume_id"] for v in work["volumes"]] == ["v.epub"]
+    assert work["strategy"]["editions"] == Settings().editions
+    assert client.get("/api/works").json()["total"] == 0
+
+
+def test_open_reports_a_deleted_file_and_keeps_its_record(client, tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr("app.server.open_path", opened.append)
+    db = client.app.state.db
+    db.save_work(KEY, {"title": "T", "volumeJp": [{"volumeId": "v"}]}, 1)
+    path = tmp_path / "downloads" / "Bilingual" / "work" / "v.epub"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"epub")
+    db.save_file(KEY, "v", "jp-zh", "hash", path, 4, "digest")
+    assert client.post("/api/files/1/raw/open").json()["opened"]
+    [folder] = client.get(f"/api/works/{KEY}").json()["folders"]
+    assert folder["name"] == "Bilingual"
+    assert (
+        client.post(f"/api/works/{KEY}/folder", json={"folder": folder["path"]}).status_code == 200
+    )
+    outside = {"folder": str(tmp_path)}
+    assert client.post(f"/api/works/{KEY}/folder", json=outside).status_code == 404
+    assert opened == [path.resolve(), path.parent.resolve()]
+    assert client.post("/api/files/1/forget").status_code == 409  # still on disk
+    path.unlink()
+    result = client.post("/api/files/1/raw/open").json()
+    assert (result["opened"], result["missing"]) == (False, True)
+    assert db.row("SELECT id FROM files")  # still recorded as downloaded
+    assert client.post("/api/files/1/forget").json() == {"records": 1, "editions": 0}
+    assert not db.rows("SELECT * FROM files")
 
 
 def test_file_delivery_rejects_outside_root(client, tmp_path):
@@ -185,11 +233,15 @@ def test_library_filters_and_task_removal(client):
     )
     db.save_file(KEY, "a", "jp-zh", "hash", Path("a.epub"), 1, "digest")
     assert client.get("/api/works?state=partial").json()["total"] == 1
-    assert client.get("/api/works?state=pending").json()["items"][0]["pending_count"] == 1
+    item = client.get("/api/works?state=bilingual").json()["items"][0]
+    assert (item["bilingual_count"], item["ja_count"], item["zh_count"]) == (1, 0, 0)
+    db.save_original(KEY, "a", "hash", Path("a [jp-original].epub"), 1, "digest")
+    assert client.get("/api/works?state=japanese").json()["items"][0]["ja_count"] == 1
+    assert client.get("/api/works?sort=title_zh").status_code == 200
     assert client.get("/api/works?state=metadata").json()["total"] == 0
     assert client.get("/api/works?sort=title").status_code == 200
     assert client.get("/api/works?state=bogus").status_code == 422
-    assert client.get("/api/status").json()["files"] == 1
+    assert client.get("/api/status").json()["files"] == 2
     job_id = client.post("/api/jobs", json={"kind": "full"}).json()["id"]
     assert client.delete(f"/api/jobs/{job_id}").status_code == 409
     db.execute("UPDATE jobs SET status='completed' WHERE id=?", (job_id,))

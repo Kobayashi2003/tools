@@ -455,6 +455,7 @@ button.tile[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
 .table a:hover { text-decoration: underline; }
 .cell-note { font-size: 11px; color: var(--fg-3); margin-top: 3px; }
 .empty-cell { text-align: center; color: var(--fg-3); padding: 24px !important; }
+.more-row td { text-align: center; color: var(--fg-3); }
 .lvl-error { color: var(--bad); }
 .results { display: grid; gap: 8px; }
 .result { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 58px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--surface); }

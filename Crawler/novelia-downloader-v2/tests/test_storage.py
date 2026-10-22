@@ -49,23 +49,34 @@ def test_remove_after_files_deleted_manually(library, delete_files):
     assert client.post("/api/library/remove", json={"keys": [KEY]}).json()["removed"] == 0
 
 
-def test_cleanup_preserves_metadata_and_remaining_editions(library):
+def test_forgetting_missing_files_keeps_works_and_what_is_on_disk(library):
     client, db, source, root = library
-    meta = "wenku/" + "a" * 24
-    db.save_work(meta, {"title": "Metadata"}, 1)
-    source.unlink()
     edition = root / "downloads" / "ja.epub"
     edition.write_bytes(b"ja")
     db.execute("UPDATE files SET ja_path=?", (str(edition),))
     assert client.get("/api/library/missing").json()["items"] == []
-    edition.unlink()
-    assert client.get("/api/library/missing").json()["items"][0]["key"] == KEY
-    # A file restored after preview must not be removed.
-    source.write_bytes(b"restored")
-    assert client.post("/api/library/cleanup", json={"keys": [KEY]}).json()["removed"] == 0
     source.unlink()
-    assert client.post("/api/library/cleanup", json={"keys": [KEY, meta]}).json()["removed"] == 1
-    assert db.row("SELECT key FROM works")["key"] == meta
+    # The converted edition is still on disk, so the record stays.
+    assert client.get("/api/library/missing").json()["items"] == []
+    edition.unlink()
+    assert client.get("/api/library/missing?keys=wenku/" + "b" * 24).json()["items"] == []
+    [work] = client.get(f"/api/library/missing?keys={KEY}").json()["items"]
+    assert (work["key"], work["files"][0]["record"], work["files"][0]["editions"]) == (
+        KEY,
+        True,
+        ["ja"],
+    )
+    # A file restored after the check is kept.
+    source.write_bytes(b"restored")
+    assert client.post("/api/library/forget-missing", json={}).json() == {
+        "records": 0,
+        "editions": 1,
+    }
+    assert db.row("SELECT ja_path FROM files")["ja_path"] is None
+    source.unlink()
+    assert client.post("/api/library/forget-missing", json={"keys": [KEY]}).json()["records"] == 1
+    assert not db.rows("SELECT * FROM files")
+    assert db.row("SELECT key FROM works")["key"] == KEY
 
 
 def test_migration_and_persistence(library):

@@ -56,8 +56,9 @@ class Settings:
     # The browser that opens for the Fanbox sign-in; empty finds Chrome, then Edge.
     browser_path: str = ""
 
-    # Which source a missing file is fetched from first; a creator may override it.
-    source_preference: str = "pawchive-first"
+    # Which source a missing file is fetched from first; a creator may override it. Fanbox
+    # serves the creator's own originals.
+    source_preference: str = "fanbox-first"
 
     # Retries, shared shape for both sources (see net/policy.py).
     request_timeout: int = 30

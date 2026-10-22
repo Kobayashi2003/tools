@@ -9,7 +9,8 @@ place atomically, so a short read can never pose as a complete file.
 import os
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from http.cookiejar import DefaultCookiePolicy
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,34 @@ class TransientError(Exception):
 
 
 class Cancelled(Exception):
-    """The client was stopped while a request was waiting or in flight."""
+    """The client or the calling job was stopped while a request was waiting or in flight."""
+
+
+# The cancel event of the job running on this thread: the clients are shared by every job,
+# so cancelling one job must reach its own waits and backoffs without stopping the others.
+_job = threading.local()
+
+
+@contextmanager
+def cancelled_by(event: threading.Event | None) -> Iterator[None]:
+    """Requests made on this thread inside the block stop once `event` is set."""
+    previous = getattr(_job, "cancel", None)
+    _job.cancel = event
+    try:
+        yield
+    finally:
+        _job.cancel = previous
+
+
+def carry[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    """`func` for a pool thread, still stopped by the calling thread's job."""
+    event = getattr(_job, "cancel", None)
+
+    def run(*args: P.args, **kwargs: P.kwargs) -> R:
+        with cancelled_by(event):
+            return func(*args, **kwargs)
+
+    return run
 
 
 class RetryShape:
@@ -94,15 +122,19 @@ class HttpClient:
             except Exception:
                 pass
 
+    def _stopped(self) -> bool:
+        event = getattr(_job, "cancel", None)
+        return self._stop.is_set() or (event is not None and event.is_set())
+
     def _check(self):
-        if self._stop.is_set():
+        if self._stopped():
             raise Cancelled()
 
     # ---- requests ----
 
     def get_json(self, url: str, params: dict | None = None, headers: dict | None = None) -> Any:
         self._check()
-        if not self.api_pace.request(self._stop.is_set):
+        if not self.api_pace.request(self._stopped):
             raise Cancelled()
         merged = {**self.headers, **(headers or {})}
         if self.json_session is not None:
@@ -120,8 +152,13 @@ class HttpClient:
         assert self.json_session is not None
         # The impersonated browser sends its own matching User-Agent.
         headers = {k: v for k, v in headers.items() if k.lower() != "user-agent"}
+        # curl_cffi reads only the *_PROXY variables; `requests` also finds the Windows system
+        # proxy, so a server started without those variables reaches Fanbox the same way.
+        proxy = requests.utils.select_proxy(url, requests.utils.get_environ_proxies(url))
         try:
-            resp = self.json_session.get(url, params=params, headers=headers, timeout=self.timeout)
+            resp = self.json_session.get(
+                url, params=params, headers=headers, timeout=self.timeout, proxy=proxy
+            )
         except curl_exceptions.Timeout as e:
             raise requests.exceptions.Timeout(str(e)) from e
         except curl_exceptions.RequestException as e:
@@ -141,7 +178,7 @@ class HttpClient:
     def get(self, url: str, **kwargs) -> requests.Response:
         """A plain request outside the retry loop, e.g. reading a redirect."""
         self._check()
-        if not self.api_pace.request(self._stop.is_set):
+        if not self.api_pace.request(self._stopped):
             raise Cancelled()
         return self.session.get(url, headers=self.headers, timeout=self.timeout, **kwargs)
 
@@ -196,7 +233,7 @@ class HttpClient:
                 func,
                 retry_on=(requests.exceptions.RequestException, TransientError),
                 decide=decide,
-                should_stop=self._stop.is_set,
+                should_stop=self._stopped,
                 on_retry=on_retry,
             )
         except backoff.Cancelled:
@@ -223,7 +260,7 @@ class HttpClient:
             temp = target.parent / f".{target.name}.{uuid.uuid4().hex[:12]}.part"
             with self.throttle.slot():
                 self._check()
-                if not self.throttle.request(self._stop.is_set):
+                if not self.throttle.request(self._stopped):
                     raise Cancelled()
                 resp = self.session.get(
                     url,
@@ -236,12 +273,12 @@ class HttpClient:
                 written = 0
                 with open(temp, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=65536):
-                        if self._stop.is_set():
+                        if self._stopped():
                             raise Cancelled()
                         if chunk:
                             f.write(chunk)
                             written += len(chunk)
-                            if not self.throttle.charge(len(chunk), self._stop.is_set):
+                            if not self.throttle.charge(len(chunk), self._stopped):
                                 raise Cancelled()
                             if on_progress:
                                 on_progress(written, expected)

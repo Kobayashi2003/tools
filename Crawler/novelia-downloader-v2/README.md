@@ -25,23 +25,32 @@ One instance may use a data directory at a time. API docs are served at `/docs`.
 - **Update sweeps** read the catalog (sorted by latest upload) only until it matches the order
   recorded by the last finished sweep, and check just the works before that point. Translation
   progress does not move a work, so **Everything** checks every work. A volume is downloaded
-  only when its ID, translation counters or download settings changed, or the local file is
-  missing or a different size; for an upload replaced without any of those changing, use
-  **Download again even if unchanged**.
+  only when its ID, translation counters or download settings changed, or the local file is a
+  different size; for an upload replaced without any of those changing, use **Download again
+  even if unchanged**.
+- **Local files**: a file deleted from disk stays recorded as downloaded and later tasks leave
+  it alone. Opening it from a work's page reports it missing and offers to download it again
+  or forget it; **Check local files** does the same for the whole library, and **Restore files
+  deleted from disk** makes a download task fetch them. A forgotten volume is downloaded by
+  the next task that checks its work.
 - **Failures**: 429/503, a run of network failures, a missing download drive or less than 2 GB
-  free pause the task, which resumes by itself. 404 and damaged uploads fail the item; 401/403
-  stop the task. Failed items can be retried at any time, and a retry skips volumes already
+  free pause the task, which resumes by itself. An edition Novelia cannot supply (404, a
+  damaged upload, a build that keeps failing) is passed over for the next one the strategy
+  allows, and fails the volume only when none can stand in; 401/403 stop the task. Failed items can be retried at any time, and a retry skips volumes already
   saved.
-- **Damaged uploads**: a broken picture or font, or a junk `mimetype` entry, is repaired on
-  save. An upload that is empty or cut off on Novelia is skipped by later tasks until its
-  metadata changes, or for 30 days.
-- **Formats** (Settings → Download source): the bilingual build, the uploaded Japanese
-  original (`[jp-original]`) and Novelia's Chinese-only build (`[zh]`), in any combination.
-  When the bilingual file can't be built, the original can be kept instead. Text (`.txt`)
-  volumes are saved as text.
-- **Conversion** is for volumes Novelia has only as bilingual files. The Japanese edition
-  (`[ja]`) keeps the Japanese paragraphs, optionally laid out vertically; the Chinese edition
-  (`[zh]`) puts each translation in place of its Japanese line. Sources are kept.
+- **Download strategy** (Settings → Download strategy): the editions to download, in order of
+  preference — the uploaded Japanese original (`[jp-original]`), the bilingual build and the
+  Chinese build (`[zh]`) — and how many each volume keeps. A volume keeps the first ones
+  Novelia can supply; when it cannot supply one (a broken upload, or a build that always
+  fails), the next ticked edition stands in and is removed once the preferred one arrives.
+  What Novelia could not supply is skipped by later tasks until the volume changes, or for 30
+  days. A work's page lists every edition of each volume in this order; one downloaded from
+  there by name is kept beside the strategy, never removed as a stand-in. A broken picture or font, or a junk `mimetype` entry, is repaired on save. Text
+  (`.txt`) volumes are saved as text.
+- **Conversion** builds editions from bilingual files for volumes without Novelia's own
+  edition of that language. The Japanese edition (`[ja]`) keeps the Japanese paragraphs,
+  optionally laid out vertically; the Chinese edition (`[zh]`) puts each translation in place
+  of its Japanese line. Sources are kept.
   `convert-local` also checks its output against the originals in `--reference-dir`, writes
   `conversion-report.json` and exits 1 if anything is unverified.
 - **Chinese-only uploads** are no longer on Novelia's pages and many are broken; they are

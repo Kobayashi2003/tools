@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from ..domain.timefmt import now_utc
 from ..net.limiter import QuotaExceeded
 from ..sources.fanbox import SessionRejected
+from ..sources.http import Cancelled, cancelled_by
 from ..store.db import dump, load
 from .context import Context
 from .download import Downloader
@@ -149,8 +150,9 @@ class JobRunner:
             params = {**params, "creator_id": creator_id}
             status, note, error = "done", "", None
             try:
-                note = self.handlers[kind](job_id, params, cancel)
-            except Stopped:
+                with cancelled_by(cancel):
+                    note = self.handlers[kind](job_id, params, cancel)
+            except Stopped, Cancelled:
                 status, note = "cancelled", "cancelled"
             except SessionRejected as e:
                 status, error = "failed", str(e)

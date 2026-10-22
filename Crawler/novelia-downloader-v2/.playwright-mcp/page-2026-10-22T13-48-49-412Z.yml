@@ -1,0 +1,146 @@
+- generic [active] [ref=e1]:
+  - complementary [ref=e2]:
+    - generic [ref=e3]:
+      - link "Novelia Library home" [ref=e4] [cursor=pointer]:
+        - /url: /
+        - text: Novelia
+      - button "Collapse sidebar" [expanded] [ref=e5] [cursor=pointer]
+    - navigation "Main" [ref=e9]:
+      - button "Library" [ref=e10] [cursor=pointer]
+      - button "Catalog" [ref=e15] [cursor=pointer]
+      - button "Tasks" [ref=e21] [cursor=pointer]:
+        - generic [ref=e27]: "2"
+      - button "Settings" [ref=e28] [cursor=pointer]
+    - link "API reference" [ref=e36] [cursor=pointer]:
+      - /url: /docs
+      - text: API reference ↗
+  - main [ref=e37]:
+    - 'button "#5 Full collection: 2/3 · Japanese library 3" [ref=e38] [cursor=pointer]'
+    - generic [ref=e43]:
+      - generic [ref=e44]:
+        - generic [ref=e45]:
+          - heading "Library" [level=1] [ref=e46]
+          - paragraph [ref=e47]: Automatic sweeps are off. Last sweep never.
+        - generic [ref=e48]:
+          - button "Check for updates" [ref=e49] [cursor=pointer]
+          - button "New download" [ref=e50] [cursor=pointer]
+      - generic [ref=e52]:
+        - generic [ref=e53]:
+          - term [ref=e54]: Works
+          - definition [ref=e55]: "8"
+        - generic [ref=e56]:
+          - term [ref=e57]: Volumes saved
+          - definition [ref=e58]: "5"
+        - generic [ref=e59]:
+          - term [ref=e60]: Japanese editions
+          - definition [ref=e61]: "1"
+        - generic [ref=e62]:
+          - term [ref=e63]: On disk
+          - definition [ref=e64]: 0 MB
+      - generic [ref=e65]:
+        - searchbox "Search library" [ref=e66]
+        - combobox "Collection" [ref=e67]:
+          - option "All collections" [selected]
+          - option "Light novels"
+          - option "Light literature"
+          - option "Literature"
+          - option "Nonfiction"
+          - option "R18 male"
+          - option "R18 female"
+        - combobox "Sort by" [ref=e68]:
+          - option "Recently checked" [selected]
+          - option "Recently added"
+          - option "Title"
+          - option "Most volumes"
+        - group "Title language" [ref=e69]:
+          - button "Japanese titles" [pressed] [ref=e70] [cursor=pointer]: 日
+          - button "Chinese titles" [ref=e71] [cursor=pointer]: 中
+        - group "Layout" [ref=e72]:
+          - button "Cover grid" [pressed] [ref=e73] [cursor=pointer]: ▦
+          - button "List" [ref=e74] [cursor=pointer]: ☰
+      - radiogroup "Filter by state" [ref=e75]:
+        - radio "All" [checked] [ref=e76] [cursor=pointer]
+        - radio "Saved" [ref=e77] [cursor=pointer]
+        - radio "Missing volumes" [ref=e78] [cursor=pointer]
+        - radio "Metadata only" [ref=e79] [cursor=pointer]
+        - radio "Has Japanese" [ref=e80] [cursor=pointer]
+        - radio "Has bilingual" [ref=e81] [cursor=pointer]
+        - radio "Has Chinese" [ref=e82] [cursor=pointer]
+      - generic [ref=e84]:
+        - article [ref=e85]:
+          - checkbox "Select Japanese library 1" [ref=e87] [cursor=pointer]
+          - button "Japanese library 1 Japanese library 1 Example author 1 / 2 saved JA 1 BI 1" [ref=e88] [cursor=pointer]:
+            - generic [ref=e89]: Japanese library 1
+            - heading "Japanese library 1" [level=3] [ref=e91]
+            - paragraph [ref=e92]: Example author
+            - generic [ref=e95]:
+              - generic [ref=e96]: 1 / 2 saved
+              - generic [ref=e97]:
+                - generic "Volumes with a Japanese edition" [ref=e98]: JA 1
+                - generic "Volumes with a bilingual file" [ref=e99]: BI 1
+        - article [ref=e100]:
+          - checkbox "Select Japanese library 2" [ref=e102] [cursor=pointer]
+          - button "Japanese library 2 Japanese library 2 Example author 1 / 2 saved BI 1" [ref=e103] [cursor=pointer]:
+            - generic [ref=e104]: Japanese library 2
+            - heading "Japanese library 2" [level=3] [ref=e106]
+            - paragraph [ref=e107]: Example author
+            - generic [ref=e110]:
+              - generic [ref=e111]: 1 / 2 saved
+              - generic "Volumes with a bilingual file" [ref=e113]: BI 1
+        - article [ref=e114]:
+          - checkbox "Select Japanese library 3" [ref=e116] [cursor=pointer]
+          - button "Japanese library 3 Japanese library 3 Example author 1 / 2 saved BI 1" [ref=e117] [cursor=pointer]:
+            - generic [ref=e118]: Japanese library 3
+            - heading "Japanese library 3" [level=3] [ref=e120]
+            - paragraph [ref=e121]: Example author
+            - generic [ref=e124]:
+              - generic [ref=e125]: 1 / 2 saved
+              - generic "Volumes with a bilingual file" [ref=e127]: BI 1
+        - article [ref=e128]:
+          - checkbox "Select Japanese library 4" [ref=e130] [cursor=pointer]
+          - button "Japanese library 4 Japanese library 4 Example author 1 / 2 saved BI 1" [ref=e131] [cursor=pointer]:
+            - generic [ref=e132]: Japanese library 4
+            - heading "Japanese library 4" [level=3] [ref=e134]
+            - paragraph [ref=e135]: Example author
+            - generic [ref=e138]:
+              - generic [ref=e139]: 1 / 2 saved
+              - generic "Volumes with a bilingual file" [ref=e141]: BI 1
+        - article [ref=e142]:
+          - checkbox "Select Japanese library 5" [ref=e144] [cursor=pointer]
+          - button "Japanese library 5 Japanese library 5 Example author 0 / 2 saved" [ref=e145] [cursor=pointer]:
+            - generic [ref=e146]: Japanese library 5
+            - heading "Japanese library 5" [level=3] [ref=e148]
+            - paragraph [ref=e149]: Example author
+            - generic [ref=e151]: 0 / 2 saved
+        - article [ref=e153]:
+          - checkbox "Select Japanese library 6" [ref=e155] [cursor=pointer]
+          - button "Japanese library 6 Japanese library 6 Example author 0 / 2 saved" [ref=e156] [cursor=pointer]:
+            - generic [ref=e157]: Japanese library 6
+            - heading "Japanese library 6" [level=3] [ref=e159]
+            - paragraph [ref=e160]: Example author
+            - generic [ref=e162]: 0 / 2 saved
+        - article [ref=e164]:
+          - checkbox "Select Japanese library 7" [ref=e166] [cursor=pointer]
+          - button "Japanese library 7 Japanese library 7 Example author 0 / 2 saved" [ref=e167] [cursor=pointer]:
+            - generic [ref=e168]: Japanese library 7
+            - heading "Japanese library 7" [level=3] [ref=e170]
+            - paragraph [ref=e171]: Example author
+            - generic [ref=e173]: 0 / 2 saved
+        - article [ref=e175]:
+          - checkbox "Select Japanese library 8" [ref=e177] [cursor=pointer]
+          - button "Japanese library 8 Japanese library 8 Example author 0 / 2 saved" [ref=e178] [cursor=pointer]:
+            - generic [ref=e179]: Japanese library 8
+            - heading "Japanese library 8" [level=3] [ref=e181]
+            - paragraph [ref=e182]: Example author
+            - generic [ref=e184]: 0 / 2 saved
+      - navigation "Library pages" [ref=e186]:
+        - generic [ref=e187]: 8 works
+        - generic [ref=e188]:
+          - button "Previous page" [disabled] [ref=e189]: ‹
+          - generic [ref=e190]: Page 1 of 1
+          - button "Next page" [disabled] [ref=e191]: ›
+      - paragraph [ref=e192]:
+        - button "Convert every bilingual volume" [ref=e193] [cursor=pointer]
+        - button "Check local files" [ref=e194] [cursor=pointer]
+        - link "Export catalog CSV" [ref=e195] [cursor=pointer]:
+          - /url: /api/export.csv

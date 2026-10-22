@@ -18,8 +18,11 @@ Unfinished jobs resume after a restart.
 
 ## Behaviour
 
-- **Downloads** try the preferred source first and the other one in the same run. Pawchive
-  404s are retried after 1, 2, 4… days (max 30). A spent quota pauses without failing.
+- **Downloads** try the preferred source first (Fanbox unless changed in Settings or per
+  creator) and the other one in the same run. Pawchive 404s are retried after 1, 2, 4… days
+  (max 30). A spent quota pauses without failing.
+- **Syncs** read both sources the same way. A list shorter than before is read again, and
+  posts count as deleted only when both reads agree.
 - **Fanbox status** of every saved creator is checked in the background every 7 days.
 - **Folder dates** are UTC.
 - **Groups are folders.** Drag a creator or group onto another group in the sidebar, or use

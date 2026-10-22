@@ -50,15 +50,17 @@ const UI = (() => {
     return closing;
   }
 
+  // The idle markup, so icons come back too.
+  const idle = new WeakMap();
   function pending(button, active, label = "Working…") {
     if (active) {
-      button.dataset.idleLabel = button.textContent;
+      idle.set(button, button.innerHTML);
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
       button.textContent = label;
     } else {
-      button.textContent = button.dataset.idleLabel || button.textContent;
-      delete button.dataset.idleLabel;
+      if (idle.has(button)) button.innerHTML = idle.get(button);
+      idle.delete(button);
       button.removeAttribute("aria-busy");
       button.disabled = false;
     }
