@@ -1,4 +1,5 @@
-"""The Fanbox cookie: stored and verified, or read from a browser this app starts.
+"""The Fanbox and Patreon cookies: stored and verified, or read from a browser this app
+starts.
 
 A page cannot read another site's cookies, and Chrome refuses a debugging port on your
 everyday profile, so the browser runs on its own profile under data/ and the cookie is
@@ -14,6 +15,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -22,12 +24,10 @@ import websocket
 from ..domain.timefmt import now_utc
 from ..sources.fanbox import SessionRejected
 from .context import Context
-from .sync import refresh_subscriptions
+from .sync import check_patreon_session, refresh_subscriptions
 
-LOGIN_URL = "https://www.fanbox.cc/login"
 WAIT_SECONDS = 600
 POLL_SECONDS = 1.5
-SIGNED_IN = re.compile(r"^\d+_\w+$")
 WINDOWS_BROWSERS = (
     r"Google\Chrome\Application\chrome.exe",
     r"Microsoft\Edge\Application\msedge.exe",
@@ -63,6 +63,70 @@ def apply_sessid(ctx: Context, sessid: str, source: str, keep_previous: bool = F
     except Exception as e:
         ctx.set_session_state(state="unchecked", message=f"Could not verify: {e}")
     return ctx.session()
+
+
+def apply_patreon_session(
+    ctx: Context, value: str, source: str, keep_previous: bool = False
+) -> dict:
+    """The same for Patreon's `session_id`, verified by asking who it signs in as."""
+    value = value.strip()
+    previous_id, previous_state = ctx.store.patreon_session(), ctx.db.kv_get("patreon_session", {})
+    if keep_previous and value == previous_id and ctx.session("patreon").get("state") == "valid":
+        ctx.set_session_state("patreon", source=source)
+        return ctx.session("patreon")
+    ctx.store.set_patreon_session(value)
+    ctx.patreon.set_session(ctx.store.patreon_session())
+    ctx.db.kv_set("patreon_session", {"source": source})
+    if not ctx.store.patreon_session():
+        return ctx.session("patreon")
+    try:
+        check_patreon_session(ctx)
+        if value != previous_id:
+            ctx.db.kv_set("patreon_access_changed", now_utc())
+    except SessionRejected:
+        if keep_previous:
+            ctx.store.set_patreon_session(previous_id)
+            ctx.patreon.set_session(previous_id)
+            ctx.db.kv_set("patreon_session", previous_state)
+            return {"state": "rejected", "message": "Patreon refused the cookie (signed out?)."}
+    except Exception as e:
+        ctx.set_session_state("patreon", state="unchecked", message=f"Could not verify: {e}")
+    return ctx.session("patreon")
+
+
+@dataclass(frozen=True)
+class LoginSite:
+    """Where a sign-in happens and which cookie proves it."""
+
+    name: str
+    url: str
+    cookie: str
+    domain: str
+    signed_in: Callable[[str], bool]
+    """Whether a cookie value can be a signed-in one (an anonymous visitor may hold one)."""
+    done: Callable[[dict], str]
+    """The message once the session is verified."""
+
+
+# A signed-in Fanbox cookie is `{pixiv userId}_{secret}`; an anonymous one has no user part,
+# and Fanbox may still answer it with an empty plan list.
+FANBOX_LOGIN = LoginSite(
+    "Fanbox",
+    "https://www.fanbox.cc/login",
+    "FANBOXSESSID",
+    "fanbox.cc",
+    lambda v: bool(re.match(r"^\d+_\w+$", v)),
+    lambda s: f"Signed in; supporting {s.get('supporting', 0)} plans.",
+)
+# Patreon sets `session_id` only on signing in.
+PATREON_LOGIN = LoginSite(
+    "Patreon",
+    "https://www.patreon.com/login",
+    "session_id",
+    "patreon.com",
+    lambda v: len(v) >= 16,
+    lambda s: f"Signed in as {s.get('user') or 'your account'}.",
+)
 
 
 def find_browser(configured: str) -> str | None:
@@ -107,12 +171,15 @@ class DevTools:
 
 
 class BrowserLogin:
-    """One sign-in at a time. `accept(sessid)` returns the session after storing the
-    cookie; one Fanbox refuses (not signed in yet) is skipped and the wait goes on."""
+    """One sign-in at a time. `accept(cookie)` returns the session after storing the
+    cookie; one the site refuses (not signed in yet) is skipped and the wait goes on."""
 
-    def __init__(self, profile: Path, accept: Callable[[str], dict]):
+    def __init__(
+        self, profile: Path, accept: Callable[[str], dict], site: LoginSite = FANBOX_LOGIN
+    ):
         self.profile = profile
         self.accept = accept
+        self.site = site
         self.status: dict = {"state": "idle"}
         self._lock = threading.Lock()
         self._cancel = threading.Event()
@@ -125,10 +192,13 @@ class BrowserLogin:
             self._cancel.clear()
             self.status = {
                 "state": "waiting",
-                "message": "Sign in to Fanbox in the browser window.",
+                "message": f"Sign in to {self.site.name} in the browser window.",
             }
             self._thread = threading.Thread(
-                target=self._run, args=(browser,), name="fanbox-login", daemon=True
+                target=self._run,
+                args=(browser,),
+                name=f"{self.site.name.lower()}-login",
+                daemon=True,
             )
             self._thread.start()
             return self.status
@@ -169,7 +239,7 @@ class BrowserLogin:
                 "--remote-debugging-port=0",
                 "--no-first-run",
                 "--no-default-browser-check",
-                LOGIN_URL,
+                self.site.url,
             ]
         )
 
@@ -202,19 +272,16 @@ class BrowserLogin:
                 (
                     c["value"]
                     for c in cookies
-                    if c.get("name") == "FANBOXSESSID"
-                    and str(c.get("domain", "")).endswith("fanbox.cc")
+                    if c.get("name") == self.site.cookie
+                    and str(c.get("domain", "")).endswith(self.site.domain)
                 ),
                 "",
             )
-            # A signed-in cookie is `{pixiv userId}_{secret}`; an anonymous one has no
-            # user part, and Fanbox may still answer it with an empty plan list.
-            if SIGNED_IN.match(sessid) and sessid not in tried:
+            if self.site.signed_in(sessid) and sessid not in tried:
                 tried.add(sessid)
                 session = self.accept(sessid)
                 if session.get("state") == "valid":
-                    plans = session.get("supporting", 0)
-                    return {"state": "done", "message": f"Signed in; supporting {plans} plans."}
+                    return {"state": "done", "message": self.site.done(session)}
                 if session.get("state") == "unchecked":
                     return {"state": "done", "message": session.get("message", "")}
             self._cancel.wait(POLL_SECONDS)

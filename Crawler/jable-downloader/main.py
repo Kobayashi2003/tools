@@ -36,6 +36,8 @@ USER_AGENT = (
 )
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+# Where videos go when no folder is given
+DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 
 SORT_MAP = {
     "best": "近期最佳",
@@ -703,7 +705,7 @@ def download_artist(
     log = log or Logger()
     template = template or get_last_template()
     save_template(template)
-    folder_path = folder_path or os.getcwd()
+    folder_path = folder_path or DOWNLOAD_DIR
 
     log.header("Jable Artist Downloader")
     log.info(f"  URL:      {url}")
@@ -774,8 +776,8 @@ def _interactive_videos(proxy_pool):
         sys.exit(1)
 
     folder_path = (
-        _prompt("Output folder (Enter = current dir)", get_last_input("video_folder", ""))
-        or os.getcwd()
+        _prompt("Output folder (Enter = downloads/)", get_last_input("video_folder", ""))
+        or DOWNLOAD_DIR
     )
     os.makedirs(folder_path, exist_ok=True)
     save_last_input(mode="1", video_urls=" ".join(urls_input), video_folder=folder_path)
@@ -797,9 +799,7 @@ def _interactive_artist(proxy_pool):
         print(f"Invalid Jable artist URL: {url}")
         sys.exit(1)
 
-    folder_path = _prompt(
-        "Output folder (Enter = current dir)", get_last_input("artist_folder", "")
-    )
+    folder_path = _prompt("Output folder (Enter = downloads/)", get_last_input("artist_folder", ""))
     sort_order = _prompt(
         "Sort order (best/latest/views/favorites)", get_last_input("artist_sort", "")
     )
@@ -852,7 +852,7 @@ def main(argv=None):
     try:
         if args.url:
             if is_video_url(args.url):
-                folder = args.path or os.getcwd()
+                folder = args.path or DOWNLOAD_DIR
                 os.makedirs(folder, exist_ok=True)
                 download_video(args.url, folder, proxy_pool=proxy_pool)
             elif is_artist_url(args.url):

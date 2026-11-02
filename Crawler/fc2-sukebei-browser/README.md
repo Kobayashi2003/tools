@@ -7,14 +7,14 @@ English or Japanese.
 
 ## Run
 
-Requires Python 3.14; dependencies are in `pyproject.toml`.
+Requires [uv](https://docs.astral.sh/uv/); dependencies are in `pyproject.toml`.
 
 ```bash
-python main.py serve --port 18050               # web UI on http://127.0.0.1:18050
-python main.py crawl update                     # without the UI: fetch new uploads
-python main.py crawl older --blocks 20          # without the UI: 20 history blocks
-python main.py crawl search bisirichn           # without the UI: a custom sukebei query
-python main.py doctor                           # check every source still answers and parses
+uv run main.py serve --port 18050               # web UI on http://127.0.0.1:18050
+uv run main.py crawl update                     # without the UI: fetch new uploads
+uv run main.py crawl older --blocks 20          # without the UI: 20 history blocks
+uv run main.py crawl search bisirichn           # without the UI: a custom sukebei query
+uv run main.py doctor                           # check every source still answers and parses
 ```
 
 On Windows, `start.ps1` / `stop.ps1` start and stop the server.
@@ -60,4 +60,4 @@ Set in the environment or in `.env` (see `.env.example`); the environment wins.
 pytest
 ```
 
-The tests never touch the network; `python main.py doctor` shows which parser a site change broke.
+The tests never touch the network; `uv run main.py doctor` shows which parser a site change broke.

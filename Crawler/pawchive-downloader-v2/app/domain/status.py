@@ -7,9 +7,28 @@ Subscription        free · yes (Fanbox opens it to you) · no · unknown (no co
 Selection           kept · filtered (with the rule) · creator ignored
 Local               derived from the post's files
 Downloaded via      per file: pawchive · fanbox · adopted · local
+
+"Fanbox" in these keys means the creator's own site: Fanbox for a Fanbox creator, Patreon
+for a Patreon one (`SITES`). Both are read the same way and stored in the same columns;
+only the labels the UI shows differ (`site_label`).
 """
 
 from dataclasses import dataclass, field
+
+# Services whose creators have their own site this tool reads, with its label and currency.
+SITES = {"fanbox": ("Fanbox", "¥"), "patreon": ("Patreon", "$")}
+
+
+def has_site(service: str) -> bool:
+    return service in SITES
+
+
+def site_label(service: str) -> str:
+    return SITES.get(service, ("Fanbox", "¥"))[0]
+
+
+def site_currency(service: str) -> str:
+    return SITES.get(service, ("Fanbox", "¥"))[1]
 
 
 @dataclass
@@ -25,9 +44,8 @@ class PostFacts:
     total: int = 0
     done: int = 0
     failed: int = 0
-    deferred: int = 0
-    deferred_until: str = ""
-    """Earliest retry of a Pawchive 404 among the undone files."""
+    missing: int = 0
+    """Undone files Pawchive answered 404 for: only a download by hand asks again."""
     stale: str = ""
     """Why a done post may be out of date ("Updated upstream 2026-08-14")."""
     via: list[str] = field(default_factory=list)
@@ -68,15 +86,21 @@ def can_fanbox(facts: PostFacts) -> bool:
     return facts.f == "open"
 
 
-def unavailable_reason(facts: PostFacts) -> str:
-    """Fanbox's side first: a plan you could take is the one part you can act on, and the
-    list clips this line from the right."""
+def unavailable_reason(facts: PostFacts, service: str = "fanbox") -> str:
+    """The creator's own site first: a plan you could take is the one part you can act on,
+    and the list clips this line from the right."""
+    site, money = site_label(service), site_currency(service)
+    locked = (
+        f"Needs a {money}{facts.fee} plan"
+        if service != "patreon" or facts.fee > 1
+        else "Needs a paid tier"
+    )
     parts = [
         {
             "open": "",
-            "locked": f"Needs a ¥{facts.fee} plan",
-            "gone": "Deleted on Fanbox",
-            "unknown": "Fanbox not checked",
+            "locked": locked,
+            "gone": f"Deleted on {site}",
+            "unknown": f"{site} not checked",
             "na": "",
         }[facts.f],
         {
@@ -116,8 +140,9 @@ def shown_via(via: str) -> str:
     return "fanbox" if via == "adopted" else via
 
 
-def headline(facts: PostFacts, preference: str = "fanbox-first") -> dict:
+def headline(facts: PostFacts, preference: str = "fanbox-first", service: str = "fanbox") -> dict:
     """`{k, t, why, progress}`: the state, its label, one line of reason, 0..1 or None."""
+    labels = {**VIA_LABEL, "fanbox": site_label(service)}
     progress = facts.done / facts.total if facts.total else None
     if facts.ignored:
         return {"k": "ignored", "t": "Ignored", "why": "Creator is ignored", "progress": None}
@@ -129,13 +154,12 @@ def headline(facts: PostFacts, preference: str = "fanbox-first") -> dict:
             why = "Adopted · unverified"
         return {"k": "done", "t": "Done", "why": why, "progress": None}
     remaining = facts.total - facts.done
-    # Every missing file is in its 404 deferral: that is a wait, even for files an earlier
-    # run recorded as failed.
-    if facts.deferred and facts.deferred >= remaining and not can_fanbox(facts):
+    # Every missing file 404ed on Pawchive: failed, and no run retries it by itself.
+    if facts.missing and facts.missing >= remaining and not can_fanbox(facts):
         return {
-            "k": "wait",
-            "t": "Waiting",
-            "why": f"Pawchive 404 · retry {facts.deferred_until[5:10]}",
+            "k": "failed",
+            "t": f"Failed {remaining}",
+            "why": f"{facts.done}/{facts.total} · Pawchive 404, not retried",
             "progress": progress,
         }
     if facts.failed:
@@ -147,12 +171,13 @@ def headline(facts: PostFacts, preference: str = "fanbox-first") -> dict:
         }
     source = planned_source(facts, preference)
     if source is None:
-        return {"k": "na", "t": "Unavailable", "why": unavailable_reason(facts), "progress": None}
+        why = unavailable_reason(facts, service)
+        return {"k": "na", "t": "Unavailable", "why": why, "progress": None}
     if facts.done:
         return {
             "k": "partial",
             "t": f"Partial {facts.done}/{facts.total}",
-            "why": "Next: " + VIA_LABEL[source],
+            "why": "Next: " + labels[source],
             "progress": progress,
         }
-    return {"k": "pending", "t": "Pending", "why": "Next: " + VIA_LABEL[source], "progress": None}
+    return {"k": "pending", "t": "Pending", "why": "Next: " + labels[source], "progress": None}

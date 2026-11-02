@@ -45,7 +45,7 @@ foreach ($project in $projects) {
     $web = Join-Path $project.FullName 'web'
     if (Test-Path (Join-Path $web 'package.json')) {
         if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
-            throw "pnpm is not on PATH; $($project.Name) needs it to build web\. Install it with 'npm install -g pnpm'."
+            throw "pnpm is not on PATH; $($project.Name) needs it to build web\. Install it from https://pnpm.io/installation."
         }
         Push-Location $web
         try {

@@ -1,5 +1,5 @@
 # Starts the server and opens it in the browser (-NoBrowser to skip); .\stop.ps1 stops it
-# from another window. Needs Python 3.14; the first run sets up .venv.
+# from another window. Needs uv; the first run sets up .venv.
 param([int]$Port = 18060, [switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
@@ -9,27 +9,9 @@ if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyCon
 }
 
 $venvPython = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
-if (Get-Command uv -ErrorAction SilentlyContinue) {
-    # Where uv is installed, it installs the exact versions in uv.lock.
-    uv sync --locked
-    if ($LASTEXITCODE -ne 0) { throw 'Installing dependencies failed; check the network or proxy and run this again.' }
-} else {
-    if (-not (Test-Path -LiteralPath $venvPython)) {
-        # The Windows launcher picks 3.14 among several installs; otherwise `python` must be it.
-        $exe, $pick = 'python', @()
-        if (Get-Command py -ErrorAction SilentlyContinue) { $exe, $pick = 'py', @('-3.14') }
-        & $exe @pick -c 'import sys; sys.exit(sys.version_info < (3, 14))' 2>$null
-        if ($LASTEXITCODE -ne 0) { throw 'Python 3.14 was not found. Install it from https://www.python.org/downloads/ and run this again.' }
-        & $exe @pick -m venv .venv
-        if ($LASTEXITCODE -ne 0) { throw 'Creating .venv failed.' }
-    }
-    & $venvPython -m pip --version *> $null
-    if ($LASTEXITCODE -ne 0) { & $venvPython -m ensurepip --upgrade *> $null }
-    # The dependencies are read from pyproject.toml, so it stays their only list.
-    $deps = & $venvPython -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']))"
-    & $venvPython -m pip install --disable-pip-version-check --quiet @($deps -split "`n" | Where-Object { $_ })
-    if ($LASTEXITCODE -ne 0) { throw 'Installing dependencies failed; check the network or proxy and run this again.' }
-}
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw 'uv is not on PATH (https://docs.astral.sh/uv/).' }
+uv sync --locked
+if ($LASTEXITCODE -ne 0) { throw 'Installing dependencies failed; check the network or proxy and run this again.' }
 
 Write-Host "Pawchive v2 on http://127.0.0.1:$Port/  (Ctrl+C or .\stop.ps1 to stop)"
 # The server records its own PID and start time in .running.json for stop.ps1.

@@ -2,7 +2,7 @@ import { ago, api, attempt, esc, groupEvents, isActive, localTime } from './api.
 import { I } from './icons.js';
 import { on, patchRows } from './live.js';
 
-const KIND = { sync: 'Sync', download: 'Download', subscriptions: 'Refresh plans', migration: 'Migration', probe: 'Fanbox check', move: 'Move folder' };
+const KIND = { sync: 'Sync', download: 'Download', subscriptions: 'Refresh plans', migration: 'Migration', probe: 'Fanbox check', move: 'Move folder', link_check: 'Check links', link_fetch: 'Fetch links' };
 const STATUS = { queued: ['k-pending', 'Queued'], running: ['k-partial', 'Running'], done: ['k-done', 'Done'], failed: ['k-failed', 'Failed'], cancelled: ['k-ignored', 'Cancelled'] };
 const LEVEL = { info: ['mute', 'Info'], warning: ['warn', 'Warning'], error: ['bad', 'Error'] };
 

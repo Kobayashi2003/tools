@@ -5,10 +5,10 @@ Searches [Anna's Archive](https://annas-archive.gl) for a keyword, keeps the bes
 
 ## Run
 
-Requires Python 3.14; dependencies are in `pyproject.toml`.
+Requires [uv](https://docs.astral.sh/uv/); dependencies are in `pyproject.toml`.
 
 ```bash
-python main.py "Sword Art Online"
+uv run main.py "Sword Art Online"
 ```
 
 Files land in `downloads/<keyword>/<volume> <title>.<ext>`; existing files are skipped, so a

@@ -7,13 +7,12 @@ editions where no original exists.
 
 ## Run
 
-Requires Python 3.14.
+Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
-python -m pip install fastapi requests uvicorn
-python main.py serve --port 18030      # web UI on http://127.0.0.1:18030
-python main.py doctor                  # check access to the live catalog
-python main.py convert-local <bilingual-dir> --output <dir> --reference-dir <originals-dir>
+uv run main.py serve --port 18030      # web UI on http://127.0.0.1:18030
+uv run main.py doctor                  # check access to the live catalog
+uv run main.py convert-local <bilingual-dir> --output <dir> --reference-dir <originals-dir>
 ```
 
 One instance may use a data directory at a time. API docs are served at `/docs`.
@@ -71,6 +70,5 @@ Back up the database and the download directories together.
 ## Tests
 
 ```bash
-python -m pip install pytest httpx
-python -m pytest
+uv run pytest
 ```

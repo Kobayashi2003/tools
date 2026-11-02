@@ -13,10 +13,12 @@ from dataclasses import dataclass, field
 import requests
 
 from ..domain.match import Entry
+from ..domain.status import has_site
 from ..domain.timefmt import now_utc
 from ..sources.fanbox import FanboxListItem, SessionRejected
 from ..sources.http import PermanentError, TransientError
 from .context import Context
+from .links import refresh_links
 from .reconcile import entries_json, reconcile_creator
 
 
@@ -28,6 +30,8 @@ class Stopped(Exception):
 class SyncResult:
     pawchive: int = 0
     fanbox: int = 0
+    """Posts the creator's own site listed (Fanbox or Patreon, named by `site`)."""
+    site: str = "Fanbox"
     details: int = 0
     new: int = 0
     reopened: int = 0
@@ -39,7 +43,7 @@ class SyncResult:
         if self.pawchive:
             parts.append(f"Pawchive {self.pawchive}")
         if self.fanbox:
-            parts.append(f"Fanbox {self.fanbox}")
+            parts.append(f"{self.site} {self.fanbox}")
         if self.details:
             parts.append(f"{self.details} bodies")
         if self.new:
@@ -265,6 +269,10 @@ def refresh_subscriptions(ctx: Context) -> int:
 
 
 def plan_fee(ctx: Context, creator_id: str) -> int | None:
+    """Your highest Fanbox plan for the creator. Patreon tiers are not read: Patreon says
+    per post whether it opens to you, which is all the status needs."""
+    if not creator_id.startswith("fanbox_"):
+        return None
     if not ctx.store.fanbox_sessid() or ctx.session().get("state") != "valid":
         return None
     row = ctx.db.one("SELECT MAX(fee) AS fee FROM subscriptions WHERE creator_id=?", (creator_id,))
@@ -432,6 +440,123 @@ def sync_fanbox(
         result.details += 1
 
 
+# ---------------------------------------------------------------- Patreon
+
+
+def check_patreon_session(ctx: Context) -> None:
+    """With a cookie set, ask Patreon who it signs in as; a refused cookie stops every
+    Patreon request, as for Fanbox, because it would read every paid post as locked."""
+    if not ctx.store.patreon_session():
+        return
+    try:
+        user = ctx.patreon.current_user()
+    except SessionRejected as e:
+        ctx.set_session_state("patreon", state="rejected", message=str(e))
+        raise
+    name = str((user.get("attributes") or {}).get("full_name") or "")
+    if not user.get("id"):
+        message = "Patreon did not recognise the session cookie"
+        ctx.set_session_state("patreon", state="rejected", message=message)
+        raise SessionRejected(message)
+    ctx.set_session_state("patreon", state="valid", message="", user=name)
+
+
+def resolve_campaign(ctx: Context, creator: sqlite3.Row) -> str | None:
+    """The creator's campaign id, cached in `fanbox_creator_id` (the id on their own site)."""
+    if creator["fanbox_creator_id"]:
+        return creator["fanbox_creator_id"]
+    try:
+        campaign = ctx.patreon.campaign_of(creator["user_id"])
+    except PermanentError:
+        campaign = None
+    except requests.HTTPError as e:
+        # A suspended or hidden account answers 403: no page to read, as for a missing one.
+        if ctx.patreon_http.status_of(e) not in (401, 403, 404):
+            raise
+        campaign = None
+    ctx.db.run(
+        "UPDATE creators SET fanbox_creator_id=?, fanbox_state=?, fanbox_checked_at=? WHERE id=?",
+        (campaign, "ok" if campaign else "none", now_utc(), creator["id"]),
+    )
+    return campaign
+
+
+def sync_patreon(
+    ctx: Context,
+    creator: sqlite3.Row,
+    result: SyncResult,
+    progress: Progress,
+    cancel: threading.Event,
+):
+    """The list carries every post's files, so unlike Fanbox there are no bodies to read."""
+    result.site = "Patreon"
+    if not ctx.site_usable("patreon"):
+        result.notes.append("Patreon skipped: cookie rejected")
+        return
+    check_patreon_session(ctx)
+    progress("Patreon: finding the campaign")
+    campaign = resolve_campaign(ctx, creator)
+    if not campaign:
+        now = now_utc()
+        with ctx.db.tx() as conn:
+            result.gone["Patreon"] = _mark_gone(conn, creator["id"], "fanbox", set(), now)
+            conn.execute("UPDATE creators SET fanbox_listed_at=? WHERE id=?", (now, creator["id"]))
+        result.notes.append("no Patreon page")
+        return
+    progress("Patreon: reading the post list")
+
+    def read() -> list:
+        items = []
+        for n, post in enumerate(ctx.patreon.list_posts(campaign), 1):
+            if cancel.is_set():
+                raise Stopped()
+            if n % 50 == 0:
+                progress(f"Patreon: reading the post list ({n})")
+            items.append(post)
+        return items
+
+    try:
+        items, complete = _full_list(ctx, creator, "fanbox", read, lambda p: p.id, "Patreon")
+    except PermanentError:
+        ctx.db.run(
+            "UPDATE creators SET fanbox_creator_id=NULL, fanbox_checked_at=? WHERE id=?",
+            (now_utc(), creator["id"]),
+        )
+        result.notes.append("campaign gone; resolved again next sync")
+        return
+    now = now_utc()
+    with ctx.db.tx() as conn:
+        for post in items:
+            _upsert_obs(
+                conn,
+                creator["id"],
+                post.id,
+                "fanbox",
+                "locked" if post.restricted else "open",
+                now,
+                title=post.title,
+                published=post.published,
+                edited=post.updated,
+                fee=post.fee,
+                # A locked post's text is a teaser at most; Pawchive's copy is whole.
+                content=None if post.restricted else post.text,
+                entries=post.entries,
+                detail_at=None if post.restricted else now,
+                keep_entries_if_empty=post.restricted,
+            )
+        conn.execute(
+            "UPDATE creators SET fanbox_state='ok', fanbox_error=NULL, fanbox_checked_at=? WHERE id=?",
+            (now, creator["id"]),
+        )
+        if complete:
+            result.gone["Patreon"] = _mark_gone(
+                conn, creator["id"], "fanbox", {p.id for p in items}, now
+            )
+            conn.execute("UPDATE creators SET fanbox_listed_at=? WHERE id=?", (now, creator["id"]))
+    result.fanbox = len(items)
+    result.details = sum(1 for p in items if not p.restricted)
+
+
 # ---------------------------------------------------------------- entry point
 
 
@@ -448,16 +573,20 @@ def sync_creator(
     saved creator in the background (see JobRunner._probe)."""
     creator = ctx.require_creator(creator_id)
     result = SyncResult()
-    is_fanbox = creator["service"] == "fanbox"
+    # "fanbox" in `sources` is the creator's own site, Fanbox or Patreon.
+    site = has_site(creator["service"])
     if "pawchive" in sources and creator["pawchive_state"] != "none":
         sync_pawchive(ctx, creator, result, progress)
     if cancel.is_set():
         raise Stopped()
-    if "fanbox" in sources and is_fanbox:
+    if "fanbox" in sources and creator["service"] == "fanbox":
         sync_fanbox(ctx, creator, result, progress, cancel, deep, details)
+    elif "fanbox" in sources and creator["service"] == "patreon":
+        sync_patreon(ctx, creator, result, progress, cancel)
     progress("Reconciling posts and files")
     with ctx.db.tx() as conn:
-        counts = reconcile_creator(conn, creator_id, is_fanbox, ctx.naming(creator), now_utc())
+        counts = reconcile_creator(conn, creator_id, site, ctx.naming(creator), now_utc())
+        refresh_links(conn, creator_id, ctx.settings.link_domains, now_utc())
         if details or "pawchive" in sources:
             conn.execute("UPDATE creators SET synced_at=? WHERE id=?", (now_utc(), creator_id))
     result.new, result.reopened = counts["new"], counts["reopened"]

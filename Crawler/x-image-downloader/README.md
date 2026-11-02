@@ -5,11 +5,11 @@ Downloads full-resolution images from users' [X](https://x.com) timelines into
 
 ## Run
 
-Requires Python 3.14; dependencies are in `pyproject.toml`. Install Playwright's Chromium once
+Requires [uv](https://docs.astral.sh/uv/); dependencies are in `pyproject.toml`. Install Playwright's Chromium once
 (`playwright install chromium`) and export your X cookies to `cookies.json`.
 
 ```bash
-python main.py <url> [<url> ...] [options]
+uv run main.py <url> [<url> ...] [options]
 ```
 
 | Option | Description | Default |

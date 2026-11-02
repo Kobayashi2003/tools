@@ -1,11 +1,9 @@
 # tools
 
-Personal utilities, grouped by where they run. Each group's README lists its
-projects; `Crawler/` owns a port range ([PORTS.md](../PORTS.md)) and lists the
-slots there.
+Personal utilities, grouped by where they run.
 
-| Folder | What it is |
+| Folder | What it holds |
 |---|---|
-| [ChromeExtension](ChromeExtension/) | Chrome extensions |
-| [Crawler](Crawler/) | Downloaders and local library managers for specific sites |
-| [QuickLookPlugins](QuickLookPlugins/) | [QuickLook](https://github.com/QL-Win/QuickLook) previews |
+| [ChromeExtension](ChromeExtension/README.md) | Chrome extensions |
+| [Crawler](Crawler/README.md) | Downloaders and local library managers for specific sites |
+| [QuickLookPlugins](QuickLookPlugins/README.md) | [QuickLook](https://github.com/QL-Win/QuickLook) previews, as one project |

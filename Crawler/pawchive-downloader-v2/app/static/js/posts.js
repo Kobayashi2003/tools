@@ -13,6 +13,17 @@ const VIA = {
 };
 const PAGE = 150;
 
+// The creator's own site, Fanbox or Patreon: the server stores and labels both as "fanbox"
+// (see domain/status.py). The labels above say "Fanbox"; `sited` puts the shown creator's
+// site in its place.
+const hasSite = (d) => d.service === 'fanbox' || d.service === 'patreon';
+const siteName = () => S?.detail?.site || 'Fanbox';
+// Patreon's mark is a P like Pawchive's, told apart by colour (.site-patreon in style.css).
+const siteLetter = () => (S?.detail?.service === 'patreon' ? 'P' : 'F');
+const sited = (text) => String(text).replace(/Fanbox/g, siteName());
+// A Patreon post you cannot open gives no amount, stored as 1: shown as "Paid".
+const money = (fee) => (S?.detail?.currency === '$' ? (fee > 1 ? `$${fee}` : 'Paid') : `¥${fee}`);
+
 // Within one group the options are OR-ed; separate groups (and dropdowns) are AND-ed.
 const FILTERS = {
   cov: { label: 'Source', groups: [
@@ -21,14 +32,15 @@ const FILTERS = {
     { id: 'f', label: 'Fanbox', fanbox: true, fn: (r, v) => r.f === v, opts: [['open', 'Accessible'], ['locked', 'Not subscribed'], ['gone', 'Deleted'], ['unknown', 'Not checked']] },
   ] },
   st: { label: 'Status', groups: [
-    { id: 's', label: 'Local', fn: (r, v) => r.head.k === v, opts: [['done', 'Done'], ['partial', 'Partial'], ['pending', 'Pending'], ['failed', 'Failed'], ['wait', 'Waiting'], ['na', 'Unavailable'], ['filtered', 'Filtered'], ['ignored', 'Ignored']] },
+    { id: 's', label: 'Local', fn: (r, v) => r.head.k === v, opts: [['done', 'Done'], ['partial', 'Partial'], ['pending', 'Pending'], ['failed', 'Failed'], ['na', 'Unavailable'], ['filtered', 'Filtered'], ['ignored', 'Ignored']] },
     { id: 'm', label: 'Needs a look', fn: (r, v) => FLAG[v](r), opts: [['stale', 'Updated upstream'], ['mismatch', 'Times disagree'], ['bad', 'Check failed'], ['unverified', 'Adopted, unverified']] },
+    { id: 'l', label: 'Cloud-storage links', fn: (r, v) => (v === 'new' ? r.links_new > 0 : r.links > 0), opts: [['any', 'Has links'], ['new', 'Has new links']] },
   ] },
   sub: { label: 'Plan', fanbox: true, groups: [
     { id: 'u', label: '', fn: (r, v) => r.sub === v, opts: [['free', 'Free'], ['yes', 'Open to me'], ['no', 'Locked to me'], ['unknown', 'Not signed in']] },
   ] },
   via: { label: 'Got from', groups: [
-    { id: 'v', label: '', fn: (r, v) => (v === 'mix' ? r.via.length > 1 : v === 'nil' ? !r.via.length : r.via.includes(v)), opts: [['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['local', 'Found on disk'], ['mix', 'Mixed'], ['nil', 'Nothing yet']] },
+    { id: 'v', label: '', fn: (r, v) => (v === 'none' ? !r.total : v === 'mix' ? r.via.length > 1 : v === 'nil' ? r.total && !r.via.length : r.via.includes(v)), opts: [['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['local', 'Found on disk'], ['mix', 'Mixed'], ['nil', 'Nothing yet'], ['none', 'No files']] },
   ] },
 };
 const FLAG = {
@@ -37,7 +49,7 @@ const FLAG = {
   bad: (r) => r.verified_bad > 0,
   unverified: (r) => (r.head.why || '').includes('unverified'),
 };
-const ORDER = ['failed', 'wait', 'partial', 'pending', 'na', 'done', 'filtered', 'ignored'];
+const ORDER = ['failed', 'partial', 'pending', 'na', 'done', 'filtered', 'ignored'];
 const SORTS = {
   new: ['Newest', 'Published · newest first', (a, b) => b.published.localeCompare(a.published)],
   old: ['Oldest', 'Published · oldest first', (a, b) => a.published.localeCompare(b.published)],
@@ -85,15 +97,17 @@ function visible(except) {
   return S.rows.filter((r) => (!q || r.title.toLowerCase().includes(q) || r.id.includes(q)) && Object.keys(FILTERS).every((d) => matches(r, d, except)));
 }
 
-const cells = (p, f) => `<span class="src"><span class="sc p ${p}" title="${P_LABEL[p] || ''}">P</span><span class="sc f ${f === 'na' ? 'na' : f}" title="${F_LABEL[f] || ''}">F</span></span>`;
+const cells = (p, f) => `<span class="src"><span class="sc p ${p}" title="${P_LABEL[p] || ''}">P</span><span class="sc f ${f === 'na' ? 'na' : f}" title="${sited(F_LABEL[f] || '')}">${siteLetter()}</span></span>`;
 
-function viaHTML(via) {
+// Where the post's main files came from; the cover and the text are not counted.
+function viaHTML(via, total = 1) {
+  if (!total) return '<span class="via muted-dash" title="No files besides the cover and the text">No files</span>';
   if (!via.length) return '<span class="via muted-dash">—</span>';
   if (via.length > 1) {
-    return `<span class="via" title="${via.map((v) => (VIA[v] || [v])[0]).join(' + ')}">Mixed ${via.map((v) => `<b class="${(VIA[v] || [])[1] || 'va'}">${(VIA[v] || [v, '', v])[2]}</b>`).join('+')}</span>`;
+    return `<span class="via" title="${via.map((v) => sited((VIA[v] || [v])[0])).join(' + ')}">Mixed ${via.map((v) => `<b class="${(VIA[v] || [])[1] || 'va'}">${v === 'fanbox' ? siteLetter() : (VIA[v] || [v, '', v])[2]}</b>`).join('+')}</span>`;
   }
   const [label, cls] = VIA[via[0]] || [via[0], 'va'];
-  return `<span class="via"><b class="${cls}">${label}</b></span>`;
+  return `<span class="via"><b class="${cls}">${sited(label)}</b></span>`;
 }
 
 function tzTitle(utc) {
@@ -118,9 +132,10 @@ function sitesFor(postId, r) {
 // What the Plan column says. Signed out, only the fee is known, shown quietly.
 function planCell(r) {
   if (r.sub === 'free') return '<span class="sub free">Free</span>';
-  if (r.sub === 'yes') return `<span class="sub yes" title="Fanbox opens this ¥${r.fee} post to you">¥${r.fee}</span>`;
-  if (r.sub === 'no') return `<span class="sub no" title="Fanbox keeps this ¥${r.fee} post locked for you">¥${r.fee}</span>`;
-  return `<span class="sub unknown" title="Sign in to Fanbox to see whether your plan covers it">¥${r.fee}</span>`;
+  const fee = money(r.fee), site = siteName();
+  if (r.sub === 'yes') return `<span class="sub yes" title="${site} opens this ${fee} post to you">${fee}</span>`;
+  if (r.sub === 'no') return `<span class="sub no" title="${site} keeps this ${fee} post locked for you">${fee}</span>`;
+  return `<span class="sub unknown" title="Sign in to ${site} to see whether your plan covers it">${fee}</span>`;
 }
 
 // ---------------------------------------------------------------- header
@@ -140,7 +155,8 @@ function header() {
   const total = S.rows.length || 1;
   const seg = (k) => (n[k] ? `<span class="c-${k}" style="width:${((n[k] / total) * 100).toFixed(2)}%"></span>` : '');
   const name = d.alias || d.name;
-  const fanbox = d.service === 'fanbox';
+  const fanbox = hasSite(d);
+  const site = siteName();
   const pSum = pc.full + pc.meta;
   const pState = d.pawchive_state === 'none' ? 'Not on Pawchive'
     : d.pawchive_state === 'gone' ? 'Creator no longer on Pawchive'
@@ -148,12 +164,13 @@ function header() {
     : `${pc.full} with files · ${pc.meta} metadata only${pc.gone ? ` · ${pc.gone} gone` : ''}`;
   // A cancelled plan leaves your plan list at once but keeps its posts open for the paid month.
   const paidOpen = S.rows.some((r) => r.fee > 0 && r.f === 'open');
-  const plan = d.plan_fee == null ? (d.session === 'rejected' ? 'cookie rejected' : 'signed out') : d.plan_fee ? `¥${d.plan_fee} plan` : paidOpen ? 'no current plan; paid posts still open' : 'no plan';
-  const fState = !fanbox ? '' : d.fanbox_state === 'none' ? 'No Fanbox page'
+  const plan = d.service === 'patreon' ? (d.session === 'rejected' ? 'cookie rejected' : d.session === 'valid' ? 'signed in' : 'signed out')
+    : d.plan_fee == null ? (d.session === 'rejected' ? 'cookie rejected' : 'signed out') : d.plan_fee ? `¥${d.plan_fee} plan` : paidOpen ? 'no current plan; paid posts still open' : 'no plan';
+  const fState = !fanbox ? '' : d.fanbox_state === 'none' ? `No ${site} page`
     : !d.fanbox_listed_at ? (d.fanbox_checked_at ? 'Not checked yet: the last check failed' : 'Not checked yet')
     : `${fc.open} accessible · ${fc.locked} locked${fc.gone ? ` · ${fc.gone} deleted` : ''}`;
   const loc = d.local || {};
-  const viaParts = [['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['found', 'on disk']].filter(([k]) => loc[k]).map(([k, l]) => `${loc[k].toLocaleString()} ${l}`);
+  const viaParts = [['pawchive', 'Pawchive'], ['fanbox', site], ['found', 'on disk']].filter(([k]) => loc[k]).map(([k, l]) => `${loc[k].toLocaleString()} ${l}`);
   const fetchable = S.rows.filter((r) => ['pending', 'partial', 'failed'].includes(r.head.k)).length;
   const synced = d.synced_at || d.fanbox_checked_at;
   return `<div class="ch">
@@ -162,11 +179,12 @@ function header() {
       <div class="ch-id">
         <h1><span class="ch-name">${esc(name)}</span>${d.alias && d.alias !== d.name ? `<small>${esc(d.name)}</small>` : ''}${d.ignore ? '<span class="chip k-ignored">Ignored</span>' : ''}${d.completed ? '<span class="chip k-done">Completed</span>' : ''}</h1>
         <div class="ids">
-          <span>${esc(d.service)} <span class="mono">${esc(d.user_id)}</span>${fanbox ? ` · <span class="mono">${d.fanbox_creator_id ? '@' + esc(d.fanbox_creator_id) : d.fanbox_state === 'none' ? 'no Fanbox' : '@ not resolved'}</span>` : ''}</span>
+          <span>${esc(d.service)} <span class="mono">${esc(d.user_id)}</span>${fanbox ? ` · <span class="mono">${d.fanbox_creator_id ? (d.service === 'patreon' ? 'campaign ' : '@') + esc(d.fanbox_creator_id) : d.fanbox_state === 'none' ? `no ${site}` : 'not resolved'}</span>` : ''}</span>
           <span class="ext-links">${sitesFor('').filter((s) => s.url).map((s) => extLink(s.url, s.label, `Open on ${s.label}`)).join('')}</span>
           <span class="ids-grp" title="Group">${esc(d.group || 'Ungrouped')}</span>
           <span>Synced ${esc(ago(synced))}</span>
-          <span>${d.preference === 'fanbox-first' ? 'Fanbox first' : 'Pawchive first'}${d.config.source_preference ? '' : ' (default)'}</span>
+          <span>${d.preference === 'fanbox-first' ? `${site} first` : 'Pawchive first'}${d.config.source_preference ? '' : ' (default)'}</span>
+          ${d.links_new ? `<a href="#/links?creator=${encodeURIComponent(d.id)}" title="Cloud-storage links in this creator's posts">${d.links_new.toLocaleString()} new links</a>` : ''}
         </div>
       </div>
       <div class="btns">
@@ -177,14 +195,14 @@ function header() {
     </div>
     <div class="sources">
       <div class="sbox ${pSum && !pc.full ? 'warn' : ''}"><div class="h"><span class="sc p ${pc.full ? 'full' : pSum ? 'meta' : 'none'}">P</span>Pawchive<span class="h-r">${esc(ago(d.pawchive_checked_at))}</span></div><div class="v"><b>${pSum.toLocaleString()}</b>posts</div><div class="s" title="${esc(pState)}">${esc(pState)}</div></div>
-      ${fanbox ? `<div class="sbox ${d.session === 'rejected' ? 'warn' : ''}"><div class="h"><span class="sc f ${fc.open ? 'open' : fc.locked ? 'locked' : 'unknown'}">F</span>Fanbox<span class="h-r">${esc(plan)}</span></div><div class="v"><b>${(fc.open + fc.locked).toLocaleString()}</b>posts</div><div class="s" title="${esc(fState)}">${esc(fState)}</div></div>`
-        : '<div class="sbox"><div class="h"><span class="sc f unknown">F</span>Fanbox</div><div class="v"><b>—</b></div><div class="s">Not a Fanbox creator</div></div>'}
+      ${fanbox ? `<div class="sbox ${d.session === 'rejected' ? 'warn' : ''}"><div class="h"><span class="sc f ${fc.open ? 'open' : fc.locked ? 'locked' : 'unknown'}">${siteLetter()}</span>${site}<span class="h-r">${esc(plan)}</span></div><div class="v"><b>${(fc.open + fc.locked).toLocaleString()}</b>posts</div><div class="s" title="${esc(fState)}">${esc(fState)}</div></div>`
+        : '<div class="sbox"><div class="h"><span class="sc f unknown">F</span>Own site</div><div class="v"><b>—</b></div><div class="s">Not a Fanbox or Patreon creator</div></div>'}
       <div class="sbox"><div class="h"><span class="sc lc">L</span>Local<button class="linkbtn h-r" type="button" data-open="${esc(d.dir)}" title="${esc(d.dir)}">Open folder</button></div><div class="v"><b>${done.toLocaleString()}</b>posts done</div><div class="s" title="${esc(viaParts.join(' · '))}">${esc(viaParts.join(' · ') || 'Nothing downloaded yet')}${loc.failed ? ` · ${loc.failed} failed files` : ''}</div></div>
     </div>
     ${S.rows.length ? `<div class="cover">
       <div class="cover-bar" role="img" aria-label="Source coverage">${seg('both')}${seg('ponly')}${seg('fonly')}${seg('unknown')}${seg('local')}</div>
       <div class="cover-legend">
-        ${[['both', 'On both', 'c-both'], ['ponly', 'Pawchive only', 'c-ponly'], ['fonly', 'Fanbox only', 'c-fonly'], ['unknown', 'Fanbox not checked', 'c-unknown'], ['local', 'Local only', 'c-local']].filter(([k]) => n[k]).map(([k, l, c]) => `<button type="button" data-cov="${k}" title="Show only these"><i class="${c}"></i>${l} <span class="num">${n[k].toLocaleString()}</span></button>`).join('')}
+        ${[['both', 'On both', 'c-both'], ['ponly', 'Pawchive only', 'c-ponly'], ['fonly', 'Fanbox only', 'c-fonly'], ['unknown', 'Fanbox not checked', 'c-unknown'], ['local', 'Local only', 'c-local']].filter(([k]) => n[k]).map(([k, l, c]) => `<button type="button" data-cov="${k}" title="Show only these"><i class="${c}"></i>${sited(l)} <span class="num">${n[k].toLocaleString()}</span></button>`).join('')}
       </div></div>` : ''}
   </div>`;
 }
@@ -196,20 +214,20 @@ function summary(dim) {
   if (!s.size) return 'All';
   if (s.size === 1) {
     const k = [...s][0];
-    for (const g of FILTERS[dim].groups) for (const [v, l] of g.opts) if (okey(g, v) === k) return l;
+    for (const g of FILTERS[dim].groups) for (const [v, l] of g.opts) if (okey(g, v) === k) return sited(l);
   }
   return `${s.size} selected`;
 }
 
 function filterMenu(dim) {
-  const fanbox = S.detail.service === 'fanbox';
+  const fanbox = hasSite(S.detail);
   const base = visible(dim);
   const s = sel[dim];
   const groups = FILTERS[dim].groups.filter((g) => fanbox || !g.fanbox);
   const total = groups.reduce((n, g) => n + g.opts.length, 0);
   return `${total > 8 ? `<div class="menu-search"><label class="field">${I.search}<input placeholder="Filter options" aria-label="Filter options"></label></div>` : ''}
-    <div class="menu-body">${groups.map((g) => `<div class="menu-group">${g.label ? `<div class="menu-label"><span>${g.label}</span></div>` : ''}
-      ${g.opts.map(([v, l]) => { const k = okey(g, v); const c = base.filter((r) => g.fn(r, v)).length; return checkItem({ key: k, label: l, on: s.has(k), count: c.toLocaleString(), faint: !c }); }).join('')}</div>`).join('')}</div>
+    <div class="menu-body">${groups.map((g) => `<div class="menu-group">${g.label ? `<div class="menu-label"><span>${sited(g.label)}</span></div>` : ''}
+      ${g.opts.map(([v, l]) => { const k = okey(g, v); const c = base.filter((r) => g.fn(r, v)).length; return checkItem({ key: k, label: sited(l), on: s.has(k), count: c.toLocaleString(), faint: !c }); }).join('')}</div>`).join('')}</div>
     <div class="menu-foot"><span>${s.size ? `${s.size} selected${groups.length > 1 ? ' · OR within a group' : ''}` : 'No filter'}</span><button type="button" class="linkbtn" data-clear ${s.size ? '' : 'disabled'}>Clear</button></div>`;
 }
 
@@ -218,7 +236,7 @@ function rowMenu(r) {
   return `<div class="menu-body">
     ${actionItem({ act: 'download', label: done ? 'Fetch missing files' : 'Download now', icon: I.dl })}
     ${actionItem({ act: 'source', label: 'Download from…', icon: I.dl, sub: 'source' })}
-    ${actionItem({ act: 'redownload', label: 'Download again (overwrite)', icon: I.reset })}
+    ${actionItem({ act: 'redownload', label: 'Download again', icon: I.reset })}
     ${actionItem({ act: 'resync', label: 'Re-sync (check edits)', icon: I.sync })}
     <div class="sep"></div>
     ${actionItem({ act: 'open', label: 'Open folder', icon: I.folder })}
@@ -231,25 +249,27 @@ function rowMenu(r) {
 function sourceSub(r) {
   const d = S.detail;
   const pWhy = r.p === 'meta' ? 'Pawchive has metadata only' : r.p === 'none' ? 'Not on Pawchive' : r.p === 'gone' ? 'Gone from Pawchive' : '';
-  const fWhy = d.service !== 'fanbox' ? 'Not a Fanbox creator'
-    : r.f === 'locked' ? (d.plan_fee == null ? `Needs ¥${r.fee} (signed out)` : `Needs ¥${r.fee}; your plan is ¥${d.plan_fee}`)
-    : r.f === 'gone' ? 'Deleted on Fanbox' : r.f === 'unknown' ? 'Fanbox not checked yet' : '';
+  const site = siteName();
+  const fWhy = !hasSite(d) ? 'Not a Fanbox or Patreon creator'
+    : r.f === 'locked' ? (d.service === 'patreon' ? `Needs a tier you do not have${d.session === 'valid' ? '' : ' (signed out)'}`
+      : d.plan_fee == null ? `Needs ¥${r.fee} (signed out)` : `Needs ¥${r.fee}; your plan is ¥${d.plan_fee}`)
+    : r.f === 'gone' ? `Deleted on ${site}` : r.f === 'unknown' ? `${site} not checked yet` : '';
   return `<div class="menu-body">
     <button type="button" class="mi two" role="menuitem" data-act="from-pawchive" ${pWhy ? 'aria-disabled="true"' : ''}><span class="ico"><span class="sc p ${r.p} sc-sm">P</span></span><span class="lbl"><span><span class="t">Pawchive</span><span class="why">${pWhy || 'Paced at 1 request/s'}</span></span></span><span class="tail"></span></button>
-    <button type="button" class="mi two" role="menuitem" data-act="from-fanbox" ${fWhy ? 'aria-disabled="true"' : ''}><span class="ico"><span class="sc f ${r.f === 'na' ? 'unknown' : r.f} sc-sm">F</span></span><span class="lbl"><span><span class="t">Fanbox</span><span class="why">${fWhy || 'Uses your Fanbox session'}</span></span></span><span class="tail"></span></button>
+    <button type="button" class="mi two" role="menuitem" data-act="from-fanbox" ${fWhy ? 'aria-disabled="true"' : ''}><span class="ico"><span class="sc f ${r.f === 'na' ? 'unknown' : r.f} sc-sm">${siteLetter()}</span></span><span class="lbl"><span><span class="t">${site}</span><span class="why">${fWhy || `Uses your ${site} session`}</span></span></span><span class="tail"></span></button>
   </div>`;
 }
 
 function creatorMenu() {
   const d = S.detail;
   const pref = d.config.source_preference || 'inherit';
-  const fanbox = d.service === 'fanbox';
+  const fanbox = hasSite(d);
   return `<div class="menu-body">
     ${actionItem({ act: 'deep', label: 'Deep sync (re-read bodies)', icon: I.sync })}
     ${actionItem({ act: 'sync-p', label: 'Sync Pawchive only', icon: I.sync })}
-    ${fanbox ? actionItem({ act: 'sync-f', label: 'Sync Fanbox only', icon: I.sync }) : ''}
+    ${fanbox ? actionItem({ act: 'sync-f', label: `Sync ${siteName()} only`, icon: I.sync }) : ''}
     <div class="sep"></div>
-    ${fanbox ? actionItem({ act: 'adopt', label: 'Adopt a folder…', icon: I.folder }) : ''}
+    ${d.service === 'fanbox' ? actionItem({ act: 'adopt', label: 'Adopt a folder…', icon: I.folder }) : ''}
     ${actionItem({ act: 'relayout', label: 'Rename folders…', icon: I.move })}
     ${actionItem({ act: 'edit', label: 'Alias and group…', icon: I.edit })}
     <div class="sep"></div>
@@ -258,7 +278,7 @@ function creatorMenu() {
     <div class="menu-label"><span>Download source</span></div>
     ${radioItem({ key: 'inherit', label: 'Use the default', on: pref === 'inherit', attr: 'data-act="pref" data-pref' })}
     ${radioItem({ key: 'pawchive-first', label: 'Pawchive first', on: pref === 'pawchive-first', attr: 'data-act="pref" data-pref' })}
-    ${radioItem({ key: 'fanbox-first', label: 'Fanbox first', on: pref === 'fanbox-first', attr: 'data-act="pref" data-pref' })}
+    ${radioItem({ key: 'fanbox-first', label: `${siteName()} first`, on: pref === 'fanbox-first', attr: 'data-act="pref" data-pref' })}
     <div class="sep"></div>
     ${actionItem({ act: 'ignore', label: d.ignore ? 'Stop ignoring' : 'Ignore this creator', icon: I.eye })}
     ${actionItem({ act: 'complete', label: d.completed ? 'Mark as ongoing' : 'Mark as completed', icon: I.check })}
@@ -282,7 +302,8 @@ function detailHTML(r) {
   const d = S.details.get(r.id);
   if (!d) return '<div class="detail"><div class="loading">Loading…</div></div>';
   const u = at(d.published), j = at(d.published, 540), l = at(d.published, localOffset());
-  const fanbox = S.detail.service === 'fanbox';
+  const fanbox = hasSite(S.detail);
+  const site = siteName();
   const obs = d.obs || {};
   const so = (src, label) => {
     const o = obs[src];
@@ -296,16 +317,18 @@ function detailHTML(r) {
   const st = (f) => {
     if (f.state === 'done') return '<span class="chip k-done">Done</span>';
     if (f.state === 'failed') return '<span class="chip k-failed">Failed</span>';
-    if (f.deferred_until) return `<span class="chip k-wait">Retry ${f.deferred_until.slice(5, 10)}</span>`;
     return '<span class="chip k-pending">Pending</span>';
   };
   const notes = [];
-  if (d.mismatch && obs.pawchive && obs.fanbox) notes.push(`The two sources disagree on the publish time (Pawchive ${obs.pawchive.published}, Fanbox ${obs.fanbox.published} UTC); Fanbox's is used.`);
+  if (d.mismatch && obs.pawchive && obs.fanbox) notes.push(`The two sources disagree on the publish time (Pawchive ${obs.pawchive.published}, ${site} ${obs.fanbox.published} UTC); ${site}'s is used.`);
   if (r.p === 'gone') notes.push(`Pawchive listed this post until ${(obs.pawchive?.gone_since || '').slice(0, 10)}.`);
-  if (r.f === 'gone') notes.push('Deleted on Fanbox.' + (r.head.k === 'done' ? ' The local copy may be the only one left.' : ''));
-  if (d.stale) notes.push(`Fanbox updated this post (${(d.edited || '').slice(0, 10)}) after it was downloaded. The file count is unchanged; use ⋯ → Download again if needed.`);
+  if (r.f === 'gone') notes.push(`Deleted on ${site}.` + (r.head.k === 'done' ? ' The local copy may be the only one left.' : ''));
+  if (d.stale) notes.push(`${site} updated this post (${(d.edited || '').slice(0, 10)}) after it was downloaded. The file count is unchanged; use ⋯ → Download again if needed.`);
   if (r.origin === 'adopted') notes.push(r.total ? 'This folder was adopted from the extension\'s layout.' : 'Adopted without a file list from either source, so its files are unchecked.');
   if (r.origin === 'manual') notes.push('Marked as done by hand.');
+  if (r.head.k === 'done' && r.cover && r.cover !== 'done') notes.push('The cover is missing; it does not hold the post open.');
+  if (r.head.k === 'done' && r.text === false) notes.push('The text (content.txt) has not been saved.');
+  if (r.links) notes.push(`The text has ${r.links} cloud-storage link${r.links === 1 ? '' : 's'}${r.links_new ? `, ${r.links_new} new` : ''}; they are listed under Links.`);
   const files = d.files || [];
   const roles = { cover: 'Cover', image: 'Image', file: 'File' };
   return `<div class="detail">
@@ -313,17 +336,17 @@ function detailHTML(r) {
       <a class="cover-big" href="${thumbURL(r.id)}" target="_blank" rel="noreferrer" title="Open the cover"><img class="thumb big" src="${thumbURL(r.id)}" alt="Cover" loading="lazy" decoding="async"></a>
       <div class="facts">
         <div class="fact"><div class="h">Published</div><div class="v mono">${u ? `${u.date} ${u.time}` : '—'} UTC</div><div class="v2 mono">JST ${j ? `${j.date} ${j.time}` : '—'} · local ${l ? l.date : '—'}</div></div>
-        <div class="fact"><div class="h">Fee / plan</div><div class="v">${r.fee ? '¥' + r.fee : 'Free'}${fanbox && r.fee ? ` · ${{ yes: 'open to you', no: 'locked', unknown: 'signed out' }[r.sub] || ''}` : ''}</div><div class="v2">${fanbox ? (S.detail.plan_fee == null ? 'Not signed in to Fanbox' : S.detail.plan_fee ? `Your plan: ¥${S.detail.plan_fee}` : r.sub === 'yes' ? 'No current plan; still open (paid month not over)' : 'You do not support this creator') : '—'}</div></div>
+        <div class="fact"><div class="h">Fee / plan</div><div class="v">${r.fee ? money(r.fee) : 'Free'}${fanbox && r.fee ? ` · ${{ yes: 'open to you', no: 'locked', unknown: 'signed out' }[r.sub] || ''}` : ''}</div><div class="v2">${S.detail.service === 'patreon' ? (r.sub === 'yes' ? 'Patreon opens it to you' : r.sub === 'no' ? 'Not in your tiers' : '—') : fanbox ? (S.detail.plan_fee == null ? 'Not signed in to Fanbox' : S.detail.plan_fee ? `Your plan: ¥${S.detail.plan_fee}` : r.sub === 'yes' ? 'No current plan; still open (paid month not over)' : 'You do not support this creator') : '—'}</div></div>
         <div class="fact"><div class="h">Selection</div><div class="v">${r.filtered ? 'Filtered out' : 'Included'}</div><div class="v2">${esc(r.filtered || 'No filter rule matches')}</div></div>
         <div class="fact"><div class="h">Folder · ${d.dir_exists ? 'exists' : 'not created'}</div><div class="v mono clamp2 small" title="${esc(d.dir)}">${esc(d.dir.split(/[\\/]/).pop())}</div><div class="v2">${d.done_at ? `Done ${d.done_at.slice(0, 10)}` : 'Not done'}</div></div>
       </div>
     </div>
-    <div class="facts two">${so('pawchive', 'Pawchive')}${fanbox ? so('fanbox', 'Fanbox') : '<div class="fact"><div class="h">Fanbox</div><div class="v">Not applicable</div><div class="v2">—</div></div>'}</div>
+    <div class="facts two">${so('pawchive', 'Pawchive')}${fanbox ? so('fanbox', site) : '<div class="fact"><div class="h">Own site</div><div class="v">Not applicable</div><div class="v2">—</div></div>'}</div>
     ${notes.map((n) => `<div class="note">${esc(n)}</div>`).join('')}
     ${files.length ? `<div class="ftable"><table><colgroup><col style="width:14%"><col style="width:8%"><col><col style="width:62px"><col style="width:96px"><col style="width:84px"><col style="width:132px"><col style="width:84px"></colgroup>
       <thead><tr><th>Local name</th><th>Role</th><th>Match key</th><th>Source</th><th>Status</th><th>Got from</th><th>Size</th><th>Check</th></tr></thead><tbody>
-      ${files.map((f) => `<tr><td class="mono clip" title="${esc(f.local_name)}">${esc(f.local_name)}</td><td>${roles[f.role] || f.role}</td><td class="key clip" title="${esc(f.key)}">${esc(f.key)}</td><td>${fileCell(f, r)}</td><td>${st(f)}</td><td>${f.via ? viaHTML([f.via]) : '<span class="via">—</span>'}</td><td class="num muted">${dims(f)}</td><td>${vt(f)}</td></tr>${f.error ? `<tr class="err-row"><td colspan="8" class="err">${esc(f.error)}</td></tr>` : ''}`).join('')}
-    </tbody></table></div>` : `<div class="note">${r.f === 'locked' && r.p !== 'full' ? 'File list unknown: not subscribed on Fanbox, and Pawchive has no list for this post.' : 'This post has no files.'}</div>`}
+      ${files.map((f) => `<tr><td class="mono clip" title="${esc(f.local_name)}">${esc(f.local_name)}</td><td>${roles[f.role] || f.role}</td><td class="key clip" title="${esc(f.key)}">${esc(f.key)}</td><td>${fileCell(f, r)}</td><td>${st(f)}</td><td>${f.via ? viaHTML([f.via]) : '<span class="via">—</span>'}</td><td class="num muted" title="${dims(f)}">${dims(f)}</td><td>${vt(f)}</td></tr>${f.error ? `<tr class="err-row"><td colspan="8" class="err">${esc(f.error)}</td></tr>` : ''}`).join('')}
+    </tbody></table></div>` : `<div class="note">${r.f === 'locked' && r.p !== 'full' ? `File list unknown: not subscribed on ${site}, and Pawchive has no list for this post.` : 'This post has no files.'}</div>`}
     ${d.content ? `<details class="content"><summary>Text</summary><div class="content-box">${esc(d.content.replace(/<[^>]+>/g, ' '))}</div></details>` : ''}
     <div class="detail-actions">
       <button class="btn sm" type="button" data-ract="download" data-id="${r.id}">${I.dl}${r.head.k === 'done' ? 'Fetch missing' : 'Download'}</button>
@@ -338,7 +361,7 @@ function rowHTML(r) {
   const pick = S.picked.has(r.id);
   const h = r.head;
   const u = at(r.published);
-  const fanbox = S.detail.service === 'fanbox';
+  const fanbox = hasSite(S.detail);
   return `<div class="row ${open ? 'open' : ''} ${pick ? 'sel' : ''}" data-id="${r.id}">
     <div class="row-main" data-toggle="${r.id}" aria-expanded="${open}">
       <button type="button" class="rowcb c-cb" data-pick="${r.id}" aria-label="Select"><span class="cb ${pick ? 'on' : ''}"></span></button>
@@ -348,14 +371,14 @@ function rowHTML(r) {
       <span class="c-src">${cells(r.p, r.f)}</span>
       <span class="c-sub">${fanbox ? planCell(r) : '<span class="sub free">—</span>'}</span>
       <span class="c-stat stat"><span class="chip k-${h.k}">${esc(h.t)}</span>${h.progress != null ? `<span class="mini-bar"><i style="width:${(h.progress * 100).toFixed(0)}%"></i></span>` : ''}${h.why ? `<span class="why" title="${esc(h.why)}">${esc(h.why)}</span>` : ''}</span>
-      <span class="c-via">${viaHTML(r.via)}</span>
+      <span class="c-via">${viaHTML(r.via, r.total)}</span>
       <span class="c-kb"><div class="dd"><button type="button" class="kebab" data-rmenu="${r.id}" aria-label="Post actions" aria-haspopup="true" aria-expanded="false">${I.dots}</button></div></span>
     </div>
     ${open ? detailHTML(r) : ''}
   </div>`;
 }
 
-const dims = () => ['cov', 'st', ...(S.detail.service === 'fanbox' ? ['sub'] : []), 'via'];
+const dims = () => ['cov', 'st', ...(hasSite(S.detail) ? ['sub'] : []), 'via'];
 
 // The toolbar is drawn once per load; everything below it is redrawn on each change, so an
 // open dropdown and the search box keep their place while the list updates underneath.
@@ -376,6 +399,7 @@ function render() {
     </div>
     <div data-body></div>`;
   S.el.classList.toggle('with-thumbs', showThumbs && layout === 'list');
+  S.el.classList.toggle('site-patreon', S.detail.service === 'patreon');
   S.el.querySelector('#psearch').addEventListener('input', (e) => {
     S.q = e.target.value;
     S.limit = PAGE;
@@ -395,13 +419,13 @@ function renderBody() {
   S.el.querySelector('[data-sortmenu] .val').textContent = SORTS[sort][0];
   const list = visible().sort(SORTS[sort][2]);
   S.list = list;
-  const fanbox = S.detail.service === 'fanbox';
+  const fanbox = hasSite(S.detail);
   const chips = [];
   for (const dim of Object.keys(FILTERS)) {
     for (const g of FILTERS[dim].groups) {
       for (const [v, l] of g.opts) {
         const k = okey(g, v);
-        if (sel[dim].has(k)) chips.push(`<span class="fchip"><b>${g.label || FILTERS[dim].label}</b>${l}<button type="button" aria-label="Remove ${l}" data-unchip="${dim}|${k}">${I.x}</button></span>`);
+        if (sel[dim].has(k)) chips.push(`<span class="fchip"><b>${sited(g.label || FILTERS[dim].label)}</b>${sited(l)}<button type="button" aria-label="Remove ${l}" data-unchip="${dim}|${k}">${I.x}</button></span>`);
       }
     }
   }
@@ -420,7 +444,7 @@ function renderBody() {
     ${list.length > S.limit ? `<div class="more">Showing ${S.limit.toLocaleString()} of ${list.length.toLocaleString()}<button class="btn sm" type="button" data-more>Show ${Math.min(PAGE, list.length - S.limit)} more</button><button class="linkbtn" type="button" data-all>Show all</button></div>` : ''}
     ${S.picked.size ? `<div class="bulk"><span><b class="num">${S.picked.size.toLocaleString()}</b> selected</span><span class="spacer"></span>
       <button class="btn" type="button" data-bulk="download">${I.dl}Download</button>
-      ${fanbox ? `<button class="btn" type="button" data-bulk="from-fanbox">${I.dl}From Fanbox</button>` : ''}
+      ${fanbox ? `<button class="btn" type="button" data-bulk="from-fanbox">${I.dl}From ${siteName()}</button>` : ''}
       <button class="btn" type="button" data-bulk="done">${I.check}Mark done</button>
       <button class="btn" type="button" data-bulk="undone">${I.reset}Mark not done</button>
       <button class="btn" type="button" data-unpick>Deselect</button></div>` : ''}`;
@@ -433,7 +457,7 @@ function cardHTML(r) {
   const h = r.head;
   const u = at(r.published);
   const pick = S.picked.has(r.id);
-  const fanbox = S.detail.service === 'fanbox';
+  const fanbox = hasSite(S.detail);
   return `<article class="card ${pick ? 'sel' : ''} ${S.drawer === r.id ? 'open' : ''}" data-card="${r.id}">
     <div class="card-cover">
       <img class="thumb card-img" src="${thumbURL(r.id)}" alt="" loading="lazy" decoding="async">
@@ -549,7 +573,7 @@ async function rowAction(act, r) {
   if (act === 'from-pawchive') return postAction([r.id], 'download', 'pawchive');
   if (act === 'from-fanbox') return postAction([r.id], 'download', 'fanbox');
   if (act === 'redownload') {
-    const v = await dialog({ title: 'Download this post again?', confirm: 'Download again', body: 'Every file is fetched again and overwrites the local copy.' });
+    const v = await dialog({ title: 'Download this post again?', confirm: 'Download again', body: 'Every file is fetched again. Files that came back different replace the local ones; under "Keep both" (Settings → Downloads) the folder as it was is copied aside first.' });
     if (v) return postAction([r.id], 'redownload');
     return;
   }
@@ -711,7 +735,7 @@ export async function mountCreator(el, cid, onChange) {
 
 export function unmountCreator() {
   S?.abort.abort();
-  S?.el.classList.remove('with-thumbs');
+  S?.el.classList.remove('with-thumbs', 'site-patreon');
   S = null;
   renderDrawer();
 }

@@ -20,6 +20,16 @@ ENV_PREFIX = "PAWCHIVE_"
 DEFAULT_PORT = 18060
 
 SOURCE_PREFERENCES = ("pawchive-first", "fanbox-first")
+UPDATE_POLICIES = ("keep", "overwrite")
+
+# Cloud storage creators share files through.
+LINK_DOMAINS = (
+    "drive.google.com", "mega.nz", "mega.io", "dropbox.com", "onedrive.live.com", "1drv.ms",
+    "mediafire.com", "box.com", "wetransfer.com", "anonfiles.com", "pixeldrain.com",
+    "gofile.io", "bayfiles.com", "uploadhaven.com", "pan.baidu.com", "cloud.189.cn",
+    "weiyun.com", "aliyundrive.com", "alipan.com", "jianguoyun.com", "115.com", "lanzou.com",
+    "lanzoux.com", "lanzoui.com", "gigafile.nu",
+)  # fmt: skip
 
 
 class BadSetting(ValueError):
@@ -53,12 +63,23 @@ class Settings:
     )
     fanbox_requests_per_second: float = 0.5
     fanbox_max_concurrent_downloads: int = 2
-    # The browser that opens for the Fanbox sign-in; empty finds Chrome, then Edge.
+    # Patreon, for Patreon creators: the same caps as Fanbox, for the same reason.
+    patreon_api: str = "https://www.patreon.com/api"
+    patreon_requests_per_second: float = 0.5
+    patreon_max_concurrent_downloads: int = 2
+    # Patreon's own videos are HLS streams; ffmpeg joins them into an .mp4. Empty finds it
+    # on PATH.
+    ffmpeg_path: str = ""
+    # The browser that opens for the Fanbox or Patreon sign-in; empty finds Chrome, then Edge.
     browser_path: str = ""
 
     # Which source a missing file is fetched from first; a creator may override it. Fanbox
     # serves the creator's own originals.
     source_preference: str = "fanbox-first"
+    # When a file already on disk comes back with other bytes (the post was updated):
+    # `keep` copies the post folder aside first, named "<folder> [old <date>]", then
+    # replaces the file; `overwrite` just replaces it.
+    update_policy: str = "keep"
 
     # Retries, shared shape for both sources (see net/policy.py).
     request_timeout: int = 30
@@ -71,11 +92,6 @@ class Settings:
     not_found_max_retries: int = 3
     status_policies: dict | str = field(default_factory=dict)
     fanbox_status_policies: dict | str = field(default_factory=dict)
-
-    # Pawchive materialises files lazily: a 404 is deferred, never final.
-    not_found_retry_days: float = 1.0
-    not_found_retry_backoff: float = 2.0
-    not_found_retry_cap_days: float = 30.0
 
     max_concurrent_creators: int = 2
     max_concurrent_files: int = 2
@@ -92,6 +108,9 @@ class Settings:
     )
 
     global_filter: dict = field(default_factory=dict)
+    # Links in a post's text worth keeping: a host or URL containing one of these. v1's
+    # `links_filter.allowed_domains`.
+    link_domains: list[str] = field(default_factory=lambda: list(LINK_DOMAINS))
     global_timer: dict | None = None
     # Timers (global and per creator) fire only when this is on. Off by default so an
     # imported v1 timer cannot start a second scheduled run next to v1's own.
@@ -111,6 +130,15 @@ CREATOR_OVERRIDABLE = (
     "rename_images_only",
     "source_preference",
 )
+
+
+CHOICES = {"source_preference": SOURCE_PREFERENCES, "update_policy": UPDATE_POLICIES}
+
+
+def _check_choices(values: dict[str, Any]) -> None:
+    for key, allowed in CHOICES.items():
+        if key in values and values[key] not in allowed:
+            raise BadSetting(f"{key} must be one of {', '.join(allowed)}, got {values[key]!r}")
 
 
 def _cast(name: str, value: str, declared: Any) -> Any:
@@ -157,11 +185,7 @@ class SettingsStore:
         defaults = Settings()
         for key, value in self.env_overrides().items():
             setattr(settings, key, _cast(key, value, getattr(defaults, key)))
-        if settings.source_preference not in SOURCE_PREFERENCES:
-            raise BadSetting(
-                f"source_preference must be one of {', '.join(SOURCE_PREFERENCES)}, "
-                f"got {settings.source_preference!r}"
-            )
+        _check_choices(settings.__dict__)
         return settings
 
     def save(self, changes: dict[str, Any]) -> Settings:
@@ -171,6 +195,7 @@ class SettingsStore:
         unknown = set(changes) - names
         if unknown:
             raise BadSetting(f"unknown settings: {', '.join(sorted(unknown))}")
+        _check_choices(changes)
         data = read_json(self.path, {}) or {}
         data.update(changes)
         write_json(self.path, data)
@@ -181,26 +206,42 @@ class SettingsStore:
 
     # ---- secrets ----
 
+    def _secret(self, env: str, key: str) -> str:
+        value = os.environ.get(env, "").strip()
+        if value:
+            return value
+        return str((read_json(self.secrets_path, {}) or {}).get(key) or "").strip()
+
+    def _set_secret(self, key: str, cookie: str, value: str):
+        data = read_json(self.secrets_path, {}) or {}
+        value = value.strip()
+        # Accept a pasted `NAME=…` cookie pair as well as the bare value.
+        if value.upper().startswith(cookie.upper() + "="):
+            value = value.split("=", 1)[1].split(";", 1)[0].strip()
+        if value:
+            data[key] = value
+        else:
+            data.pop(key, None)
+        write_json(self.secrets_path, data)
+
     def fanbox_sessid(self) -> str:
-        env = os.environ.get("FANBOX_SESSID", "").strip()
-        if env:
-            return env
-        return str((read_json(self.secrets_path, {}) or {}).get("fanbox_sessid") or "").strip()
+        return self._secret("FANBOX_SESSID", "fanbox_sessid")
 
     def sessid_from_env(self) -> bool:
         return bool(os.environ.get("FANBOX_SESSID", "").strip())
 
     def set_fanbox_sessid(self, value: str):
-        data = read_json(self.secrets_path, {}) or {}
-        value = value.strip()
-        # Accept a pasted `FANBOXSESSID=…` cookie pair as well as the bare value.
-        if value.upper().startswith("FANBOXSESSID="):
-            value = value.split("=", 1)[1].split(";", 1)[0].strip()
-        if value:
-            data["fanbox_sessid"] = value
-        else:
-            data.pop("fanbox_sessid", None)
-        write_json(self.secrets_path, data)
+        self._set_secret("fanbox_sessid", "FANBOXSESSID", value)
+
+    def patreon_session(self) -> str:
+        """Patreon's `session_id` cookie."""
+        return self._secret("PATREON_SESSION_ID", "patreon_session_id")
+
+    def patreon_session_from_env(self) -> bool:
+        return bool(os.environ.get("PATREON_SESSION_ID", "").strip())
+
+    def set_patreon_session(self, value: str):
+        self._set_secret("patreon_session_id", "session_id", value)
 
 
 def creator_value(settings: Settings, creator_config: dict, key: str) -> Any:

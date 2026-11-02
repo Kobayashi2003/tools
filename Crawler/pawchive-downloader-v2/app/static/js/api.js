@@ -121,9 +121,13 @@ export function ago(utc) {
   return utc.slice(0, 10);
 }
 
+// For badges and narrow columns: 1,234 · 12K · 1.2M. The exact number goes in a title.
+const COMPACT = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+export const fmtCount = (n) => (n < 10000 ? n.toLocaleString() : COMPACT.format(n));
+
 export const fmtSize = (n) => {
   if (n == null) return '—';
-  const u = ['B', 'KB', 'MB', 'GB'];
+  const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   let i = 0;
   let v = n;
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }

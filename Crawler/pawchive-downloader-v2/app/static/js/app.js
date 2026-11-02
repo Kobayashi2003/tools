@@ -1,7 +1,8 @@
-import { api, esc, isActive, prefs, toast } from './api.js';
+import { api, esc, fmtCount, isActive, prefs, toast } from './api.js';
 import { mountAdd } from './add.js';
 import { I } from './icons.js';
 import { mountJobs } from './jobs.js';
+import { mountLinks } from './linkview.js';
 import { connect, on, patchRows } from './live.js';
 import { closeMenu } from './menu.js';
 import { mountMigrate } from './migrate.js';
@@ -31,6 +32,11 @@ async function loadCreators() {
     return;
   }
   renderTree();
+  const newLinks = creators.reduce((n, c) => n + (c.links_new || 0), 0);
+  const badge = document.getElementById('links-n');
+  badge.hidden = !newLinks;
+  badge.textContent = fmtCount(newLinks);
+  badge.title = `${newLinks.toLocaleString()} new links`;
 }
 
 function renderTree() {
@@ -48,20 +54,39 @@ function renderTree() {
     node.items.push(c);
   }
   const count = (n) => n.items.length + [...n.kids.values()].reduce((s, k) => s + count(k), 0);
+  // Posts waiting to download anywhere inside a group, so a folded group still says so,
+  // and how many of them failed last time.
+  const sum = (n, key) => n.items.reduce((s, c) => s + (c.ignore || c.completed ? 0 : c[key]), 0)
+    + [...n.kids.values()].reduce((s, k) => s + sum(k, key), 0);
+  // The "to download" number has its own colour and arrow; the plain grey number beside a
+  // group is how many creators it holds. Red, with a mark, once downloads failed there.
+  // Failed posts are still undone, so the arrow counts only the others: the two numbers
+  // add up to the posts waiting, never count one post twice.
+  const dl = (fetchable, failed = 0, links = 0) => {
+    const n = Math.max(0, fetchable - failed);
+    if (!n && !failed && !links) return '<span></span>';
+    const title = [
+      n && `${n.toLocaleString()} posts to download`,
+      failed && `${failed.toLocaleString()} failed (Pawchive 404s are tried again only by downloading the post by hand)`,
+      links && `${links.toLocaleString()} new links`,
+    ].filter(Boolean).join(', ');
+    return `<span class="dl" title="${title}">${n ? `<span class="dl-n">${I.dl}${fmtCount(n)}</span>` : ''}${failed ? `<span class="dl-n bad">${I.x}${fmtCount(failed)}</span>` : ''}${links ? `<span class="dl-n ln">${I.link}${fmtCount(links)}</span>` : ''}</span>`;
+  };
+  const dlOf = (n) => dl(sum(n, 'fetchable'), sum(n, 'failed'), sum(n, 'links_new'));
   const item = (c) => {
     const busy = moving.has(c.id);
     return `<a class="cr ${c.ignore ? 'ignored' : ''} ${busy ? 'moving' : ''}" href="#/c/${encodeURIComponent(c.id)}" draggable="${!busy}" data-cid="${esc(c.id)}" ${c.id === current ? 'aria-current="true"' : ''} title="${esc(c.alias || c.name)} · ${esc(c.id)}${c.ignore ? ' · ignored' : ''}${busy ? ' · moving its folder' : ' · drag onto a group to move it'}">
-      <span class="dots"><i class="dp-${c.p_dot}"></i><i class="df-${c.f_dot}"></i></span><span class="nm">${esc(c.alias || c.name)}</span>
-      <span class="cnt" title="${c.ignore ? '' : 'Posts to download'}">${busy ? '<span class="spin"></span>' : c.ignore ? 'off' : c.completed ? 'done' : c.fetchable || ''}</span></a>`;
+      <span class="dots ${c.service === 'patreon' ? 'site-patreon' : ''}"><i class="dp-${c.p_dot}"></i><i class="df-${c.f_dot}"></i></span><span class="nm">${esc(c.alias || c.name)}</span>
+      <span class="cnt">${busy ? '<span class="spin"></span>' : c.ignore ? 'off' : c.completed ? 'done' : dl(c.fetchable, c.failed, c.links_new)}</span></a>`;
   };
   const walk = (node, path) => [...node.kids.entries()].map(([name, kid]) => {
     const key = path ? `${path}/${name}` : name;
     const open = q || !collapsed.has(key);
-    return `<details class="grp" data-key="${esc(key)}" ${open ? 'open' : ''}><summary draggable="true" title="${esc(key)} · drag onto another group to move it"><span>${esc(name)}</span><span class="num">${count(kid)}</span><button type="button" class="grp-edit" data-gedit aria-label="Rename or move ${esc(name)}" title="Rename or move">${I.edit}</button></summary>
+    return `<details class="grp" data-key="${esc(key)}" ${open ? 'open' : ''}><summary draggable="true" title="${esc(key)} · drag onto another group to move it"><span>${esc(name)}</span>${dlOf(kid)}<span class="num" title="${count(kid)} creators">${count(kid)}</span><button type="button" class="grp-edit" data-gedit aria-label="Rename or move ${esc(name)}" title="Rename or move">${I.edit}</button></summary>
       ${kid.items.map(item).join('')}${walk(kid, key)}</details>`;
   }).join('');
   const ungrouped = root.items.length
-    ? `<details class="grp" data-key="__root" ${q || !collapsed.has('__root') ? 'open' : ''}><summary><span>Ungrouped</span><span class="num">${root.items.length}</span></summary>${root.items.map(item).join('')}</details>`
+    ? `<details class="grp" data-key="__root" ${q || !collapsed.has('__root') ? 'open' : ''}><summary><span>Ungrouped</span>${dlOf({ items: root.items, kids: new Map() })}<span class="num" title="${root.items.length} creators">${root.items.length}</span><span></span></summary>${root.items.map(item).join('')}</details>`
     : '';
   tree.innerHTML = list.length
     ? ungrouped + walk(root, '')
@@ -151,6 +176,7 @@ async function show() {
     if (cid) { setNav('creators'); await mountCreator(main, cid, loadCreators); }
     else if (parts[0] === 'add') { setNav('creators'); mountAdd(main, params, loadCreators); }
     else if (parts[0] === 'jobs') { setNav('jobs'); mountJobs(main); }
+    else if (parts[0] === 'links') { setNav('links'); await mountLinks(main, params); }
     else if (parts[0] === 'settings') { setNav('settings'); await mountSettings(main); }
     else if (parts[0] === 'migrate' && parts[1]) { setNav('creators'); await mountMigrate(main, decodeURIComponent(parts[1]), params); }
     else { setNav('creators'); await mountHome(main, creators); }

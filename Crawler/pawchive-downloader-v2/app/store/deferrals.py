@@ -1,58 +1,41 @@
-"""Files a host does not have *yet*, and when it is worth asking again.
+"""Files a host answered 404 for.
 
-Pawchive materialises files onto its CDN lazily; v1's logs show URLs that 404ed on
-six or seven separate days serving real bytes weeks later. So a 404 is never final:
-each miss pushes the next attempt out (1, 2, 4… days, capped), and the entry is
-dropped the moment the file arrives. Keyed by content path, so a file shared
-between two posts is one entry.
+A 404 is final for automatic runs: such a file is asked for again only when you download
+its post by hand, and the entry is dropped the moment the file arrives. Keyed by content
+path, so a file shared between two posts is one entry. (`next` is no longer read; the
+column stays for databases that have it.)
 """
-
-from datetime import datetime, timedelta
 
 from ..domain.timefmt import now_utc
 from .db import Database
 
 
 class Deferrals:
-    def __init__(self, db: Database, first_days: float, backoff: float, cap_days: float):
+    def __init__(self, db: Database):
         self.db = db
-        self.first = max(0.0, float(first_days or 0))
-        self.backoff = max(1.0, float(backoff or 1.0))
-        self.cap = max(self.first, float(cap_days or 0))
 
-    @property
-    def enabled(self) -> bool:
-        return self.first > 0
+    def missing(self, source: str, key: str) -> bool:
+        return bool(key) and bool(
+            self.db.one("SELECT 1 FROM deferrals WHERE source=? AND key=?", (source, key))
+        )
 
-    def wait_days(self, misses: int) -> float:
-        return min(self.first * (self.backoff ** max(0, misses - 1)), self.cap)
-
-    def due(self, source: str, key: str) -> bool:
-        """An unknown file is always due: the ledger only delays, it never gates a first try."""
-        if not self.enabled or not key:
-            return True
-        row = self.db.one("SELECT next FROM deferrals WHERE source=? AND key=?", (source, key))
-        return row is None or row["next"] <= now_utc()
-
-    def miss(self, source: str, key: str, name: str = "") -> dict:
+    def miss(self, source: str, key: str, name: str = "") -> int:
+        """Record a 404; returns how many there have been."""
         now = now_utc()
         with self.db.tx() as conn:
-            row = conn.execute(
-                "SELECT misses, first_seen FROM deferrals WHERE source=? AND key=?", (source, key)
-            ).fetchone()
-            misses = (row["misses"] if row else 0) + 1
-            wait = self.wait_days(misses)
-            nxt = (datetime.fromisoformat(now) + timedelta(days=wait)).isoformat()
             conn.execute(
                 """INSERT INTO deferrals(source, key, name, misses, first_seen, last_seen, next)
-                   VALUES(?, ?, ?, ?, ?, ?, ?)
+                   VALUES(?, ?, ?, 1, ?, ?, ?)
                    ON CONFLICT(source, key) DO UPDATE SET
-                     misses=excluded.misses, last_seen=excluded.last_seen, next=excluded.next,
+                     misses=deferrals.misses + 1, last_seen=excluded.last_seen,
                      name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE deferrals.name END""",
-                (source, key, name, misses, row["first_seen"] if row else now, now, nxt),
+                (source, key, name, now, now, now),
             )
-        return {"misses": misses, "wait_days": round(wait, 3), "next": nxt}
+            row = conn.execute(
+                "SELECT misses FROM deferrals WHERE source=? AND key=?", (source, key)
+            ).fetchone()
+        return int(row["misses"])
 
     def clear(self, source: str, key: str) -> bool:
-        """Forget a file that arrived. True if it had been deferred: proof of lateness."""
+        """Forget a file that arrived. True if it had 404ed before."""
         return self.db.run("DELETE FROM deferrals WHERE source=? AND key=?", (source, key)) > 0

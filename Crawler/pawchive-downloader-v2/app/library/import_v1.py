@@ -12,8 +12,10 @@ from pathlib import Path
 from ..config import Settings
 from ..domain.match import pawchive_entries
 from ..domain.naming import creator_folder, post_folder
+from ..domain.status import has_site
 from ..domain.timefmt import now_utc, to_utc
 from ..engine.context import Context
+from ..engine.links import adopt_v1_review, refresh_links
 from ..engine.reconcile import entries_json, reconcile_creator
 from ..jsonio import read_json
 from ..store.db import dump
@@ -69,6 +71,9 @@ def import_settings(ctx: Context, root: Path) -> list[str]:
         target = _RENAMED.get(key, key)
         if target in _SAME:
             changes[target] = value
+    domains = (v1.get("links_filter") or {}).get("allowed_domains")
+    if domains:
+        changes["link_domains"] = list(domains)
     ctx.store.save(changes)
     # Machine-specific limits live in .env, as in v1; carry them over if v2 has none.
     env_src, env_dst = root / ".env", Path(__file__).resolve().parents[2] / ".env"
@@ -90,7 +95,15 @@ def import_v1(ctx: Context, root: Path, progress=lambda _m: None) -> dict:
     notes = import_settings(ctx, root)
     settings = ctx.settings
     now = now_utc()
-    stats = {"creators": 0, "posts": 0, "done_posts": 0, "files": 0, "deferrals": 0}
+    stats = {
+        "creators": 0,
+        "posts": 0,
+        "done_posts": 0,
+        "files": 0,
+        "deferrals": 0,
+        "links": 0,
+        "links_reviewed": 0,
+    }
 
     artists = _v1_artists(root)
     for n, (group, a) in enumerate(artists, 1):
@@ -159,7 +172,7 @@ def import_v1(ctx: Context, root: Path, progress=lambda _m: None) -> dict:
                         now,
                     ),
                 )
-            reconcile_creator(conn, cid, creator["service"] == "fanbox", ctx.naming(creator), now)
+            reconcile_creator(conn, cid, has_site(creator["service"]), ctx.naming(creator), now)
             for p in cache:
                 pid = str(p.get("id"))
                 failed = set(p.get("failed_files") or [])
@@ -220,9 +233,17 @@ def import_v1(ctx: Context, root: Path, progress=lambda _m: None) -> dict:
                 ),
             )
             stats["deferrals"] += 1
+
+    # The links in the imported text, with what v1 had already gone through marked done.
+    with ctx.db.tx() as conn:
+        for (cid,) in conn.execute("SELECT id FROM creators").fetchall():
+            stats["links"] += refresh_links(conn, cid, ctx.settings.link_domains, now)
+    v1 = read_json(root / "data" / "config.json", {}) or {}
+    stats["links_reviewed"] = adopt_v1_review(ctx, v1.get("links_filter") or {})
     ctx.events.log(
         "info",
         f"Imported v1: {stats['creators']} creators, {stats['posts']} posts, "
-        f"{stats['files']} files, {stats['deferrals']} deferrals; " + ", ".join(notes),
+        f"{stats['files']} files, {stats['deferrals']} deferrals, {stats['links']} links "
+        f"({stats['links_reviewed']} reviewed in v1); " + ", ".join(notes),
     )
     return {**stats, "notes": notes}

@@ -5,10 +5,10 @@ FLAC, with booklet images and multi-CD layouts.
 
 ## Run
 
-Requires Python 3.14 and Chrome, Edge or Firefox; dependencies are in `pyproject.toml`.
+Requires [uv](https://docs.astral.sh/uv/) and Chrome, Edge or Firefox; dependencies are in `pyproject.toml`.
 
 ```bash
-python main.py <album_url> [<album_url> ...] [options]
+uv run main.py <album_url> [<album_url> ...] [options]
 ```
 
 | Option | Description | Default |

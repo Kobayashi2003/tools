@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE creators(
@@ -164,20 +164,53 @@ CREATE TABLE migrations(
 CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT);
 """
 
+# Tables added after a database was first created; made on open, like ADDED_COLUMNS.
+ADDED_TABLES = """
+-- Cloud-storage links found in a post's text. `state`: new (not looked at yet), done
+-- (fetched or dealt with), skipped (not wanted), failed (a check found it dead). A link
+-- stays when the text drops it.
+CREATE TABLE IF NOT EXISTS links(
+    id INTEGER PRIMARY KEY,
+    creator_id TEXT NOT NULL,
+    post_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    host TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'new',
+    first_seen TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(creator_id, post_id, url)
+);
+CREATE INDEX IF NOT EXISTS links_by_state ON links(state, creator_id);
+"""
+
 
 # Columns added after a database was first created; added on open so it keeps working.
 ADDED_COLUMNS = {
-    "posts": {"origin": "TEXT"},
+    # `text_at`: when content.txt was written; the cover's file row plays that part for it.
+    "posts": {"origin": "TEXT", "text_at": "TEXT"},
     # Fanbox lists a cover thumbnail for every post, paid or not.
     "post_obs": {"cover_url": "TEXT"},
     # When a complete Fanbox listing was last read (an empty one when the creator has no
     # Fanbox page). Only then is a post missing from Fanbox deleted there rather than
     # unchecked. `fanbox_checked_at` is the last attempt, successful or not.
     "creators": {"fanbox_listed_at": "TEXT"},
+    # What a link check said (alive / dead / unknown, with a note), and how a fetch went.
+    "links": {
+        "check_state": "TEXT",
+        "check_note": "TEXT",
+        "checked_at": "TEXT",
+        "fetched_at": "TEXT",
+        "fetch_error": "TEXT",
+        # The key a link posted without one opens with: found in the post's text, or typed.
+        "key": "TEXT",
+        "key_source": "TEXT",
+    },
 }
 
 # Run once, right after the column is added, to fill it for an existing database.
 BACKFILL = {
+    # A done post had its text written with its files.
+    "text_at": "UPDATE posts SET text_at=done_at WHERE local_done=1 AND content IS NOT NULL",
     "fanbox_listed_at": """UPDATE creators SET fanbox_listed_at=fanbox_checked_at
         WHERE fanbox_state='none' OR (fanbox_state='ok' AND EXISTS(
             SELECT 1 FROM post_obs o WHERE o.creator_id=creators.id AND o.source='fanbox'))""",
@@ -207,6 +240,7 @@ class Database:
                 raise RuntimeError(
                     f"{path} was written by a newer version (schema {version}); update this copy."
                 )
+            db.executescript(ADDED_TABLES)
             for table, columns in ADDED_COLUMNS.items():
                 have = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
                 for name, decl in columns.items():
@@ -217,6 +251,10 @@ class Database:
             if 0 < version < 2:
                 # v1 fetched only from Pawchive, so what it got is shown as such.
                 db.execute("UPDATE files SET via='pawchive' WHERE via='v1'")
+            if 0 < version < 3:
+                # An early import wrote this note in Chinese; the UI is in English.
+                db.execute("UPDATE files SET error='failed in v1' WHERE error='v1 下载失败'")
+            if 0 < version < SCHEMA_VERSION:
                 db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager

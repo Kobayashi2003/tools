@@ -5,9 +5,11 @@ Creators: Pawchive's `user_id` is the pixiv `userId`; Fanbox's URL handle is a
 Posts: the id is the same on both sides.
 Files: Pawchive names an image `{fanboxImageId}.{ext}` and an attachment
 `{name}.{extension}`, exactly as Fanbox describes them, so the file name is the
-join key. The cover is the one exception: Pawchive calls it `cover.*`.
+join key. The cover is the one exception: each source lists at most one, so it is
+joined by role, whatever it is named.
 """
 
+import html
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -40,38 +42,50 @@ def _role_of(name: str) -> str:
     return "image" if PurePosixPath(name).suffix.lower() in IMAGE_EXTS else "file"
 
 
-def _sha_of(path: str) -> str:
+def sha_of(path: str) -> str:
+    """The content hash a Pawchive path is named after, or "" for any other path."""
     stem = PurePosixPath(path).stem
     return stem if _SHA256.match(stem) else ""
 
 
 def pawchive_entries(raw_file: Any, attachments: Any) -> list[Entry]:
-    """The cover (`file`) and attachments, one entry per distinct content path.
+    """The cover and attachments, one entry per attachment Pawchive lists.
 
-    Pawchive repeats the cover as `attachments[0]` on some posts; `path` is a
-    content hash, so the repeat is the same bytes and is dropped. An entry
+    `file` is the cover, whatever it is named (`cover.*`, or Fanbox's own id for it).
+    Pawchive repeats it as `attachments[0]` on some posts; `path` is a content hash, so
+    the repeat is the same bytes and is dropped. An image the post shows twice is two
+    attachments with one path but two names, as on Fanbox, so both are kept. An entry
     without a path is kept with an empty path so the post cannot look complete.
     """
-    raw = ([raw_file] if isinstance(raw_file, dict) and raw_file else []) + [
-        a for a in (attachments or []) if isinstance(a, dict) and a
-    ]
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
+    cover_path = None
     out: list[Entry] = []
-    for i, item in enumerate(raw):
-        path = str(item.get("path") or "")
-        if path and path in seen:
-            continue
-        seen.add(path)
-        name = str(item.get("name") or "").strip() or PurePosixPath(path).name or "attachment"
-        is_cover = i == 0 and raw_file is item and name.lower().startswith("cover.")
-        key = "cover" if is_cover else ("n:" + name if name else "h:" + _sha_of(path))
+    if isinstance(raw_file, dict) and raw_file:
+        path = str(raw_file.get("path") or "")
+        cover_path = path
         out.append(
             Entry(
-                key=key,
-                role="cover" if is_cover else _role_of(name),
+                key="cover",
+                role="cover",
+                name=str(raw_file.get("name") or "").strip() or PurePosixPath(path).name,
+                path=path,
+                sha256=sha_of(path),
+                sources={"pawchive"},
+            )
+        )
+    for item in [a for a in (attachments or []) if isinstance(a, dict) and a]:
+        path = str(item.get("path") or "")
+        name = str(item.get("name") or "").strip() or PurePosixPath(path).name or "attachment"
+        if path and (path == cover_path or (path, name) in seen):
+            continue
+        seen.add((path, name))
+        out.append(
+            Entry(
+                key="n:" + name if name else "h:" + sha_of(path),
+                role=_role_of(name),
                 name=name,
                 path=path,
-                sha256=_sha_of(path),
+                sha256=sha_of(path),
                 sources={"pawchive"},
             )
         )
@@ -176,33 +190,43 @@ def fanbox_text(post: dict) -> str:
     return "\n".join(lines)
 
 
+_BLOCK_END = re.compile(r"<br\s*/?>|</(?:p|div|h\d|li)>", re.I)
+_TAG = re.compile(r"<[^>]+>")
+
+
+def plain_text(text: str) -> str:
+    """Pawchive keeps a post's text as Fanbox's editor HTML; Fanbox's API gives plain
+    lines. Both become the same plain lines, so either source writes the same file.
+    Pawchive escapes `&` even in its plain text; blank lines around the text are dropped,
+    as the two sides disagree on them."""
+    if re.search(r"<(?:p|br|div|a|span|h\d)\b", text, re.I):
+        # `<p><br></p>` is one empty line, not two.
+        text = re.sub(r"<p>\s*<br\s*/?>\s*</p>", "\n", text, flags=re.I)
+        text = _TAG.sub("", _BLOCK_END.sub("\n", text))
+    return html.unescape(text).strip()
+
+
 def merge(pawchive: list[Entry], fanbox: list[Entry]) -> list[Entry]:
     """One list in Pawchive's order with Fanbox-only files after, so a change of source
     never renumbers files already on disk. Without Pawchive entries, Fanbox's order."""
     by_key = {e.key: e for e in fanbox}
-    cover = by_key.get("cover")
-    cover_name = PurePosixPath(cover.url).name if cover else ""
-
-    def key_of(p: Entry) -> str:
-        # A Pawchive cover sometimes keeps Fanbox's own id as its name.
-        return "cover" if cover and p.key != "cover" and p.name == cover_name else p.key
-
-    # Old posts (Pawchive imported them from kemono) name files by UUID, so names cannot
-    # join them. What is left unjoined on both sides is paired in reading order; the
-    # Pawchive key is kept, so a file already downloaded under it is not seen as new.
-    name_joined = {key_of(p) for p in pawchive} & set(by_key)
-    left_p = [i for i, p in enumerate(pawchive) if key_of(p) not in name_joined]
+    # Old posts (Pawchive imported them from kemono) name files by UUID and have no
+    # `file`, so names cannot join them. What is left unjoined on both sides is paired in
+    # reading order, Fanbox's cover first: the first of those files is the cover.
+    name_joined = {p.key for p in pawchive} & set(by_key)
+    left_p = [i for i, p in enumerate(pawchive) if p.key not in name_joined]
     left_f = [f for f in fanbox if f.key not in name_joined]
     paired = dict(zip(left_p, left_f, strict=False))
 
     out: list[Entry] = []
     seen: set[str] = set()
     for i, p in enumerate(pawchive):
-        key = key_of(p) if key_of(p) in name_joined else p.key
-        f = by_key.get(key) if key in name_joined else paired.get(i)
+        f = by_key.get(p.key) if p.key in name_joined else paired.get(i)
+        # A file paired with Fanbox's cover becomes the cover, so there is only ever one.
+        key = "cover" if f and f.key == "cover" else p.key
         merged = Entry(
             key=key,
-            role="cover" if key == "cover" or (f and f.role == "cover") else p.role,
+            role="cover" if key == "cover" else p.role,
             name=p.name,
             path=p.path,
             sha256=p.sha256,
@@ -228,7 +252,9 @@ class Ref:
     """What a pasted link or id points at."""
 
     kind: str
-    """`pawchive` (service + user_id), `fanbox_user`, `fanbox_creator` or `fanbox_post`."""
+    """`pawchive` (service + user_id), `fanbox_user`, `fanbox_creator`, `fanbox_post`,
+    `patreon_user` (user_id), `patreon_vanity` (creator_id: the name in the address) or
+    `patreon_post`."""
     service: str = "fanbox"
     user_id: str = ""
     creator_id: str = ""
@@ -236,6 +262,26 @@ class Ref:
 
 
 _RESERVED_SUBDOMAINS = {"www", "api", "downloads", "fanbox"}
+# patreon.com/<name> is a creator, except for Patreon's own pages.
+_PATREON_PATHS = {
+    "login",
+    "signup",
+    "home",
+    "posts",
+    "user",
+    "c",
+    "messages",
+    "settings",
+    "search",
+    "explore",
+    "collection",
+    "membership",
+    "notifications",
+    "api",
+    "about",
+    "policy",
+    "en",
+}
 
 
 def parse_ref(text: str) -> Ref | None:
@@ -245,6 +291,15 @@ def parse_ref(text: str) -> Ref | None:
     m = re.search(r"(?:pawchive|kemono)\.\w+/(?:api/v1/)?(\w+)/user/(\d+)(?:/post/(\d+))?", s)
     if m:
         return Ref("pawchive", service=m.group(1), user_id=m.group(2), post_id=m.group(3) or "")
+    m = re.search(r"patreon\.com/(?:\w+/)?user(?:/\w+)?\?(?:[^#]*&)?u=(\d+)", s)
+    if m:
+        return Ref("patreon_user", service="patreon", user_id=m.group(1))
+    m = re.search(r"patreon\.com/posts/(?:[^/?#]*-)?(\d+)", s)
+    if m:
+        return Ref("patreon_post", service="patreon", post_id=m.group(1))
+    m = re.search(r"patreon\.com/(?:c/)?([\w.-]+)", s)
+    if m and m.group(1).lower() not in _PATREON_PATHS:
+        return Ref("patreon_vanity", service="patreon", creator_id=m.group(1))
     m = re.search(r"fanbox\.cc/@([\w.-]+)(?:/posts/(\d+))?", s)
     if m:
         kind = "fanbox_post" if m.group(2) else "fanbox_creator"

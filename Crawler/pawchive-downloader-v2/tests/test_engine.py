@@ -1,21 +1,24 @@
+import sqlite3
 import struct
 import threading
+import time
 import zlib
 from pathlib import Path
 
 import pytest
 
-from app.domain.match import fanbox_entries, pawchive_entries
+from app.domain.match import fanbox_entries, pawchive_entries, plain_text
 from app.domain.timefmt import now_utc, to_utc
 from app.engine.context import Context
+from app.engine.download import Downloader, cover_preference, post_dir, save_dir
 from app.engine.jobs import JobRunner
 from app.engine.reconcile import entries_json, reconcile_creator
 from app.engine.sync import sync_creator
-from app.engine.views import post_rows
+from app.engine.views import creators, post_rows
 from app.library.imagesize import image_size
 from app.library.migrate import execute_adopt, norm_title, plan_adopt, resolve
 from app.sources.fanbox import FanboxListItem
-from app.sources.http import TransientError
+from app.sources.http import PermanentError, TransientError
 from app.store.db import load
 
 CID = "fanbox_1539728"
@@ -141,6 +144,267 @@ def test_reconcile_merges_sources_and_never_renames(ctx: Context):
     reconcile(ctx)
     names = {f["key"]: f["local_name"] for f in ctx.db.all("SELECT * FROM files")}
     assert names["n:aZ81.png"] == "custom.png"
+
+
+def test_a_downloaded_file_keeps_its_row_when_its_key_changes(ctx: Context):
+    """v1 saved Pawchive's main file under its own name; later Pawchive calls it
+    `cover.jpeg` (same content hash) or it turns out to be Fanbox's cover. Either way it
+    is the file already on disk, not a new one to fetch."""
+    add_creator(ctx)
+    sha = "d" * 64
+    main = {"name": "AsBi.jpeg", "path": f"/dd/ce/{sha}.jpg"}
+    obs(ctx, "1", "pawchive", "full", "2020-01-01T00:00:00", pawchive_entries(main, []))
+    reconcile(ctx)
+    # As v1's import recorded it: under the file's own name.
+    ctx.db.run("UPDATE files SET key='n:AsBi.jpeg', state='done', via='pawchive'")
+    ctx.db.run("UPDATE posts SET local_done=1, done_at='2020-01-02T00:00:00'")
+
+    renamed = {"name": "cover.jpeg", "path": f"/dd/ce/{sha}.jpeg"}
+    obs(ctx, "1", "pawchive", "full", "2020-01-01T00:00:00", pawchive_entries(renamed, []))
+    obs(
+        ctx,
+        "1",
+        "fanbox",
+        "open",
+        "2020-01-01T00:00:00",
+        fanbox_entries({"coverImageUrl": "https://pixiv.pximg.net/fanbox/public/c/AsBi.jpeg"}),
+        detail=True,
+    )
+    reconcile(ctx)
+    rows = ctx.db.all("SELECT key, state, local_name, ordinal FROM files")
+    assert [(r["key"], r["state"], r["local_name"], r["ordinal"]) for r in rows] == [
+        ("cover", "done", "0.jpeg", 0)
+    ]
+    assert post_rows(ctx, CID)[0]["head"]["k"] == "done"
+
+
+def test_the_cover_never_holds_a_post_open_and_follows_its_files(ctx: Context):
+    add_creator(ctx)
+    p_entries = pawchive_entries(
+        {"name": "cover.jpeg", "path": "/c/" + "c" * 64 + ".jpeg"},
+        [{"name": "Hk2p.png", "path": "/a/" + "a" * 64 + ".png"}],
+    )
+    obs(ctx, "1", "pawchive", "full", "2020-01-01T00:00:00", p_entries)
+    reconcile(ctx)
+    ctx.db.run("UPDATE files SET state='done', via='pawchive' WHERE role<>'cover'")
+    reconcile(ctx)
+    row = post_rows(ctx, CID)[0]
+    assert row["head"]["k"] == "done" and row["via"] == ["pawchive"] and row["cover"] == "pending"
+    main = ctx.db.all("SELECT * FROM files WHERE role<>'cover'")
+    assert cover_preference(main, "fanbox-first") == "pawchive-first"
+    assert cover_preference([], "fanbox-first") == "fanbox-first"
+
+
+def test_a_download_leaves_no_folder_when_nothing_can_be_fetched(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+):
+    add_creator(ctx)
+    entries = pawchive_entries(
+        {"name": "cover.jpeg", "path": "/c/" + "c" * 64 + ".jpeg"},
+        [{"name": "Hk2p.png", "path": "/a/" + "a" * 64 + ".png"}],
+    )
+    # Pawchive knows the files but has only metadata; Fanbox is not checked.
+    obs(ctx, "1", "pawchive", "meta", "2020-01-01T00:00:00", entries)
+    ctx.db.run("UPDATE post_obs SET content='<p>hi</p>'")
+    reconcile(ctx)
+    downloader = Downloader(ctx, threading.Event(), lambda _m: None)
+    creator = ctx.require_creator(CID)
+
+    def post():
+        row = ctx.db.one("SELECT * FROM posts WHERE post_id='1'")
+        assert row is not None
+        return row
+
+    downloader.post(creator, post())
+    folder = post_dir(ctx, creator, post())
+    assert not folder.exists()
+
+    # Once Pawchive has the files, they, the cover and the text arrive together.
+    ctx.db.run("UPDATE post_obs SET state='full'")
+    reconcile(ctx)
+
+    def fetch(creator, source: str, row, target: Path):
+        # As HttpClient.download does, the folder comes with the file.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"x" * 10)
+
+    monkeypatch.setattr(downloader, "_fetch", fetch)
+    downloader.post(creator, post())
+    assert sorted(p.name for p in folder.iterdir()) == ["0.jpeg", "1.png", "content.txt"]
+    assert (folder / "content.txt").read_text(encoding="utf-8") == "hi"
+    assert post()["local_done"] == 1 and post()["text_at"]
+
+
+def test_a_post_moved_away_by_hand_is_never_written_to(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    add_creator(ctx)
+    obs(
+        ctx,
+        "1",
+        "pawchive",
+        "full",
+        "2020-01-01T00:00:00",
+        pawchive_entries(None, [{"name": "a.png", "path": "/a/" + "a" * 64 + ".png"}]),
+    )
+    reconcile(ctx)
+    archive = tmp_path / "archive" / "post"
+    archive.mkdir(parents=True)
+    ctx.db.run("UPDATE posts SET local_dir=?", (str(archive),))
+    downloader = Downloader(ctx, threading.Event(), lambda _m: None)
+
+    def fetch(creator, source: str, row, target: Path):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"x")
+
+    monkeypatch.setattr(downloader, "_fetch", fetch)
+    creator = ctx.require_creator(CID)
+    post = ctx.db.one("SELECT * FROM posts WHERE post_id='1'")
+    assert post is not None
+    downloader.post(creator, post)
+    assert not any(archive.iterdir())
+    saved = save_dir(ctx, creator, post)
+    assert [p.read_bytes() for p in saved.iterdir()] == [b"x"]
+
+
+def test_an_updated_post_keeps_its_old_version_beside_it(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+):
+    add_creator(ctx)
+    entries = pawchive_entries(
+        {"name": "cover.jpeg", "path": "/c/" + "c" * 64 + ".jpeg"},
+        [{"name": "Hk2p.png", "path": "/a/" + "a" * 64 + ".png"}],
+    )
+    obs(ctx, "1", "pawchive", "full", "2020-01-01T00:00:00", entries)
+    reconcile(ctx)
+    downloader = Downloader(ctx, threading.Event(), lambda _m: None)
+    creator = ctx.require_creator(CID)
+    served = {"0.jpeg": b"cover", "1.png": b"old"}
+
+    def fetch(creator, source: str, row, target: Path):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(served[row["local_name"]])
+
+    def post():
+        row = ctx.db.one("SELECT * FROM posts WHERE post_id='1'")
+        assert row is not None
+        return row
+
+    monkeypatch.setattr(downloader, "_fetch", fetch)
+    downloader.post(creator, post())
+    folder = post_dir(ctx, creator, post())
+    siblings = lambda: sorted(p.name for p in folder.parent.iterdir())  # noqa: E731
+
+    # The same bytes again, or only a different cover: nothing is copied.
+    served["0.jpeg"] = b"other cover"
+    downloader.post(creator, post(), redownload=True)
+    assert siblings() == [folder.name]
+
+    served["1.png"] = b"new"
+    downloader.post(creator, post(), redownload=True)
+    old = [n for n in siblings() if n != folder.name]
+    assert len(old) == 1 and old[0].startswith(f"{folder.name} [old ")
+    assert (folder.parent / old[0] / "1.png").read_bytes() == b"old"
+    assert (folder / "1.png").read_bytes() == b"new"
+    assert not [p for p in folder.iterdir() if p.name.startswith(".")]
+
+    ctx.settings.update_policy = "overwrite"
+    served["1.png"] = b"newer"
+    downloader.post(creator, post(), redownload=True)
+    assert len(siblings()) == 2 and (folder / "1.png").read_bytes() == b"newer"
+
+
+def test_an_image_shown_twice_is_saved_once(ctx: Context, monkeypatch: pytest.MonkeyPatch):
+    add_creator(ctx)
+    sha = "a" * 64
+    # Pawchive: one path under two names; only the first name was ever served.
+    entries = pawchive_entries(
+        None,
+        [
+            {"name": "a.png", "path": f"/a/{sha}.png"},
+            {"name": "b.png", "path": f"/a/{sha}.png"},
+            {"name": "c.png", "path": "/c/" + "c" * 64 + ".png"},
+        ],
+    )
+    obs(ctx, "1", "pawchive", "meta", "2020-01-01T00:00:00", entries)
+    # Fanbox lists them all and a fourth, the same bytes as c.png under its own name.
+    images = [{"id": i, "extension": "png", "originalUrl": f"u/{i}"} for i in "abcd"]
+    obs(
+        ctx,
+        "1",
+        "fanbox",
+        "open",
+        "2020-01-01T00:00:00",
+        fanbox_entries({"body": {"images": images}}),
+        detail=True,
+    )
+    reconcile(ctx)
+    ctx.db.run(
+        "UPDATE files SET state='done', via='pawchive', verified=1 WHERE name IN ('a.png', 'c.png')"
+    )
+    downloader = Downloader(ctx, threading.Event(), lambda _m: None)
+    creator = ctx.require_creator(CID)
+    post = ctx.db.one("SELECT * FROM posts WHERE post_id='1'")
+    assert post is not None
+    folder = save_dir(ctx, creator, post)
+    folder.mkdir(parents=True)
+    names = {f["name"]: f["local_name"] for f in ctx.db.all("SELECT * FROM files")}
+    (folder / names["a.png"]).write_bytes(b"a")
+    (folder / names["c.png"]).write_bytes(b"c")
+    fetched = []
+
+    def fetch(creator, source: str, row, target: Path):
+        fetched.append(row["name"])
+        target.write_bytes(b"c")
+
+    monkeypatch.setattr(downloader, "_fetch", fetch)
+    downloader.post(creator, post)
+    assert fetched == ["d.png"]
+    files = {f["name"]: f for f in ctx.db.all("SELECT * FROM files")}
+    assert files["b.png"]["local_name"] == names["a.png"]
+    assert files["d.png"]["local_name"] == names["c.png"]
+    assert all(f["state"] == "done" and f["via"] == "pawchive" for f in files.values())
+    assert sorted(p.name for p in folder.iterdir()) == sorted([names["a.png"], names["c.png"]])
+
+
+def test_a_pawchive_404_is_retried_only_by_hand(ctx: Context, monkeypatch: pytest.MonkeyPatch):
+    add_creator(ctx)
+    entries = pawchive_entries(None, [{"name": "a.png", "path": "/a/" + "a" * 64 + ".png"}])
+    obs(ctx, "1", "pawchive", "full", "2020-01-01T00:00:00", entries)
+    reconcile(ctx)
+    downloader = Downloader(ctx, threading.Event(), lambda _m: None)
+    asked = []
+
+    def fetch(creator, source: str, row, target: Path):
+        asked.append(source)
+        raise PermanentError("404")
+
+    monkeypatch.setattr(downloader, "_fetch", fetch)
+    downloader.creator(CID)
+    downloader.creator(CID)
+    assert asked == ["pawchive"]
+    row = ctx.db.one("SELECT state, error FROM files")
+    assert row is not None and (row["state"], row["error"]) == ("failed", "Pawchive 404")
+    assert post_rows(ctx, CID)[0]["head"]["k"] == "failed"
+    downloader.creator(CID, post_ids=["1"])
+    assert asked == ["pawchive", "pawchive"]
+
+
+def test_filtered_posts_are_not_counted_as_waiting(ctx: Context):
+    add_creator(ctx)
+    entries = pawchive_entries(None, [{"name": "a.png", "path": "/a/" + "a" * 64 + ".png"}])
+    obs(ctx, "1", "pawchive", "full", "2020-01-01T00:00:00", entries, title="【支援者様】お知らせ")
+    obs(ctx, "2", "pawchive", "full", "2020-01-02T00:00:00", entries, title="新作")
+    reconcile(ctx)
+    assert next(c for c in creators(ctx) if c["id"] == CID)["fetchable"] == 2
+    ctx.db.run("UPDATE creators SET filter=?", ('{"exclude_keywords": ["支援者様"]}',))
+    assert next(c for c in creators(ctx) if c["id"] == CID)["fetchable"] == 1
+
+
+def test_pawchive_html_becomes_fanbox_plain_text():
+    html = "<p>日頃より</p><p>前回</p><p><br></p><p>・a&amp;b</p>"
+    assert plain_text(html) == "日頃より\n前回\n\n・a&b"
+    assert plain_text("plain\nlines") == "plain\nlines"
 
 
 def test_a_failed_fanbox_listing_leaves_posts_unchecked(
@@ -303,6 +567,38 @@ def test_timers_do_nothing_until_enabled(ctx: Context):
     runner._fire_timers()
     assert ctx.db.all("SELECT * FROM jobs") == []
     assert ctx.db.kv_get("timers") == {}
+
+
+def test_a_worker_outlives_a_locked_database(ctx: Context, monkeypatch: pytest.MonkeyPatch):
+    runner = JobRunner(ctx, 1)
+    claim = runner._claim
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return claim()
+
+    monkeypatch.setattr(runner, "_claim", flaky)
+    monkeypatch.setitem(runner.handlers, "subscriptions", lambda *_: "ran")
+    monkeypatch.setattr("app.engine.jobs.traceback.print_exc", lambda: None)
+    worker = threading.Thread(target=runner._loop, daemon=True)
+    worker.start()
+    job = runner.enqueue("subscriptions")
+    status = None
+    for _ in range(300):
+        row = ctx.db.one("SELECT status FROM jobs WHERE id=?", (job,))
+        status = row["status"] if row else None
+        if status == "done":
+            break
+        runner._wake.set()
+        time.sleep(0.05)
+    runner._stop.set()
+    runner._wake.set()
+    # The first claim failed; the worker carried on and ran the job.
+    assert calls["n"] >= 2
+    assert status == "done"
 
 
 def test_norm_title_ignores_width_and_punctuation():

@@ -5,11 +5,13 @@ killed process goes back to `queued`. One creator never runs two jobs at once.
 Progress lines are kept in memory only; the outcome is written to the job row.
 """
 
+import sqlite3
 import threading
 import traceback
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+from ..domain.status import SITES, site_label
 from ..domain.timefmt import now_utc
 from ..net.limiter import QuotaExceeded
 from ..sources.fanbox import SessionRejected
@@ -17,12 +19,15 @@ from ..sources.http import Cancelled, cancelled_by
 from ..store.db import dump, load
 from .context import Context
 from .download import Downloader
+from .links import check_links, fetch_links
 from .sync import Stopped, refresh_subscriptions, sync_creator
 
 # How often a saved Fanbox creator's status is re-checked in the background, and how long
 # a probe that failed waits before the same creator is tried again.
 PROBE_EVERY = timedelta(days=7)
 PROBE_RETRY = timedelta(hours=6)
+# Tries at writing a finished job's outcome, 5 s apart, on top of the connection's own wait.
+FINISH_ATTEMPTS = 12
 
 
 class JobRunner:
@@ -42,6 +47,8 @@ class JobRunner:
             "migration": self._migration,
             "probe": self._probe_one,
             "move": self._move,
+            "link_check": self._link_check,
+            "link_fetch": self._link_fetch,
         }
         self._probed: dict[str, datetime] = {}
 
@@ -68,6 +75,7 @@ class JobRunner:
             event.set()
         self.ctx.pawchive_http.stop()
         self.ctx.fanbox_http.stop()
+        self.ctx.patreon_http.stop()
         self._wake.set()
         for t in self._threads:
             t.join(timeout=10)
@@ -139,40 +147,61 @@ class JobRunner:
 
     def _loop(self):
         while not self._stop.is_set():
-            claimed = self._claim()
-            if claimed is None:
-                self._wake.wait(5)
-                self._wake.clear()
-                continue
-            job_id, kind, creator_id, params = claimed
-            cancel = threading.Event()
-            self.cancels[job_id] = cancel
-            params = {**params, "creator_id": creator_id}
-            status, note, error = "done", "", None
             try:
-                with cancelled_by(cancel):
-                    note = self.handlers[kind](job_id, params, cancel)
-            except Stopped, Cancelled:
-                status, note = "cancelled", "cancelled"
-            except SessionRejected as e:
-                status, error = "failed", str(e)
-                self.ctx.events.log("error", str(e), creator_id)
-            except QuotaExceeded as e:
-                status, note = "done", f"quota spent: {e}"
-            except Exception as e:
-                status, error = "failed", f"{type(e).__name__}: {e}"
-                self.ctx.events.log("error", f"Job #{job_id} failed: {error}", creator_id)
+                self._run_one()
+            except Exception:
+                # A worker must outlive any one failure (a database locked past its busy
+                # timeout, say), or the queue stops with nothing running and nothing said.
                 traceback.print_exc()
-            finally:
-                self.cancels.pop(job_id, None)
-                self.progress.pop(job_id, None)
-            self.ctx.db.run(
-                "UPDATE jobs SET status=?, finished_at=?, note=?, error=? WHERE id=?",
-                (status, now_utc(), note, error, job_id),
-            )
-            # Background probes are routine; only their failures are worth a log line.
-            if status == "done" and note and kind != "probe":
-                self.ctx.events.log("info", f"{self._label(kind, creator_id)}: {note}", creator_id)
+                self._stop.wait(5)
+
+    def _run_one(self):
+        claimed = self._claim()
+        if claimed is None:
+            self._wake.wait(5)
+            self._wake.clear()
+            return
+        job_id, kind, creator_id, params = claimed
+        cancel = threading.Event()
+        self.cancels[job_id] = cancel
+        params = {**params, "creator_id": creator_id}
+        status, note, error = "done", "", None
+        try:
+            with cancelled_by(cancel):
+                note = self.handlers[kind](job_id, params, cancel)
+        except Stopped, Cancelled:
+            status, note = "cancelled", "cancelled"
+        except SessionRejected as e:
+            status, error = "failed", str(e)
+            self.ctx.events.log("error", str(e), creator_id)
+        except QuotaExceeded as e:
+            status, note = "done", f"quota spent: {e}"
+        except Exception as e:
+            status, error = "failed", f"{type(e).__name__}: {e}"
+            self.ctx.events.log("error", f"Job #{job_id} failed: {error}", creator_id)
+            traceback.print_exc()
+        finally:
+            self.cancels.pop(job_id, None)
+            self.progress.pop(job_id, None)
+        self._finish(job_id, status, note, error)
+        # Background probes are routine; only their failures are worth a log line.
+        if status == "done" and note and kind != "probe":
+            self.ctx.events.log("info", f"{self._label(kind, creator_id)}: {note}", creator_id)
+
+    def _finish(self, job_id: int, status: str, note: str, error: str | None):
+        """Record the outcome, retrying while the database is busy: a job left `running`
+        would hold its creator's queue until the next restart."""
+        for attempt in range(FINISH_ATTEMPTS):
+            try:
+                self.ctx.db.run(
+                    "UPDATE jobs SET status=?, finished_at=?, note=?, error=? WHERE id=?",
+                    (status, now_utc(), note, error, job_id),
+                )
+                return
+            except sqlite3.OperationalError:
+                if attempt == FINISH_ATTEMPTS - 1:
+                    raise
+                self._stop.wait(5)
 
     def _label(self, kind: str, creator_id: str | None) -> str:
         names = {
@@ -181,6 +210,8 @@ class JobRunner:
             "subscriptions": "Refresh plans",
             "migration": "Migration",
             "move": "Move",
+            "link_check": "Check links",
+            "link_fetch": "Fetch links",
         }
         if creator_id:
             row = self.ctx.creator(creator_id)
@@ -234,28 +265,31 @@ class JobRunner:
         ).summary()
 
     def _probe(self):
-        """Keep every saved Fanbox creator's status fresh: one cheap list-only probe at a
-        time, and only while nothing else is queued, so it never delays real work."""
-        if not self.ctx.fanbox_usable():
-            return
+        """Keep every saved creator's own-site status (Fanbox, Patreon) fresh: one cheap
+        list-only probe at a time, and only while nothing else is queued, so it never
+        delays real work."""
         if self.ctx.db.one("SELECT 1 FROM jobs WHERE status='queued'"):
             return
-        due = (datetime.now(UTC) - PROBE_EVERY).replace(tzinfo=None).isoformat()
-        due = max(due, self.ctx.db.kv_get("fanbox_access_changed", "") or "")
         now = datetime.now()
-        for row in self.ctx.db.all(
-            "SELECT id FROM creators WHERE service='fanbox' AND ignore=0 "
-            "AND (fanbox_listed_at IS NULL OR fanbox_listed_at < ?) "
-            "AND id NOT IN (SELECT creator_id FROM jobs WHERE status='running' AND creator_id IS NOT NULL) "
-            "ORDER BY fanbox_listed_at IS NOT NULL, fanbox_listed_at",
-            (due,),
-        ):
-            tried = self._probed.get(row["id"])
-            if tried and now - tried < PROBE_RETRY:
+        for site in SITES:
+            if not self.ctx.site_usable(site):
                 continue
-            self._probed[row["id"]] = now
-            self.enqueue("probe", row["id"], {}, note="Fanbox status")
-            return
+            due = (datetime.now(UTC) - PROBE_EVERY).replace(tzinfo=None).isoformat()
+            # The `fanbox_listed_at` column holds the last full listing of either site.
+            due = max(due, self.ctx.db.kv_get(f"{site}_access_changed", "") or "")
+            for row in self.ctx.db.all(
+                "SELECT id FROM creators WHERE service=? AND ignore=0 "
+                "AND (fanbox_listed_at IS NULL OR fanbox_listed_at < ?) "
+                "AND id NOT IN (SELECT creator_id FROM jobs WHERE status='running' AND creator_id IS NOT NULL) "
+                "ORDER BY fanbox_listed_at IS NOT NULL, fanbox_listed_at",
+                (site, due),
+            ):
+                tried = self._probed.get(row["id"])
+                if tried and now - tried < PROBE_RETRY:
+                    continue
+                self._probed[row["id"]] = now
+                self.enqueue("probe", row["id"], {}, note=f"{site_label(site)} status")
+                return
 
     def _migration(self, job_id: int, params: dict, cancel: threading.Event) -> str:
         from ..library.migrate import execute
@@ -264,6 +298,14 @@ class JobRunner:
         return f"{result['done']} done" + (
             f", {result['failed']} failed" if result["failed"] else ""
         )
+
+    def _link_check(self, job_id: int, params: dict, cancel: threading.Event) -> str:
+        ids = [int(i) for i in params.get("ids") or []]
+        return check_links(self.ctx, params["creator_id"], ids, self._reporter(job_id), cancel)
+
+    def _link_fetch(self, job_id: int, params: dict, cancel: threading.Event) -> str:
+        ids = [int(i) for i in params.get("ids") or []]
+        return fetch_links(self.ctx, params["creator_id"], ids, self._reporter(job_id), cancel)
 
     def _move(self, job_id: int, params: dict, cancel: threading.Event) -> str:
         # A job, not a request: the creator's own jobs run one at a time, so no download is

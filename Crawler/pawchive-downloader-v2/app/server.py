@@ -14,6 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
@@ -27,11 +28,19 @@ from pydantic import BaseModel, Field
 
 from .config import PROJECT, SOURCE_PREFERENCES, BadSetting
 from .domain.match import parse_ref
+from .domain.status import has_site
 from .domain.timefmt import now_utc
 from .engine.context import Context
 from .engine.jobs import JobRunner
-from .engine.login import BrowserLogin, apply_sessid, find_browser
-from .engine.views import creator_detail, creators, post_detail, post_rows
+from .engine.links import by_creator, list_links, set_key, set_state
+from .engine.login import (
+    PATREON_LOGIN,
+    BrowserLogin,
+    apply_patreon_session,
+    apply_sessid,
+    find_browser,
+)
+from .engine.views import creator_detail, creators, overview, post_detail, post_rows
 from .library.layout import clean_group, preview, regrouped
 from .library.thumbs import Thumbs
 from .sources.fanbox import SessionRejected
@@ -44,6 +53,7 @@ JOBS_SHOWN = 100
 FINISHED = "status NOT IN ('queued','running')"
 EVENTS_SHOWN = 300
 STREAM_SECONDS = 300
+OVERVIEW_SECONDS = 30
 
 
 class ProcessLock:
@@ -88,6 +98,10 @@ class ProcessLock:
 class AddCreator(BaseModel):
     ref: str = Field(min_length=1, max_length=500)
     group: str = ""
+    alias: str = Field(default="", max_length=200)
+    """The name the creator's folder takes; empty uses the name the sources give."""
+    preference: str = ""
+    """Which source a file is fetched from first; empty follows the setting."""
     sync: bool = True
 
 
@@ -119,6 +133,10 @@ class Session(BaseModel):
     sessid: str = Field(max_length=4000)
 
 
+class PatreonSession(BaseModel):
+    session_id: str = Field(max_length=4000)
+
+
 class AdoptRequest(BaseModel):
     creator_id: str
     root: str = Field(min_length=1, max_length=4096)
@@ -138,6 +156,20 @@ class Resolve(BaseModel):
 class MoveCreator(BaseModel):
     group: str = Field(max_length=1000)
     alias: str | None = Field(default=None, max_length=500)
+
+
+class LinkState(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=20000)
+    state: str
+
+
+class LinkIds(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=20000)
+
+
+class LinkKey(BaseModel):
+    id: int
+    key: str = Field(min_length=1, max_length=200)
 
 
 class MoveGroup(BaseModel):
@@ -165,6 +197,12 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
     login = BrowserLogin(
         data_dir / "browser",
         lambda sessid: apply_sessid(ctx, sessid, "browser", keep_previous=True),
+    )
+    # The same browser profile: a sign-in there serves both sites.
+    patreon_login = BrowserLogin(
+        data_dir / "browser",
+        lambda value: apply_patreon_session(ctx, value, "browser", keep_previous=True),
+        PATREON_LOGIN,
     )
 
     @asynccontextmanager
@@ -217,6 +255,8 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
         return {
             "session": ctx.session(),
             "session_from_env": ctx.store.sessid_from_env(),
+            "patreon_session": ctx.session("patreon"),
+            "patreon_session_from_env": ctx.store.patreon_session_from_env(),
             "jobs": _jobs(jobs),
             "quota": quota,
             "download_dir": ctx.settings.download_dir,
@@ -299,14 +339,25 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
     def list_creators():
         return creators(ctx)
 
+    # Classifying every post takes a few seconds; the overview is reused for a while.
+    cached: dict[str, Any] = {"at": 0.0, "value": None}
+
+    @app.get("/api/overview")
+    def get_overview():
+        if cached["value"] is None or time.monotonic() - cached["at"] > OVERVIEW_SECONDS:
+            cached["value"], cached["at"] = overview(ctx), time.monotonic()
+        return cached["value"]
+
     @app.post("/api/creators")
     def add_creator(body: AddCreator):
         ref = parse_ref(body.ref)
         if ref is None:
             raise HTTPException(
                 400,
-                "Unrecognised link or id. Paste a Pawchive, Fanbox or pixiv creator or post link.",
+                "Unrecognised link or id. Paste a Pawchive, Fanbox, Patreon or pixiv creator or post link.",
             )
+        if body.preference and body.preference not in SOURCE_PREFERENCES:
+            raise HTTPException(400, "Unknown source preference")
         user_id, service, name, handle, icon = ref.user_id, ref.service, "", None, None
         try:
             if ref.kind == "fanbox_creator":
@@ -317,8 +368,15 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
                 detail = ctx.fanbox.post(ref.post_id)
                 user_id = detail.user_id
                 handle = ref.creator_id or None
+            elif ref.kind == "patreon_vanity":
+                found = ctx.patreon.campaign_by_vanity(ref.creator_id)
+                if not found or not found["user_id"]:
+                    raise HTTPException(404, f"No creator patreon.com/{ref.creator_id}.")
+                user_id, handle, name = found["user_id"], found["campaign_id"], found["name"]
+            elif ref.kind == "patreon_post":
+                user_id = ctx.patreon.post(ref.post_id).user_id
         except PermanentError:
-            raise HTTPException(404, "No such creator or post on Fanbox.") from None
+            raise HTTPException(404, "No such creator or post on Fanbox or Patreon.") from None
         cid = f"{service}_{user_id}"
         if ctx.creator(cid):
             return {"id": cid, "existing": True}
@@ -330,20 +388,31 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
             pawchive_state = "none"
         if service == "fanbox" and not handle:
             handle = ctx.fanbox.creator_id_of(user_id)
+        elif service == "patreon" and not handle:
+            # The campaign id, kept where a Fanbox creator keeps its handle. A hidden or
+            # suspended account answers 403; the sync then records that there is no page.
+            try:
+                handle = ctx.patreon.campaign_of(user_id)
+            except PermanentError, requests.HTTPError:
+                handle = None
+        config = {"source_preference": body.preference} if body.preference else {}
         ctx.db.run(
-            """INSERT INTO creators(id, service, user_id, name, group_path, icon_url,
-               fanbox_creator_id, fanbox_state, pawchive_state, added_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO creators(id, service, user_id, name, alias, group_path, icon_url,
+               fanbox_creator_id, fanbox_state, pawchive_state, config, added_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 cid,
                 service,
                 user_id,
-                name or handle or user_id,
+                # A Patreon campaign id is no name to show.
+                name or (handle if service == "fanbox" else None) or user_id,
+                body.alias.strip(),
                 clean_group(body.group),
                 icon,
                 handle,
-                "ok" if handle else ("none" if service == "fanbox" else "unknown"),
+                "ok" if handle else ("none" if has_site(service) else "unknown"),
                 pawchive_state,
+                dump(config),
                 now_utc(),
             ),
         )
@@ -553,6 +622,49 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
             )
         ]
 
+    # ---------------- links ----------------
+
+    @app.get("/api/links")
+    def get_links(state: str | None = None, creator_id: str | None = None):
+        return list_links(ctx, state or None, creator_id or None)
+
+    @app.post("/api/links/state")
+    def mark_links(body: LinkState):
+        try:
+            return {"changed": set_state(ctx, body.ids, body.state)}
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    # One job per creator, so a creator's links never run beside its own downloads.
+    @app.post("/api/links/check")
+    def check_links_job(body: LinkIds):
+        return {
+            "jobs": [
+                runner.enqueue("link_check", cid, {"ids": ids})
+                for cid, ids in by_creator(ctx, body.ids).items()
+            ]
+        }
+
+    @app.post("/api/links/key")
+    def key_link(body: LinkKey):
+        """Keep a typed key, then check the link with it."""
+        try:
+            row = set_key(ctx, body.id, body.key)
+        except KeyError as e:
+            raise _not_found(e) from None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        return {"job": runner.enqueue("link_check", row["creator_id"], {"ids": [body.id]})}
+
+    @app.post("/api/links/fetch")
+    def fetch_links_job(body: LinkIds):
+        return {
+            "jobs": [
+                runner.enqueue("link_fetch", cid, {"ids": ids})
+                for cid, ids in by_creator(ctx, body.ids).items()
+            ]
+        }
+
     # ---------------- settings & Fanbox ----------------
 
     @app.get("/api/settings")
@@ -597,6 +709,41 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
     def cancel_login():
         login.cancel()
         return login.status
+
+    # ---------------- Patreon ----------------
+
+    def _no_env_patreon_cookie():
+        if ctx.store.patreon_session_from_env():
+            raise HTTPException(
+                409,
+                "The cookie comes from PATREON_SESSION_ID in the environment; a value set here would not be used.",
+            )
+
+    @app.post("/api/patreon/session")
+    def set_patreon_session(body: PatreonSession):
+        _no_env_patreon_cookie()
+        return apply_patreon_session(ctx, body.session_id, "manual")
+
+    @app.post("/api/patreon/login")
+    def start_patreon_login():
+        _no_env_patreon_cookie()
+        if login.status.get("state") == "waiting":
+            raise HTTPException(409, "A Fanbox sign-in is open in the browser; finish it first.")
+        browser = find_browser(ctx.settings.browser_path)
+        if not browser:
+            raise HTTPException(
+                400, "Chrome or Edge was not found. Set browser_path to the browser's program."
+            )
+        return patreon_login.start(browser)
+
+    @app.get("/api/patreon/login")
+    def patreon_login_status():
+        return patreon_login.status
+
+    @app.delete("/api/patreon/login")
+    def cancel_patreon_login():
+        patreon_login.cancel()
+        return patreon_login.status
 
     def _fanbox_cards(items: list[dict], **extra: str) -> list[dict]:
         """Search results and supported plans as one card shape; `extra` maps an output

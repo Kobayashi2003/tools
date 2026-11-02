@@ -57,6 +57,20 @@ def test_pawchive_entries_drop_the_repeated_cover_and_key_by_name():
     assert entries[0].sha256 == "a" * 64
 
 
+def test_pawchive_entries_keep_an_image_the_post_shows_twice():
+    shown = {"path": "/b/" + "b" * 64 + ".jpeg"}
+    entries = pawchive_entries(
+        None,
+        [
+            {"name": "First.jpeg", **shown},
+            {"name": "Middle.jpeg", "path": "/c/" + "c" * 64 + ".jpeg"},
+            {"name": "Again.jpeg", **shown},
+            {"name": "Again.jpeg", **shown},
+        ],
+    )
+    assert [e.key for e in entries] == ["n:First.jpeg", "n:Middle.jpeg", "n:Again.jpeg"]
+
+
 def _fanbox_post(**body):
     return {
         "coverImageUrl": "https://pixiv.pximg.net/c/1200x630_90_a2_g5/fanbox/public/images/post/1/cover/CoverId.jpeg",
@@ -120,8 +134,10 @@ def test_merge_pairs_uuid_named_old_posts_by_position():
         )
     )
     merged = merge(p, f)
-    assert [e.key for e in merged] == [p[0].key, p[1].key]
-    assert merged[0].role == "cover" and merged[1].width == 5
+    # The file paired with Fanbox's cover is the cover; a row downloaded under its old
+    # key is re-keyed by content hash (see reconcile).
+    assert [e.key for e in merged] == ["cover", p[1].key]
+    assert merged[0].role == "cover" and merged[0].path and merged[1].width == 5
     # Unequal leftovers: pair what lines up, keep Fanbox's extra file at the end.
     extra = fanbox_entries(
         _fanbox_post(
@@ -131,7 +147,7 @@ def test_merge_pairs_uuid_named_old_posts_by_position():
             ]
         )
     )
-    assert [e.key for e in merge(p, extra)] == [p[0].key, p[1].key, "n:b.png"]
+    assert [e.key for e in merge(p, extra)] == ["cover", p[1].key, "n:b.png"]
 
 
 def test_merge_recognises_a_pawchive_cover_named_with_fanbox_s_id():
@@ -188,18 +204,9 @@ def test_headline_priorities():
     assert (
         headline(replace(base, f="locked"))["why"] == "Needs a ¥550 plan · Pawchive metadata only"
     )
-    waiting = PostFacts(
-        p="full",
-        f="locked",
-        fee=550,
-        plan_fee=0,
-        total=2,
-        deferred=2,
-        deferred_until="2026-10-19T00:00:00",
-    )
-    assert headline(waiting)["k"] == "wait"
-    # v1 recorded these as failed, but they are all inside their 404 deferral.
-    assert headline(replace(waiting, failed=2))["k"] == "wait"
+    lost = PostFacts(p="full", f="locked", fee=550, plan_fee=0, total=2, done=1, missing=1)
+    assert headline(lost)["k"] == "failed"
+    assert headline(lost)["why"] == "1/2 · Pawchive 404, not retried"
     adopted = replace(base, local_done=True, via=["adopted"], unverified=1)
     assert headline(adopted)["why"] == "Adopted · unverified"
     assert coverage("meta", "open") == "both" and coverage("none", "locked") == "fonly"

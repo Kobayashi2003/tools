@@ -379,9 +379,17 @@ def execute_adopt(ctx: Context, plan_id: int, progress=lambda _m: None) -> dict:
                         (path.stat().st_size, pair["verified"], now, pair["file_id"]),
                     )
                 conn.execute(
-                    "UPDATE posts SET local_dir=?, local_done=?, done_at=?, origin='adopted' "
-                    "WHERE creator_id=? AND post_id=?",
-                    (str(dst), int(not bad), now, creator_id, item["post_id"]),
+                    "UPDATE posts SET local_dir=?, local_done=?, done_at=?, origin='adopted', "
+                    "text_at=CASE WHEN ? THEN ? ELSE text_at END WHERE creator_id=? AND post_id=?",
+                    (
+                        str(dst),
+                        int(not bad),
+                        now,
+                        int(any(p["dst"] == "content.txt" for p in item["files"])),
+                        now,
+                        creator_id,
+                        item["post_id"],
+                    ),
                 )
             item["result"] = "ok"
             done += 1

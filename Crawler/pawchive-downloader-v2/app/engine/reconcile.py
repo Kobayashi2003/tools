@@ -10,7 +10,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..domain.match import Entry, merge
+from ..domain.match import Entry, merge, plain_text, sha_of
 from ..domain.naming import file_names, unique_names
 from ..store.db import dump, load
 
@@ -37,16 +37,48 @@ def entries_json(entries: list[Entry]) -> str:
     return dump([{**e.__dict__, "sources": sorted(e.sources)} for e in entries])
 
 
+def _content_hash(sha256: str | None, path: str | None) -> str:
+    return sha256 or sha_of(path or "")
+
+
+def _rekeyed(
+    conn: sqlite3.Connection, existing: dict[str, sqlite3.Row], merged: list[Entry]
+) -> dict[str, sqlite3.Row]:
+    """A file's key can change while its content does not: Pawchive renames its main file
+    to `cover.*`, or it turns out to be Fanbox's cover. A row whose key is no longer listed
+    takes over the new key of the entry with the same content hash, so the file it holds is
+    not orphaned and fetched a second time."""
+    listed = {e.key for e in merged}
+    unlisted = {
+        h: row
+        for row in existing.values()
+        if row["key"] not in listed and (h := _content_hash(row["sha256"], row["p_path"]))
+    }
+    if not unlisted:
+        return existing
+    out = dict(existing)
+    for e in merged:
+        row = unlisted.pop(_content_hash(e.sha256, e.path), None) if e.key not in out else None
+        if row is None:
+            continue
+        conn.execute("UPDATE files SET key=? WHERE id=?", (e.key, row["id"]))
+        del out[row["key"]]
+        out[e.key] = row
+    return out
+
+
 def reconcile_creator(
     conn: sqlite3.Connection,
     creator_id: str,
-    is_fanbox: bool,
+    has_site: bool,
     naming: Naming,
     now: str,
     only: set[str] | None = None,
 ) -> dict[str, int]:
     """Rebuild conclusions for a creator's posts (or `only` those ids) inside `conn`'s
-    transaction. Returns counts of `new` posts and `reopened` ones (more files appeared)."""
+    transaction. Returns counts of `new` posts and `reopened` ones (more files appeared).
+    `has_site`: the creator has an own site this tool reads (Fanbox or Patreon), whose
+    observations are stored as source "fanbox"."""
     obs: dict[str, dict[str, sqlite3.Row]] = {}
     for row in conn.execute("SELECT * FROM post_obs WHERE creator_id=?", (creator_id,)):
         if only is None or row["post_id"] in only:
@@ -78,13 +110,15 @@ def reconcile_creator(
             bool(p and f and p["published"] and f["published"] and p["published"] != f["published"])
         )
         fee = int(f["fee"] or 0) if f else (old["fee"] if old else 0)
-        content = (f["content"] if f and f["detail_at"] and f["content"] else None) or (
-            p["content"] if p else (old["content"] if old else None)
+        # Fanbox's text when it opened the post to you; a locked post gives only an
+        # excerpt there, and Pawchive's copy is whole.
+        content = (f["content"].strip() if f and f["detail_at"] and f["content"] else None) or (
+            plain_text(p["content"]) if p and p["content"] else (old["content"] if old else None)
         )
         p_state = p["state"] if p else "none"
         if f:
             f_state = f["state"]
-        elif not is_fanbox:
+        elif not has_site:
             f_state = "na"
         else:
             f_state = "gone" if fanbox_listed else "unknown"
@@ -92,7 +126,7 @@ def reconcile_creator(
         p_entries = _entries(p["entries"]) if p else []
         f_entries = _entries(f["entries"]) if f and f["detail_at"] else []
         merged = merge(p_entries, f_entries)
-        existing = files.get(post_id, {})
+        existing = _rekeyed(conn, files.get(post_id, {}), merged)
         p_keys = {e.key for e in merged if "pawchive" in e.sources}
         f_keys = {e.key for e in merged if "fanbox" in e.sources}
 
@@ -110,7 +144,7 @@ def reconcile_creator(
             zip([i for i, _ in wanted], unique_names([n for _, n in wanted], taken), strict=True)
         )
 
-        had = len(existing)
+        had = sum(1 for k in existing if k != "cover")
         for i, e in enumerate(merged):
             row = existing.get(e.key)
             values = (
@@ -157,10 +191,13 @@ def reconcile_creator(
                     )
                 else:
                     conn.execute("DELETE FROM files WHERE id=?", (row["id"],))
-                    dropped += 1
+                    dropped += key != "cover"
 
+        # Only the main files decide whether a post is done; the cover is fetched along
+        # with them but never holds a post open.
         total, done = conn.execute(
-            "SELECT COUNT(*), SUM(state='done') FROM files WHERE creator_id=? AND post_id=?",
+            "SELECT COUNT(*), SUM(state='done') FROM files "
+            "WHERE creator_id=? AND post_id=? AND role<>'cover'",
             (creator_id, post_id),
         ).fetchone()
         done = done or 0
@@ -168,7 +205,7 @@ def reconcile_creator(
             local_done = int(total > 0 and done == total)
             counts["new"] += 1
         elif total and done < total:
-            grew = len(merged) > had - dropped
+            grew = sum(1 for e in merged if e.key != "cover") > had - dropped
             if old["local_done"] and old["origin"] in ("manual", "adopted") and not grew:
                 # Marked done by hand, or adopted with files we could not pair: stays done
                 # until the post gains files.

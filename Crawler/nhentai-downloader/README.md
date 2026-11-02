@@ -5,10 +5,10 @@ Downloads sequentially numbered gallery images from [nhentai](https://nhentai.ne
 
 ## Run
 
-Requires Python 3.14; dependencies are in `pyproject.toml`.
+Requires [uv](https://docs.astral.sh/uv/); dependencies are in `pyproject.toml`.
 
 ```bash
-python main.py <base_url> --end <last_page> [options]
+uv run main.py <base_url> --end <last_page> [options]
 ```
 
 | Option | Description | Default |

@@ -3,6 +3,7 @@ name = "pawchive-downloader-v2"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
+    "cryptography>=44,<47",
     "curl-cffi>=0.13,<1",
     "fastapi>=0.115,<1",
     "pillow>=11",

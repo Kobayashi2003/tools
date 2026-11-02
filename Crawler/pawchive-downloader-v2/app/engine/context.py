@@ -12,6 +12,7 @@ from ..net.limiter import Throttle
 from ..net.policy import StatusPolicies
 from ..sources.fanbox import Fanbox
 from ..sources.http import HttpClient, RetryShape
+from ..sources.patreon import Patreon
 from ..sources.pawchive import Pawchive
 from ..store.db import Database, load
 from ..store.deferrals import Deferrals
@@ -123,11 +124,33 @@ class Context:
             keep_cookies=False,
             impersonate="chrome",
         )
+        # Patreon creators' own site. Its API is not behind the Cloudflare challenge its
+        # pages are; the impersonated handshake keeps it that way should that change. The
+        # cookie goes with API calls only (see Patreon._headers): file addresses are signed.
+        self.patreon_http = HttpClient(
+            "Patreon",
+            {
+                "User-Agent": s.fanbox_user_agent,
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://www.patreon.com/",
+            },
+            Throttle(
+                max_concurrent=s.patreon_max_concurrent_downloads,
+                requests_per_second=s.patreon_requests_per_second,
+                request_burst=1,
+            ),
+            fanbox_policies,
+            shape,
+            s.request_timeout,
+            log,
+            api_requests_per_second=s.patreon_requests_per_second,
+            keep_cookies=False,
+            impersonate="chrome",
+        )
         self.pawchive = Pawchive(self.pawchive_http, s.api_base, s.file_base, s.page_workers)
         self.fanbox = Fanbox(self.fanbox_http, s.fanbox_api, self.store.fanbox_sessid())
-        self.deferrals = Deferrals(
-            self.db, s.not_found_retry_days, s.not_found_retry_backoff, s.not_found_retry_cap_days
-        )
+        self.patreon = Patreon(self.patreon_http, s.patreon_api, self.store.patreon_session())
+        self.deferrals = Deferrals(self.db)
 
     def reload_settings(self):
         with self.lock:
@@ -187,21 +210,28 @@ class Context:
     def preference(self, creator: sqlite3.Row) -> str:
         return self.value(creator, "source_preference")
 
-    # ---- Fanbox session ----
+    # ---- sessions on the creators' own sites ----
 
-    def session(self) -> dict:
-        state = self.db.kv_get("fanbox_session", {}) or {}
-        if not self.store.fanbox_sessid():
+    def _cookie(self, site: str) -> str:
+        return self.store.patreon_session() if site == "patreon" else self.store.fanbox_sessid()
+
+    def session(self, site: str = "fanbox") -> dict:
+        state = self.db.kv_get(f"{site}_session", {}) or {}
+        if not self._cookie(site):
             return {"state": "none"}
         return {"state": "unchecked", **state}
 
-    def set_session_state(self, **values):
+    def set_session_state(self, site: str = "fanbox", **values):
         self.db.kv_set(
-            "fanbox_session",
-            {**(self.db.kv_get("fanbox_session", {}) or {}), **values, "checked_at": now_utc()},
+            f"{site}_session",
+            {**(self.db.kv_get(f"{site}_session", {}) or {}), **values, "checked_at": now_utc()},
         )
 
     def fanbox_usable(self) -> bool:
         """Fanbox is used anonymously without a cookie, and not at all once the cookie
         was rejected: a rejected cookie would read every paid post as unsubscribed."""
         return self.session().get("state") != "rejected"
+
+    def site_usable(self, service: str) -> bool:
+        """The same for a creator's own site, Fanbox or Patreon."""
+        return self.session(service).get("state") != "rejected"

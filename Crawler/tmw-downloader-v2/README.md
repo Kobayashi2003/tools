@@ -7,7 +7,7 @@ one-time link, which this presses for you.
 
 ## Setup
 
-Requires Python 3.14; dependencies are in `pyproject.toml`. Copy `.env.example` to `.env` and
+Requires [uv](https://docs.astral.sh/uv/); dependencies are in `pyproject.toml`. Copy `.env.example` to `.env` and
 set `TMW_TOKEN` to your Discord account token: open Discord in a browser, F12 → Network, and copy
 the `Authorization` header of any `/api/v9/…` request. The token is your whole account; keep it
 out of version control.
@@ -15,10 +15,10 @@ out of version control.
 ## Run
 
 ```bash
-python main.py                     # serve the page on http://127.0.0.1:18040
-python main.py --print             # print the newest recommendations and exit
-python main.py --grab <message>    # download these (ids or Discord links) and exit
-python main.py --doctor            # test the token and the gateway step by step
+uv run main.py                     # serve the page on http://127.0.0.1:18040
+uv run main.py --print             # print the newest recommendations and exit
+uv run main.py --grab <message>    # download these (ids or Discord links) and exit
+uv run main.py --doctor            # test the token and the gateway step by step
 ```
 
 On Windows, `start.ps1` / `stop.ps1` start and stop the server.
