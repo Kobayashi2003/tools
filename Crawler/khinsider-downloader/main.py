@@ -52,6 +52,8 @@ class Config:
     retry: bool = False
     max_workers: int = 4
     user_agent: str = USER_AGENT
+    use_system_proxy: bool = True
+    """Route the browser and file downloads through the system proxy; False connects directly."""
 
 
 @dataclass
@@ -87,9 +89,11 @@ def sanitize_filename(name: str) -> str:
     return name[:200] or "_"
 
 
-def create_session(user_agent: str = USER_AGENT) -> requests.Session:
+def create_session(config: Config) -> requests.Session:
     session = requests.Session()
-    session.headers["User-Agent"] = user_agent
+    session.headers["User-Agent"] = config.user_agent
+    # requests picks up proxies from the environment and, on Windows, the registry.
+    session.trust_env = config.use_system_proxy
     return session
 
 
@@ -99,8 +103,8 @@ _LOCALHOST_BYPASS = "localhost,127.0.0.1,::1"
 
 
 def create_driver(config: Config):
-    # Bypass system proxy for localhost so ChromeDriver <-> DevTools is not
-    # intercepted by Clash / VPN / corporate proxies.
+    # Keep Selenium's local connection to the driver away from Clash / VPN /
+    # corporate proxies set in the environment.
     for var in ("NO_PROXY", "no_proxy"):
         existing = os.environ.get(var, "")
         if _LOCALHOST_BYPASS not in existing:
@@ -126,7 +130,8 @@ def create_driver(config: Config):
 def _setup_chromium(options, config, driver_cls):
     options.add_argument(f"--user-agent={config.user_agent}")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--no-proxy-server")
+    if not config.use_system_proxy:
+        options.add_argument("--no-proxy-server")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     if config.headless:
@@ -147,6 +152,8 @@ def _setup_edge(config: Config):
 def _setup_firefox(config: Config):
     options = FirefoxOptions()
     options.set_preference("general.useragent.override", config.user_agent)
+    # network.proxy.type: 5 = use system proxy, 0 = direct.
+    options.set_preference("network.proxy.type", 5 if config.use_system_proxy else 0)
     if config.headless:
         options.add_argument("--headless")
     return webdriver.Firefox(options=options)
@@ -364,7 +371,7 @@ def _download_booklets(config: Config, album: AlbumInfo):
     def task(i: int, b: BookletImage) -> bool:
         _print(f"Downloading booklet image {i}/{total}: {b.filename}")
         filepath = _booklet_filepath(config.output_dir, album.name, b.filename)
-        session = create_session(config.user_agent)
+        session = create_session(config)
         if config.retry:
             _retry_call(lambda: _save_file(b.url, filepath, session), f"booklet {b.filename}")
             return True
@@ -404,7 +411,7 @@ def _download_tracks(config: Config, driver, album: AlbumInfo):
         filepath = _track_filepath(
             config.output_dir, album.name, track.cd_number, fmt, filename, total_cds
         )
-        session = create_session(config.user_agent)
+        session = create_session(config)
         if config.retry:
             _retry_call(lambda: _save_file(file_url, filepath, session), f"track {filename}")
             return True
@@ -510,6 +517,11 @@ def main(argv=None):
     parser.add_argument("--headless", action="store_true", help="Run browser headless")
     parser.add_argument("--no-booklet", action="store_true", help="Skip booklet images")
     parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        help="Connect directly instead of through the system proxy",
+    )
+    parser.add_argument(
         "--retry", action="store_true", help="Retry each resource until it succeeds"
     )
     parser.add_argument(
@@ -525,6 +537,7 @@ def main(argv=None):
         download_booklet=not args.no_booklet,
         retry=args.retry,
         max_workers=args.workers,
+        use_system_proxy=not args.no_proxy,
     )
 
     try:
