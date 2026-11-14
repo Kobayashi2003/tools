@@ -65,6 +65,8 @@ export interface EpubReaderHandle {
   registerTheme(theme: ReaderThemeDefinition): Promise<void>;
   captureSelection(): ReaderSelection | null;
   clearSelection(): void;
+  /** Saves the reading position now rather than after `readingSession.saveDelayMs`. */
+  saveReadingSession(): void;
   clearReadingSession(): void;
   addHighlightFromSelection(
     highlight?: AnnotationHighlightStyle,

@@ -1,6 +1,7 @@
 export * from './state/model';
 export * from './state/reading-session';
 export * from './state/browser-reading-session-storage';
+export * from './state/preference-storage';
 export * from './state/store';
 export * from './state/use-epub-reader';
 export type * from './configuration/model';
@@ -20,3 +21,5 @@ export * from './panels/EpubCompatibilityPanel';
 export * from './reader/EpubReader';
 export * from './chrome/EpubReaderFullscreen';
 export * from './chrome/use-epub-reader-fullscreen';
+export * from './reader/EpubReaderBackground';
+export * from './source/EpubFilePicker';

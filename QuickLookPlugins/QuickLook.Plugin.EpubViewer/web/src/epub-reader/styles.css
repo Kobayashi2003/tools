@@ -1,5 +1,9 @@
-/* Stable public entry point; import order defines the reader's cascade. */
+/* Stable public entry point; import order defines the reader's cascade.
+   Applications copy this file unchanged: the Component Atlas demo brings its
+   own stylesheet (index.tsx), so nothing here belongs to the demo. */
 @import './react/styles/tokens.css';
+
+@import './react/source/EpubFilePicker.css';
 
 @import './react/reader/shell/ReaderShell.css';
 @import './react/reader/shell/components/ReaderToolbar.css';

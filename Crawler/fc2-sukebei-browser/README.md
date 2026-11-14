@@ -45,7 +45,7 @@ Set in the environment or in `.env` (see `.env.example`); the environment wins.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `FC2SB_PORT` | `18050` | Port of the web UI |
-| `FC2SB_PROXY` | *(empty)* | Proxy for every request; empty uses `HTTP(S)_PROXY` |
+| `FC2SB_PROXY` | *(empty)* | Proxy for every request: a URL, or `none` for direct; empty uses `HTTPS_PROXY` / `HTTP_PROXY`, else the Windows system proxy |
 | `FC2SB_DATA_DIR` | `data` | SQLite library and media cache |
 | `FC2SB_WORKERS` | `3` | Parallel FC2 lookups |
 | `FC2SB_SUKEBEI_DELAY` | `1.5` | Seconds between sukebei requests |

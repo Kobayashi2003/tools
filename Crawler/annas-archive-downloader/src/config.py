@@ -75,7 +75,8 @@ class Config:
         config_path = Path(path or "config.json")
         if config_path.exists():
             data = json.loads(config_path.read_text(encoding="utf-8"))
-            known = {f.name for f in fields(cls)}
+            # The proxy is env-only, so that ANNAS_PROXY is its one switch.
+            known = {f.name for f in fields(cls)} - {"proxy"}
             for key, value in data.items():
                 if key in known:
                     setattr(config, key, value)
@@ -101,10 +102,6 @@ class Config:
                 continue
             setattr(config, f.name, value)
 
-        # Proxies are usually already in the environment; honour them.
-        config.proxy = (
-            config.proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
-        )
         return config
 
     def apply_args(self, args) -> Config:

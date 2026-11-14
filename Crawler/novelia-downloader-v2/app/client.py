@@ -18,6 +18,7 @@ from urllib.parse import quote
 
 import requests
 
+from .proxy import apply_to_session
 from .schema import SITE
 
 RATE_LIMIT_CODES = (429, 503)
@@ -276,8 +277,7 @@ class Client:
             token = token_path.read_text(encoding="utf-8").strip()
         if token:
             self.session.headers["Authorization"] = "Bearer " + token
-        if proxy := os.environ.get("NOVELIA_PROXY"):
-            self.session.proxies.update(http=proxy, https=proxy)
+        apply_to_session(self.session, os.environ.get("NOVELIA_PROXY", ""))
 
     def close(self):
         self.session.close()

@@ -11,7 +11,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.request import getproxies
+
+from .proxy import resolve_proxy
 
 PREFIX = "TMW_"
 API_BASE = "https://discord.com/api/v9"
@@ -164,14 +165,15 @@ class Config:
                 setattr(config, name, type(current)(value) if isinstance(current, int) else value)
 
         # The token is env-only on purpose: config.json is the file people paste
-        # into a chat window when something breaks.
+        # into a chat window when something breaks. The proxy is env-only so that
+        # TMW_PROXY is its one switch.
         config.token = env("token").strip()
-        config.proxy = env("proxy", config.proxy)
+        config.proxy = env("proxy")
         config._named_channel = config.channel_id
         return config
 
     def apply_args(self, args) -> Config:
-        for name in ("channel_id", "guild_id", "port", "proxy", "history"):
+        for name in ("channel_id", "guild_id", "port", "history"):
             value = getattr(args, name, None)
             if value:
                 setattr(self, name, value)
@@ -233,10 +235,6 @@ class Config:
         return f"{base}/{message_id}" if message_id else base
 
     @property
-    def proxies(self) -> dict:
-        return {"http": self.proxy, "https": self.proxy} if self.proxy else {}
-
-    @property
     def proxy_url(self) -> str:
         """The proxy everything should go through, explicit or inherited.
 
@@ -249,12 +247,10 @@ class Config:
         download button times out, because the one connection that was never
         told about the tunnel is the one the button needs.
 
-        So both sides ask this. `TMW_PROXY` still wins where it is set.
+        So both sides ask this. `TMW_PROXY` still wins where it is set (`none`: direct).
+        Empty means direct.
         """
-        if self.proxy:
-            return self.proxy
-        found = getproxies()
-        return found.get("https") or found.get("http") or ""
+        return resolve_proxy(self.proxy) or ""
 
     @property
     def no_proxy(self) -> str:

@@ -63,7 +63,7 @@ One instance may use a data directory at a time. API docs are served at `/docs`.
 | `downloads/<edition>/<kind_ID>/` | `Japanese/`, `Bilingual/`, `Chinese/` |
 | `NOVELIA_DATA_DIR`, `NOVELIA_DOWNLOAD_DIR` | Override the two directories above (Settings → Download directory takes precedence) |
 | `NOVELIA_TOKEN` / `NOVELIA_TOKEN_FILE` | Optional bearer token (default file: `token.txt`) |
-| `NOVELIA_PROXY` | Optional HTTP(S) proxy |
+| `NOVELIA_PROXY` | Proxy for every request: a URL, or `none` for direct; empty (default) uses `HTTPS_PROXY` / `HTTP_PROXY`, else the Windows system proxy |
 
 Back up the database and the download directories together.
 

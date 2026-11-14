@@ -136,8 +136,9 @@ async def download_range(
     all_pages = list(range(start_page, end_page + 1))
     total_success = 0
 
+    # trust_env: HTTPS_PROXY / HTTP_PROXY, else the Windows system proxy.
     async with aiohttp.ClientSession(
-        headers=headers, connector=connector, cookie_jar=cookie_jar
+        headers=headers, connector=connector, cookie_jar=cookie_jar, trust_env=True
     ) as session:
         for i in range(0, len(all_pages), batch_size):
             batch = all_pages[i : i + batch_size]

@@ -38,12 +38,14 @@
   border-radius: var(--epub-radius-sm);
   background: var(--epub-color-surface-raised);
   color: var(--epub-color-accent-strong);
-  box-shadow: var(--epub-shadow-float);
   transform: translateY(-160%);
   transition: transform 120ms ease;
 }
 
+/* The shadow only while shown: parked above the shell, the link's wide shadow
+   would still reach down into the page as a grey smudge. */
 .epub-reader-skip-link:focus {
+  box-shadow: var(--epub-shadow-float);
   transform: translateY(0);
 }
 

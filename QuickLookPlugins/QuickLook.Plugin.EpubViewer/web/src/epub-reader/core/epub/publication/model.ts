@@ -256,6 +256,8 @@ export interface EffectiveSpineRendition extends PublicationRendition {
 export type ReaderFlowPreference = 'auto' | 'paginated' | 'scrolled';
 export type ReaderSpreadPreference = 'auto' | 'single' | 'double';
 export type ReaderDirectionPreference = 'auto' | 'ltr' | 'rtl';
+export type ReaderWritingModePreference =
+  'auto' | 'horizontal-tb' | 'vertical-rl';
 export type FixedLayoutFit = 'contain' | 'width' | 'height' | 'original';
 export type FixedLayoutGutter = 'none' | 'normal';
 export type TouchNavigationPreference = 'both' | 'tap' | 'swipe' | 'off';
@@ -299,6 +301,13 @@ export interface ReaderPreferences {
   readonly flow: ReaderFlowPreference;
   readonly spread: ReaderSpreadPreference;
   readonly pageProgression: ReaderDirectionPreference;
+  /**
+   * The writing mode reflowable text is set in. `auto` keeps the publication's
+   * own; the others override it, and with `pageProgression` on `auto` the page
+   * turns follow (right to left for vertical text). Fixed-layout pages are
+   * never re-set.
+   */
+  readonly writingMode: ReaderWritingModePreference;
   readonly fontSizePercent: number;
   readonly fontFamily: string | null;
   readonly lineHeight: number | null;
@@ -327,6 +336,7 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = Object.freeze({
   flow: 'auto',
   spread: 'auto',
   pageProgression: 'auto',
+  writingMode: 'auto',
   fontSizePercent: 100,
   fontFamily: null,
   lineHeight: null,

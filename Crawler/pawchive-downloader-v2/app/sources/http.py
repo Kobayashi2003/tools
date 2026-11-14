@@ -20,7 +20,7 @@ from curl_cffi import requests as curl_requests
 from curl_cffi.requests import exceptions as curl_exceptions
 from requests.adapters import HTTPAdapter
 
-from ..net import backoff
+from ..net import backoff, proxy
 from ..net.limiter import Throttle
 from ..net.policy import StatusPolicies
 
@@ -109,6 +109,7 @@ class HttpClient:
         adapter = HTTPAdapter(pool_connections=size, pool_maxsize=size)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
+        proxy.apply_to_session(session, proxy.own())
         return session
 
     # ---- lifecycle ----
@@ -152,12 +153,9 @@ class HttpClient:
         assert self.json_session is not None
         # The impersonated browser sends its own matching User-Agent.
         headers = {k: v for k, v in headers.items() if k.lower() != "user-agent"}
-        # curl_cffi reads only the *_PROXY variables; `requests` also finds the Windows system
-        # proxy, so a server started without those variables reaches Fanbox the same way.
-        proxy = requests.utils.select_proxy(url, requests.utils.get_environ_proxies(url))
         try:
             resp = self.json_session.get(
-                url, params=params, headers=headers, timeout=self.timeout, proxy=proxy
+                url, params=params, headers=headers, timeout=self.timeout, proxy=proxy.resolve()
             )
         except curl_exceptions.Timeout as e:
             raise requests.exceptions.Timeout(str(e)) from e

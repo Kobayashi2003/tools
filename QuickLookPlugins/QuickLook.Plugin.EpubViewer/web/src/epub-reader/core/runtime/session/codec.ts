@@ -11,10 +11,13 @@ export function parseReadingSessionRecord(
     !hasExactKeys(value, ['locator', 'marks', 'updatedAt'], ['preferences'])
   )
     return null;
-  const record = value as unknown as Partial<ReadingSessionRecord>;
+  let record = value as unknown as Partial<ReadingSessionRecord>;
   if (!isLocator(record.locator)) return null;
-  if (record.preferences != null && !isReaderPreferences(record.preferences))
-    return null;
+  if (record.preferences != null) {
+    const preferences = parseReaderPreferences(record.preferences);
+    if (!preferences) return null;
+    record = { ...record, preferences };
+  }
   if (!Array.isArray(record.marks) || !record.marks.every(isReaderMark))
     return null;
   if (!isTimestamp(record.updatedAt)) return null;
@@ -145,6 +148,20 @@ function isLocatorText(value: unknown): boolean {
   );
 }
 
+/**
+ * A complete set of reader preferences, or null. `writingMode` came later than
+ * the rest: preferences saved before it read as `auto`, so the reading places
+ * saved with them are not thrown away.
+ */
+export function parseReaderPreferences(
+  value: unknown,
+): ReaderPreferences | null {
+  if (!isRecord(value)) return null;
+  const complete =
+    value.writingMode === undefined ? { ...value, writingMode: 'auto' } : value;
+  return isReaderPreferences(complete) ? complete : null;
+}
+
 function isReaderPreferences(value: unknown): value is ReaderPreferences {
   if (
     !isRecord(value) ||
@@ -152,6 +169,7 @@ function isReaderPreferences(value: unknown): value is ReaderPreferences {
       'flow',
       'spread',
       'pageProgression',
+      'writingMode',
       'fontSizePercent',
       'fontFamily',
       'lineHeight',
@@ -169,6 +187,7 @@ function isReaderPreferences(value: unknown): value is ReaderPreferences {
     isOneOf(value.flow, ['auto', 'paginated', 'scrolled']) &&
     isOneOf(value.spread, ['auto', 'single', 'double']) &&
     isOneOf(value.pageProgression, ['auto', 'ltr', 'rtl']) &&
+    isOneOf(value.writingMode, ['auto', 'horizontal-tb', 'vertical-rl']) &&
     isNumberInRange(value.fontSizePercent, 50, 300) &&
     (value.fontFamily === null || typeof value.fontFamily === 'string') &&
     (value.lineHeight === null || isNumberInRange(value.lineHeight, 0.8, 3)) &&

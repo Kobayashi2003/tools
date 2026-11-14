@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import requests
 
 from .config import USER_AGENT
+from .proxy import apply_to_session
 
 
 def create_session(config) -> requests.Session:
@@ -25,8 +26,7 @@ def create_session(config) -> requests.Session:
             "Accept-Language": "en-US,en;q=0.9",
         }
     )
-    if config.proxy:
-        session.proxies = {"http": config.proxy, "https": config.proxy}
+    apply_to_session(session, config.proxy)
     load_cookies(session, config.cookies_file, config.mirror)
     return session
 

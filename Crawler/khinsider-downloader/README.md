@@ -18,6 +18,8 @@ uv run main.py <album_url> [<album_url> ...] [options]
 | `-b, --browser` | `chrome`, `edge`, `firefox`, `auto` | `auto` |
 | `--headless` | Run the browser headless | off |
 | `--no-booklet` | Skip booklet images | off |
-| `--no-proxy` | Connect directly (browser and downloads) instead of through the system proxy | off |
 | `--retry` | Retry each resource until it succeeds | off |
 | `-w, --workers` | Concurrent downloads | `4` |
+
+`KHINSIDER_PROXY` is the proxy for the browser and the downloads alike: a URL, or `none` for
+direct; empty (the default) uses `HTTPS_PROXY` / `HTTP_PROXY`, else the Windows system proxy.

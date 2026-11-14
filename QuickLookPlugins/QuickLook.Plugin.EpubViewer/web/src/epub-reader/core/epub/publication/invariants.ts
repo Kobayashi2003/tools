@@ -67,6 +67,9 @@ export function normalizeReaderPreferences(
     value.compatibility ?? DEFAULT_READER_COMPATIBILITY_PREFERENCES;
   return cloneAndFreezePlainData({
     ...value,
+    writingMode: ['horizontal-tb', 'vertical-rl'].includes(value.writingMode)
+      ? value.writingMode
+      : 'auto',
     fontSizePercent: clamp(value.fontSizePercent, 50, 300),
     lineHeight:
       value.lineHeight == null ? null : clamp(value.lineHeight, 0.8, 3),

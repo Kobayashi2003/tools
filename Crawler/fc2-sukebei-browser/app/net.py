@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 import requests
 
+from .proxy import apply_to_session
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/140.0 Safari/537.36"
@@ -56,8 +58,7 @@ class Http:
                 "Accept-Language": "ja,en-US;q=0.8,en;q=0.6",
             }
         )
-        if proxy:
-            self.session.proxies.update({"http": proxy, "https": proxy})
+        apply_to_session(self.session, proxy or "")
         self._next_slot = {}
         self._lock = threading.Lock()
         self.on_retry = None  # optional callback(host, error, wait_seconds) for logging

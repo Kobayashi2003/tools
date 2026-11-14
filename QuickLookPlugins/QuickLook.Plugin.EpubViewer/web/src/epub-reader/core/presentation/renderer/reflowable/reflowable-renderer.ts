@@ -323,8 +323,12 @@ export class ReflowableRenderer implements RendererInstance {
     transaction.mutate(() => {
       if (!this.document || !this.plan) return;
       this.presentation = inspectComputedPresentation(this.document, this.plan);
+      // A writing mode the reader imposed is not the document's own: recorded as
+      // a content hint, it would outlive the preference that set it.
       this.environment.onPresentationHints?.({
-        writingMode: this.presentation.writingMode,
+        ...(this.plan.preferences.writingMode === 'auto'
+          ? { writingMode: this.presentation.writingMode }
+          : {}),
         direction: this.presentation.textDirection,
       });
     });

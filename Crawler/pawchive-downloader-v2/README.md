@@ -93,7 +93,9 @@ the data. **Rename** re-applies the post folder template.
 ## Configuration
 
 Settings are edited in the page and saved in `data/config.json`; `PAWCHIVE_<SETTING>` in
-`.env` wins (see `.env.example`).
+`.env` wins (see `.env.example`). `PAWCHIVE_PROXY` (a URL, or `none` for direct; default empty)
+is the proxy for every request and the sign-in browser; empty uses `HTTPS_PROXY` /
+`HTTP_PROXY`, else the Windows system proxy.
 
 ## Checks
 

@@ -16,6 +16,12 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 from playwright.async_api import async_playwright, expect
 
+from proxy import chromium_args, resolve_proxy
+
+# The one proxy for httpx and the browser: X_IMAGE_PROXY (a URL, or "none" for direct),
+# else HTTPS_PROXY / HTTP_PROXY, else the Windows system proxy.
+PROXY = resolve_proxy(os.environ.get("X_IMAGE_PROXY", ""))
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -74,7 +80,7 @@ async def download_images(publish_images, author, publish_time, save_path):
     os.makedirs(save_folder, exist_ok=True)
     date = datetime.strptime(publish_time, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%Y-%m-%d")
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(proxy=PROXY, trust_env=False) as client:
         for image in publish_images:
             image = image[: image.rfind("?")]
             image_name = image[image.rfind("/") + 1 :]
@@ -168,7 +174,7 @@ async def run(
 
     random.seed(datetime.now().timestamp())
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless)
+        browser = await p.chromium.launch(headless=headless, args=chromium_args(PROXY))
         context = await browser.new_context()
         try:
             await asyncio.gather(

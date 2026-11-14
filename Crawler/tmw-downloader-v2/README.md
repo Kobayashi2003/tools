@@ -39,7 +39,7 @@ job's files without downloading. `?` shows every keyboard shortcut.
 | `--cap` | Cap the posts sent to the page (`0` = all) | `0` |
 | `--channel_id` / `--guild_id` | Channel to open | #book-recommendations |
 | `--offline` | Serve the cache without contacting Discord | off |
-| `--port` / `--proxy` / `--config` | | `18040` / — / `config.json` |
+| `--port` / `--config` | | `18040` / `config.json` |
 | `--print` / `--no-open` | List the newest on the console / don't open a browser | off |
 
 ## Configuration
@@ -50,7 +50,7 @@ the environment. The command line wins, then the environment, then `config.json`
 | Variable | Purpose |
 |---|---|
 | `TMW_TOKEN` | Account token (environment only) |
-| `TMW_PROXY` | HTTP(S) proxy for every connection, gateway included |
+| `TMW_PROXY` | Proxy for every connection, gateway included: a URL, or `none` for direct; default empty, which uses `HTTPS_PROXY` / `HTTP_PROXY`, else the Windows system proxy |
 | `TMW_PORT` | Local port |
 | `TMW_CACHE_DIR` / `TMW_STATE_FILE` / `TMW_DOWNLOAD_DIR` | Message cache / bookmarks / downloads |
 
@@ -65,7 +65,7 @@ the environment. The command line wins, then the environment, then `config.json`
 ## Troubleshooting
 
 - **"could not reach Discord's gateway"**: nothing was pressed. Run `--doctor`; if Discord needs
-  a tunnel, set `TMW_PROXY` (the gateway does not read system proxy settings).
+  a tunnel, switch the system proxy on or set `TMW_PROXY`; the gateway follows the same proxy as everything else.
 - **"the reader did not answer in time"**: the file host is flaky; **try again** resumes from the
   `.part` file.
 - **"claims expire after about ten minutes"**: press the button again.

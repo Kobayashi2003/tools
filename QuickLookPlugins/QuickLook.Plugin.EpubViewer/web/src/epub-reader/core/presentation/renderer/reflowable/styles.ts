@@ -448,6 +448,8 @@ export function buildReaderPreferenceCss(
     // specificity, so publisher rules still win where they exist.
     extra.push(`:where(ruby, rb, rt, rtc) { line-height: normal; }`);
   }
+  const writingMode = writingModeOverrideCss(plan);
+  if (writingMode) extra.push(writingMode);
   const theme = themeDeclarations(resolvedTheme);
   if (theme?.body) rules.push(...theme.body);
   if (theme?.link)
@@ -467,6 +469,21 @@ body {
 }
 ${extra.join('\n')}
 `;
+}
+
+/**
+ * Re-sets the document in the writing mode the reader chose. Both the root and
+ * the body are set: the body is the multicol container that pages, and the
+ * root decides how the body itself is laid out. Elements the publisher set in
+ * a mode of their own (a horizontal table in a vertical book) keep it.
+ */
+function writingModeOverrideCss(plan: RenditionPlan): string | null {
+  const mode = plan.preferences.writingMode;
+  if (mode === 'auto' || plan.renderer === 'fixed-layout') return null;
+  return `html, body {
+  -webkit-writing-mode: ${mode} !important;
+  writing-mode: ${mode} !important;
+}`;
 }
 
 export function upsertReaderStyle(

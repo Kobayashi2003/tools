@@ -19,3 +19,6 @@ uv run main.py <url> [<url> ...] [options]
 | `-o, --output` | Output directory | `images` |
 | `-l, --log` | Dedup log file | `log.json` |
 | `--headless` | Run the browser headless | off |
+
+`X_IMAGE_PROXY` (a URL, or `none` for direct; default empty) is the proxy for the browser and
+the image downloads alike; empty uses `HTTPS_PROXY` / `HTTP_PROXY`, else the Windows system proxy.

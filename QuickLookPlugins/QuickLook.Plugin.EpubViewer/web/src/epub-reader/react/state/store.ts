@@ -35,6 +35,10 @@ import {
   createRestoredMarkStore,
   resolveReadingSession,
 } from './store/reading-session';
+import {
+  devicePreferences,
+  type ReaderPreferenceStorage,
+} from './preference-storage';
 
 type Listener = () => void;
 
@@ -67,6 +71,9 @@ export class ReactEpubReaderStore {
   private readingSessionStorage: ReadingSessionStorage | null = null;
   private readingSessionKey: string | null = null;
   private readingSessionPersistPreferences = true;
+  private preferenceStorage: ReaderPreferenceStorage | null = null;
+  /** The device settings last written, so an unchanged set is not written again. */
+  private savedDevicePreferences: string | null = null;
   private readingSessionCleared = false;
   private readingSessionSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private openAbortController: AbortController | null = null;
@@ -272,6 +279,21 @@ export class ReactEpubReaderStore {
   clearSelection(): void {
     this.reader?.clearSelection();
   }
+  /**
+   * Saves the reading position now instead of after the save delay. For a host
+   * about to do something that reads the session back (open another edition,
+   * leave the page): without it, the latest page turn may still be waiting.
+   */
+  flushReadingSession(): void {
+    if (this.readingSessionSaveTimer != null)
+      clearTimeout(this.readingSessionSaveTimer);
+    this.readingSessionSaveTimer = null;
+    if (this.reader && !this.readingSessionCleared)
+      this.saveReadingSession(
+        this.reader.snapshot,
+        this.readingSessionPersistPreferences,
+      );
+  }
   clearReadingSession(): void {
     if (this.readingSessionStorage && this.readingSessionKey) {
       this.readingSessionStorage.remove(this.readingSessionKey);
@@ -435,12 +457,16 @@ export class ReactEpubReaderStore {
       this.readingSessionStorage = session.storage;
       this.readingSessionKey = session.storage ? session.key : null;
       this.readingSessionPersistPreferences = session.persistPreferences;
+      this.preferenceStorage = session.preferenceStorage;
+      const device = session.preferenceStorage?.load() ?? null;
+      this.savedDevicePreferences = device ? JSON.stringify(device) : null;
       this.readingSessionCleared = false;
       const readerOptions = createReaderOptions({
         options: this.options,
         saved,
         persistSavedPreferences: session.persistPreferences,
         retryPreferences: this.reopenPreferences,
+        devicePreferences: device ? devicePreferences(device) : null,
         restoredMarkStore,
         signal: openSignal,
         callbacks: {
@@ -633,6 +659,7 @@ export class ReactEpubReaderStore {
     this.reader = null;
     this.readingSessionStorage = null;
     this.readingSessionKey = null;
+    this.preferenceStorage = null;
   }
 
   private scheduleReadingSessionSave(
@@ -671,6 +698,15 @@ export class ReactEpubReaderStore {
       persistPreferences,
     );
     this.readingSessionStorage.save(this.readingSessionKey, record);
+    this.saveDevicePreferences(snapshot);
+  }
+
+  private saveDevicePreferences(snapshot: BrowserEpubReaderSnapshot): void {
+    if (!this.preferenceStorage) return;
+    const serialized = JSON.stringify(snapshot.preferences);
+    if (serialized === this.savedDevicePreferences) return;
+    this.savedDevicePreferences = serialized;
+    this.preferenceStorage.save(snapshot.preferences);
   }
 
   private requireReader(): BrowserEpubReader {

@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 from .progress import Board
+from .proxy import chromium_args, firefox_prefs, resolve_proxy
 from .search import fetch_detail
 from .session import create_session, get
 
@@ -217,6 +218,8 @@ def _create_driver(config):
         if _LOCALHOST_BYPASS not in existing:
             os.environ[var] = f"{existing},{_LOCALHOST_BYPASS}".lstrip(",")
 
+    proxy = resolve_proxy(config.proxy)
+
     def arm(driver):
         """Nothing here may block forever.
 
@@ -232,6 +235,8 @@ def _create_driver(config):
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
+        for arg in chromium_args(proxy):
+            options.add_argument(arg)
         if config.headless:
             options.add_argument("--headless=new")
         driver = arm(driver_cls(options=options))
@@ -242,6 +247,8 @@ def _create_driver(config):
 
     def firefox():
         options = FirefoxOptions()
+        for name, value in firefox_prefs(proxy).items():
+            options.set_preference(name, value)
         if config.headless:
             options.add_argument("--headless")
         return arm(webdriver.Firefox(options=options))

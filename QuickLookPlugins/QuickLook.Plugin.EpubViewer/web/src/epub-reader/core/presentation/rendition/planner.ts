@@ -54,7 +54,11 @@ export function planRendition(input: PlanRenditionInput): RenditionPlan {
     input.contentHints,
   );
 
-  const writingMode = resolveWritingMode(input.contentHints?.writingMode);
+  const writingMode =
+    preferences.writingMode !== 'auto' &&
+    publicationRendition.layout !== 'pre-paginated'
+      ? { value: preferences.writingMode, source: 'user' as const }
+      : resolveWritingMode(input.contentHints?.writingMode);
   const textDirection = resolveTextDirection(input.contentHints?.direction);
   const orientation = resolveOrientation(
     publicationRendition.orientation,

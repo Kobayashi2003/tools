@@ -16,6 +16,10 @@ _Avoid_: Chapter, page
 The publication-scoped reading state needed to continue reading, including the current location, preferences, and state contributed by reading features.
 _Avoid_: Browser session, publication cache
 
+**Device Preferences**:
+The reading settings that describe the person reading rather than the book (type size, theme, margins, touch), kept apart from any Reading Session when preferences are device-scoped and laid over every publication opened.
+_Avoid_: Global settings, user profile
+
 **Reader Snapshot**:
 The immutable built-in state a reader publishes to its host at one point in time.
 _Avoid_: Store, mutable reader state

@@ -14,6 +14,14 @@ export function resolvePageProgression(
     return { value: preferences.pageProgression, source: 'user' };
   }
 
+  // Text re-set in another writing mode turns its pages the way that mode reads.
+  if (preferences.writingMode !== 'auto') {
+    return {
+      value: preferences.writingMode === 'vertical-rl' ? 'rtl' : 'ltr',
+      source: 'user',
+    };
+  }
+
   if (
     publication.pageProgressionDirection === 'ltr' ||
     publication.pageProgressionDirection === 'rtl'

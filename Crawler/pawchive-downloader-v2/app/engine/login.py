@@ -22,6 +22,7 @@ from typing import Protocol
 import websocket
 
 from ..domain.timefmt import now_utc
+from ..net import proxy
 from ..sources.fanbox import SessionRejected
 from .context import Context
 from .sync import check_patreon_session, refresh_subscriptions
@@ -239,6 +240,7 @@ class BrowserLogin:
                 "--remote-debugging-port=0",
                 "--no-first-run",
                 "--no-default-browser-check",
+                *proxy.chromium_args(proxy.resolve()),
                 self.site.url,
             ]
         )

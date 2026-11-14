@@ -2,7 +2,11 @@ import { useEffect, useId, useMemo, useRef } from 'react';
 import { EpubReaderStatus } from '../chrome/EpubReaderStatus';
 import { EpubReaderProvider } from './context';
 import { EpubViewport } from './EpubViewport';
-import type { EpubSource, UseEpubReaderOptions } from '../state/model';
+import type {
+  EpubReaderHandle,
+  EpubSource,
+  UseEpubReaderOptions,
+} from '../state/model';
 import type { ReaderTheme } from '../../core';
 import { useCompactReaderLayout } from '../chrome/responsive';
 import type { ReaderChromeControls } from '../chrome/use-reader-chrome';
@@ -32,6 +36,17 @@ export interface EpubReaderProps {
   /** Validated UI, theme, input, and book-compatibility composition for this reader. */
   readonly configuration?: ReaderUiConfiguration;
   readonly onThemeChange?: (theme: ReaderTheme) => void;
+  /**
+   * Receives the reader's handle while it is mounted, for a host that drives
+   * the reader from controls of its own: changing preferences, saving the
+   * reading position now. Cleared on unmount.
+   */
+  readonly readerRef?: { current: EpubReaderHandle | null };
+  /**
+   * Told when the toolbar and controls appear or hide, so a host bar placed in
+   * the room `--epub-host-chrome-top` reserves can go with them.
+   */
+  readonly onChromeVisibilityChange?: (visible: boolean) => void;
 }
 
 export function EpubReader({
@@ -39,6 +54,8 @@ export function EpubReader({
   readerOptions,
   configuration = DEFAULT_READER_UI_CONFIGURATION,
   onThemeChange,
+  readerRef,
+  onChromeVisibilityChange,
 }: EpubReaderProps) {
   const runtimeConfiguration = useMemo(
     () => resolveReaderUiConfiguration(configuration),
@@ -142,6 +159,20 @@ export function EpubReader({
     const theme = snapshot?.preferences.theme;
     if (theme) onThemeChange?.(theme);
   }, [onThemeChange, snapshot?.preferences.theme]);
+
+  useEffect(() => {
+    if (readerRef) readerRef.current = reader;
+  }, [reader, readerRef]);
+  useEffect(
+    () => () => {
+      if (readerRef) readerRef.current = null;
+    },
+    [readerRef],
+  );
+
+  useEffect(() => {
+    onChromeVisibilityChange?.(!chromeHidden);
+  }, [chromeHidden, onChromeVisibilityChange]);
 
   useEffect(() => {
     if (panel && !availableTools.some((tool) => tool.id === panel))

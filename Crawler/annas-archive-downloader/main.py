@@ -104,7 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--headless", action="store_true", default=None, help="Run the browser backend headless"
     )
     parser.add_argument("-w", "--workers", type=int, help="Concurrent downloads (default: 3)")
-    parser.add_argument("--proxy", help="HTTP(S) proxy URL")
     parser.add_argument("--config", metavar="FILE", help="Config file (default: config.json)")
     parser.add_argument(
         "-y", "--yes", action="store_true", help="Skip the checkbox list and take every volume"

@@ -30,6 +30,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from urllib3.util.retry import Retry
 
+from proxy import apply_to_session, chromium_args, resolve_proxy
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -37,6 +39,9 @@ USER_AGENT = (
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 # Where videos go when no folder is given
+# The proxy outside the Clash pool: a URL, "none" for direct, or empty for
+# HTTPS_PROXY / HTTP_PROXY, else the Windows system proxy.
+OWN_PROXY = os.environ.get("JABLE_PROXY", "")
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 
 SORT_MAP = {
@@ -89,6 +94,8 @@ def create_session(max_retries=3, proxy=None):
     session.mount("http://", adapter)
     if proxy:
         session.proxies.update(proxy)
+    else:
+        apply_to_session(session, OWN_PROXY)
     return session
 
 
@@ -329,6 +336,9 @@ def create_driver(proxy_url=None):
     options.add_argument(f"user-agent={USER_AGENT}")
     if proxy_url:
         options.add_argument(f"--proxy-server={proxy_url}")
+    else:
+        for arg in chromium_args(resolve_proxy(OWN_PROXY)):
+            options.add_argument(arg)
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
     service = Service(log_output=os.devnull)
     service.creation_flags = subprocess.CREATE_NO_WINDOW

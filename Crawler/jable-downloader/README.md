@@ -25,3 +25,6 @@ uv run main.py <url> [options]
 
 `config.json` (see `config.example.json`) can spread segment downloads over local Clash
 instances: each takes three consecutive ports from `base_port` (HTTP, SOCKS, controller).
+Without the pool, page requests, segment downloads and the browser share one proxy:
+`JABLE_PROXY` (a URL, or `none` for direct; default empty), else `HTTPS_PROXY` /
+`HTTP_PROXY`, else the Windows system proxy.

@@ -24,6 +24,8 @@ interface CreateReaderOptionsInput {
   readonly saved: ReadingSessionRecord | null;
   readonly persistSavedPreferences: boolean;
   readonly retryPreferences: ReaderPreferences | null;
+  /** The device's own settings, when preferences are device-scoped. */
+  readonly devicePreferences?: ReaderPreferencesPatch | null;
   readonly restoredMarkStore?: ReaderMarkStore;
   readonly signal: AbortSignal;
   readonly callbacks: ReaderCallbacks;
@@ -34,13 +36,19 @@ export function createReaderOptions({
   saved,
   persistSavedPreferences,
   retryPreferences,
+  devicePreferences,
   restoredMarkStore,
   signal,
   callbacks,
 }: CreateReaderOptionsInput): BrowserEpubReaderOptions {
   const savedPreferences: ReaderPreferencesPatch =
     saved && persistSavedPreferences ? (saved.preferences ?? {}) : {};
-  const optionPreferences: ReaderPreferencesPatch = options.preferences ?? {};
+  // The host's opening preferences, then what the reader last chose on this
+  // device: a choice the reader made wins over the host's defaults.
+  const optionPreferences: ReaderPreferencesPatch = {
+    ...options.preferences,
+    ...devicePreferences,
+  };
   const retryPatch: ReaderPreferencesPatch = retryPreferences ?? {};
 
   return {

@@ -42,8 +42,11 @@
   --epub-control-sm: 32px;
   --epub-control-md: 40px;
   /* Heights of the top toolbar and the bottom controls bar. Anything that has
-     to sit clear of the chrome reads these instead of restating the numbers. */
-  --epub-chrome-top: 58px;
+     to sit clear of the chrome reads these instead of restating the numbers.
+     A host that puts a bar of its own above the toolbar sets
+     `--epub-host-chrome-top` to its height on an ancestor (never defined here,
+     so the ancestor's value comes through); the toolbar makes room for it. */
+  --epub-chrome-top: calc(58px + var(--epub-host-chrome-top, 0px));
   --epub-chrome-bottom: 68px;
   --epub-panel-width: 380px;
   --epub-radius-sm: 7px;
@@ -68,7 +71,7 @@
 .epub-reader-shell[data-density='compact'] {
   --epub-control-sm: 28px;
   --epub-control-md: 36px;
-  --epub-chrome-top: 52px;
+  --epub-chrome-top: calc(52px + var(--epub-host-chrome-top, 0px));
   --epub-chrome-bottom: 60px;
   font-size: 13px;
 }

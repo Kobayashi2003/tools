@@ -7,6 +7,10 @@ import {
   type ReadingSessionStorage,
 } from '../../../core';
 import { BrowserReadingSessionStorage } from '../browser-reading-session-storage';
+import {
+  BrowserReaderPreferenceStorage,
+  type ReaderPreferenceStorage,
+} from '../preference-storage';
 import type { EpubSource, UseEpubReaderOptions } from '../model';
 import { readingSessionKey } from '../reading-session';
 
@@ -14,6 +18,8 @@ export interface ResolvedReadingSession {
   readonly storage: ReadingSessionStorage | null;
   readonly key: string;
   readonly persistPreferences: boolean;
+  /** Set when preferences are device-scoped: where the device's settings live. */
+  readonly preferenceStorage: ReaderPreferenceStorage | null;
   readonly saveDelayMs: number;
 }
 
@@ -28,6 +34,7 @@ export function resolveReadingSession(
       storage: null,
       key: '',
       persistPreferences: false,
+      preferenceStorage: null,
       saveDelayMs: 0,
     };
   }
@@ -41,10 +48,25 @@ export function resolveReadingSession(
     }
   }
 
+  let preferenceStorage: ReaderPreferenceStorage | null = null;
+  if (options?.preferenceScope === 'device') {
+    preferenceStorage = options.preferenceStorage ?? null;
+    if (!preferenceStorage && ownerWindow) {
+      try {
+        preferenceStorage = new BrowserReaderPreferenceStorage(
+          ownerWindow.localStorage,
+        );
+      } catch {
+        preferenceStorage = null;
+      }
+    }
+  }
+
   return {
     storage,
     key: options?.key?.trim() || readingSessionKey(source, bytes),
     persistPreferences: options?.persistPreferences !== false,
+    preferenceStorage,
     saveDelayMs: Math.max(0, options?.saveDelayMs ?? 300),
   };
 }

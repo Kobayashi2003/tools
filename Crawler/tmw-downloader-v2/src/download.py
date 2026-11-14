@@ -33,6 +33,7 @@ import requests
 from .config import USER_AGENT
 from .hosted import Claim
 from .models import human_size
+from .proxy import apply_to_session
 
 CHUNK = 256 * 1024
 # Windows keeps a short list of characters a name may not contain, and a name
@@ -510,8 +511,7 @@ class Downloads:
         if self._plain is None:
             session = requests.Session()
             session.headers.update({"User-Agent": USER_AGENT})
-            if self.config.proxy:
-                session.proxies = self.config.proxies
+            apply_to_session(session, self.config.proxy)
             self._plain = session
         return self._plain
 

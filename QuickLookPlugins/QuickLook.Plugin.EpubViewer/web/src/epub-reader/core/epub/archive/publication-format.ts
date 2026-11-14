@@ -1,4 +1,3 @@
-import { openKf8Archive } from './kf8-archive';
 import {
   DEFAULT_OCF_ZIP_LIMITS,
   OcfZipArchive,
@@ -39,8 +38,12 @@ export async function openPublicationArchive(
   mode: OcfCompatibilityMode = 'compatible',
 ): Promise<PublicationArchiveOpenResult> {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-  if (detectPublicationFormat(bytes) === 'mobi')
+  if (detectPublicationFormat(bytes) === 'mobi') {
+    // Loaded only for a Kindle file: a bundler splits it out of the reader
+    // every EPUB-only host would otherwise carry.
+    const { openKf8Archive } = await import('./kf8-archive');
     return openKf8Archive(bytes, { ...DEFAULT_OCF_ZIP_LIMITS, ...limits });
+  }
   return OcfZipArchive.open(bytes, limits, mode);
 }
 

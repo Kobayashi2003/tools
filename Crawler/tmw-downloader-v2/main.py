@@ -60,7 +60,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Local port (default: 18040; if it is taken or reserved, "
         "the next free one of the ten from it)",
     )
-    parser.add_argument("--proxy", help="HTTP(S) proxy URL")
     parser.add_argument("--config", metavar="FILE", help="Config file (default: config.json)")
     parser.add_argument("--out", metavar="DIR", help="Where downloads land (default: downloads/)")
     parser.add_argument(
@@ -221,9 +220,9 @@ def doctor(config: Config) -> int:
     print()
     print("route")
     if config.proxy:
-        print(f"   {config.proxy}   (TMW_PROXY)")
+        print(f"   {config.proxy_url or 'direct'}   (TMW_PROXY={config.proxy})")
     elif config.proxy_url:
-        print(f"   {config.proxy_url}   (inherited from the environment)")
+        print(f"   {config.proxy_url}   (HTTPS_PROXY / HTTP_PROXY, else the system proxy)")
     else:
         print("   direct, no proxy")
     print("   used by the REST calls, the downloads and the gateway alike")

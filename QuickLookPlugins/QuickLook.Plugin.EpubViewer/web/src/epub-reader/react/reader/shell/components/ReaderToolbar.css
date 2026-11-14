@@ -13,7 +13,12 @@
   align-items: center;
   gap: var(--epub-space-3);
   min-height: var(--epub-chrome-top);
-  padding-block: max(7px, env(safe-area-inset-top)) 7px;
+  /* A host bar above the toolbar takes the safe area for itself. */
+  padding-block: max(
+      calc(var(--epub-host-chrome-top, 0px) + 7px),
+      env(safe-area-inset-top)
+    )
+    7px;
   padding-inline: max(var(--epub-space-3), env(safe-area-inset-left))
     max(var(--epub-space-3), env(safe-area-inset-right));
   border-bottom: 1px solid var(--epub-color-line);
@@ -208,8 +213,14 @@
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-rows: auto var(--epub-control-md);
   row-gap: 3px;
-  min-height: 76px;
-  padding-block: max(5px, env(safe-area-inset-top)) 5px;
+  /* Two rows here, so taller than `--epub-chrome-top`; a host bar still gets
+     its room above them. */
+  min-height: calc(76px + var(--epub-host-chrome-top, 0px));
+  padding-block: max(
+      calc(var(--epub-host-chrome-top, 0px) + 5px),
+      env(safe-area-inset-top)
+    )
+    5px;
   padding-inline: max(7px, env(safe-area-inset-left))
     max(7px, env(safe-area-inset-right));
 }

@@ -9,6 +9,7 @@ from urllib.parse import unquote
 import requests
 
 from ...domain.naming import sanitize_component
+from ...net import proxy
 from ..http import Cancelled
 
 USER_AGENT = (
@@ -20,9 +21,10 @@ CHUNK = 1 << 20
 
 
 def session() -> requests.Session:
-    """A plain session: system proxy from the environment, a browser's user agent."""
+    """A plain session: the app's one proxy, a browser's user agent."""
     s = requests.Session()
     s.headers["User-Agent"] = USER_AGENT
+    proxy.apply_to_session(s, proxy.own())
     return s
 
 

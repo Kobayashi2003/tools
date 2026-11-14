@@ -39,7 +39,9 @@ or `-4`.
 ## Configuration
 
 Every option can also be set in `config.json` (see `config.example.json`) or as `ANNAS_<OPTION>`;
-the command line wins, then the environment, then the file.
+the command line wins, then the environment, then the file. `ANNAS_PROXY` (environment only)
+is the proxy for every request and the browser alike: a URL, or `none` for direct; default
+empty uses `HTTPS_PROXY` / `HTTP_PROXY`, else the Windows system proxy.
 
 Download pages sit behind DDoS-Guard: export the browser's cookies to `cookies.json` to get
 through. `auto` tries `member` (needs a key), then `libgen`, then a real browser (slow; needed

@@ -24,6 +24,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 
+from proxy import apply_to_session, chromium_args, firefox_prefs, resolve_proxy
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
@@ -52,8 +54,9 @@ class Config:
     retry: bool = False
     max_workers: int = 4
     user_agent: str = USER_AGENT
-    use_system_proxy: bool = True
-    """Route the browser and file downloads through the system proxy; False connects directly."""
+    proxy: str = ""
+    """The proxy for the browser and downloads alike: a URL, "none" for direct, or empty
+    for HTTPS_PROXY / HTTP_PROXY, else the Windows system proxy."""
 
 
 @dataclass
@@ -92,8 +95,7 @@ def sanitize_filename(name: str) -> str:
 def create_session(config: Config) -> requests.Session:
     session = requests.Session()
     session.headers["User-Agent"] = config.user_agent
-    # requests picks up proxies from the environment and, on Windows, the registry.
-    session.trust_env = config.use_system_proxy
+    apply_to_session(session, config.proxy)
     return session
 
 
@@ -130,8 +132,8 @@ def create_driver(config: Config):
 def _setup_chromium(options, config, driver_cls):
     options.add_argument(f"--user-agent={config.user_agent}")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    if not config.use_system_proxy:
-        options.add_argument("--no-proxy-server")
+    for arg in chromium_args(resolve_proxy(config.proxy)):
+        options.add_argument(arg)
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     if config.headless:
@@ -152,8 +154,8 @@ def _setup_edge(config: Config):
 def _setup_firefox(config: Config):
     options = FirefoxOptions()
     options.set_preference("general.useragent.override", config.user_agent)
-    # network.proxy.type: 5 = use system proxy, 0 = direct.
-    options.set_preference("network.proxy.type", 5 if config.use_system_proxy else 0)
+    for name, value in firefox_prefs(resolve_proxy(config.proxy)).items():
+        options.set_preference(name, value)
     if config.headless:
         options.add_argument("--headless")
     return webdriver.Firefox(options=options)
@@ -517,11 +519,6 @@ def main(argv=None):
     parser.add_argument("--headless", action="store_true", help="Run browser headless")
     parser.add_argument("--no-booklet", action="store_true", help="Skip booklet images")
     parser.add_argument(
-        "--no-proxy",
-        action="store_true",
-        help="Connect directly instead of through the system proxy",
-    )
-    parser.add_argument(
         "--retry", action="store_true", help="Retry each resource until it succeeds"
     )
     parser.add_argument(
@@ -537,7 +534,7 @@ def main(argv=None):
         download_booklet=not args.no_booklet,
         retry=args.retry,
         max_workers=args.workers,
-        use_system_proxy=not args.no_proxy,
+        proxy=os.environ.get("KHINSIDER_PROXY", ""),
     )
 
     try:

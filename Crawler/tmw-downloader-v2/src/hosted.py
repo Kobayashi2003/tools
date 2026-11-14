@@ -28,6 +28,7 @@ from urllib.parse import unquote, urlparse
 import requests
 
 from .config import USER_AGENT
+from .proxy import apply_to_session
 
 CLAIM_RE = re.compile(r"https?://[^\s<>\"']+/read-claim/[A-Za-z0-9_\-]+")
 URL_RE = re.compile(r"https?://[^\s<>\"'`]+")
@@ -115,8 +116,7 @@ def _session(config) -> requests.Session:
             "Accept-Language": "en-US,en;q=0.9",
         }
     )
-    if config.proxy:
-        session.proxies = config.proxies
+    apply_to_session(session, config.proxy)
     return session
 
 

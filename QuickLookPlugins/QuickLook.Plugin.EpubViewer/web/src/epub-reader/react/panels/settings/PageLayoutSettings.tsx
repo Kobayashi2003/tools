@@ -9,6 +9,7 @@ export function PageLayoutSettings({
 }: {
   readonly reader: EpubReaderHandle;
   readonly preferences: ReaderPreferences;
+  /** Whether the publication has reflowable text, which can be re-set and scrolled. */
   readonly showFlow: boolean;
 }) {
   return (
@@ -19,6 +20,27 @@ export function PageLayoutSettings({
           <h3>Layout</h3>
         </div>
       </div>
+      {showFlow ? (
+        <label className="epub-settings-panel__select-row">
+          <span>
+            <strong>Text direction</strong>
+            <small>Set the text horizontally or vertically.</small>
+          </span>
+          <select
+            value={preferences.writingMode}
+            onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+              void reader.setPreferences({
+                writingMode: event.currentTarget
+                  .value as ReaderPreferences['writingMode'],
+              })
+            }
+          >
+            <option value="auto">As published</option>
+            <option value="horizontal-tb">Horizontal</option>
+            <option value="vertical-rl">Vertical</option>
+          </select>
+        </label>
+      ) : null}
       {showFlow ? (
         <label className="epub-settings-panel__select-row">
           <span>

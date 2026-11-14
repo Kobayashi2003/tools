@@ -37,7 +37,7 @@ export class ExtensionDependencyUnavailableError extends Error {
 export class RequiredExtensionStartError extends Error {
   constructor(
     readonly extensionId: string,
-    readonly cause: unknown,
+    override readonly cause: unknown,
   ) {
     super(`Required extension ${extensionId} failed to start.`);
     this.name = 'RequiredExtensionStartError';

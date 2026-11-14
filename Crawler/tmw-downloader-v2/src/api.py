@@ -17,6 +17,7 @@ from collections.abc import Iterable
 import requests
 
 from .config import API_BASE, USER_AGENT
+from .proxy import apply_to_session
 
 REFRESH_BATCH = 50
 
@@ -59,8 +60,7 @@ class Discord:
                 "X-Discord-Locale": "en-US",
             }
         )
-        if config.proxy:
-            self.session.proxies = {"http": config.proxy, "https": config.proxy}
+        apply_to_session(self.session, config.proxy)
 
     # -- plumbing ---------------------------------------------------------
 

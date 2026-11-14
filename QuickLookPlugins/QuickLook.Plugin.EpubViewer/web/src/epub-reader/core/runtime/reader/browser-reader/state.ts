@@ -118,6 +118,7 @@ export function renderPreferencesChanged(
     left.flow !== right.flow ||
     left.spread !== right.spread ||
     left.pageProgression !== right.pageProgression ||
+    left.writingMode !== right.writingMode ||
     left.fontSizePercent !== right.fontSizePercent ||
     left.fontFamily !== right.fontFamily ||
     left.lineHeight !== right.lineHeight ||

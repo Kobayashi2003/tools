@@ -7,6 +7,5 @@
   "format_priority": ["epub", "azw3", "mobi", "fb2", "djvu", "cbz", "cbr", "pdf"],
   "backend": "auto",
   "secret_key": "",
-  "workers": 3,
-  "proxy": ""
+  "workers": 3
 }

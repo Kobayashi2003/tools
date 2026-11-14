@@ -34,7 +34,7 @@ class Settings:
     data_dir: Path
     port: int = 18050
     proxy: str | None = None
-    """None: requests honours HTTP(S)_PROXY on its own."""
+    """FC2SB_PROXY: a URL, or "none" for direct. None: HTTPS_PROXY / HTTP_PROXY, else the Windows system proxy."""
     workers: int = 3
     """Parallel metadata lookups."""
     sukebei_delay: float = 1.5

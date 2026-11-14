@@ -60,6 +60,7 @@ export function useEpubReader(
       registerTheme: (theme) => store.registerTheme(theme),
       captureSelection: () => store.captureSelection(),
       clearSelection: () => store.clearSelection(),
+      saveReadingSession: () => store.flushReadingSession(),
       clearReadingSession: () => store.clearReadingSession(),
       addHighlightFromSelection: (highlight, color) =>
         store.addHighlightFromSelection(highlight, color),
