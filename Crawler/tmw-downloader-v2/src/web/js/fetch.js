@@ -96,7 +96,7 @@ export async function checkFetch() {
 
 export async function startFetch() {
   try {
-    const data = await post("/api/fetch", { spec: want.spec, dir: want.dir });
+    const data = await post("api/fetch", { spec: want.spec, dir: want.dir });
     adoptStatus(data);
     if (data.already) toast("Already reading this channel");
     startPolling();
@@ -108,7 +108,7 @@ export async function startFetch() {
 
 export async function stopFetch() {
   try {
-    adoptStatus(await post("/api/fetch/stop"));
+    adoptStatus(await post("api/fetch/stop"));
   } catch (err) {
     alarm("Could not stop the crawl: " + err.message);
   }

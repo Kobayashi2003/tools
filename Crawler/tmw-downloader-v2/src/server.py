@@ -163,6 +163,8 @@ class Handler(BaseHTTPRequestHandler):
         payload = feed.payload(**scope)
         payload["channels"] = self._channels()
         payload["held"] = self._held(payload["posts"], feed)
+        # Seconds between two presses, so the page can say how long a batch takes.
+        payload["press_pause"] = feed.config.press_pause
         return payload
 
     def _held(self, posts, feed=None) -> dict:
@@ -387,6 +389,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, 502)
                 return
             self._json({"claim": claim.to_json()})
+
+        elif route == "/api/grab" and isinstance(body.get("ids"), list):
+            # Many at once, through the same queue as one: each still waits its
+            # turn, and the bot is pressed one job at a time, `press_pause` apart.
+            # A job already on disk or already queued is left out, never re-pressed.
+            queued, skipped = 0, 0
+            for message_id in (str(i) for i in body["ids"]):
+                rec = feed.post(message_id)
+                held = self.grabber.downloads.task(rec.job) if rec and rec.job else None
+                if (
+                    rec is None
+                    or not rec.job
+                    or rec.job in feed.state.taken
+                    or self.grabber.ledger.get(rec.job)
+                    or (held is not None and held.active)
+                ):
+                    skipped += 1
+                    continue
+                try:
+                    self.grabber.grab(feed, message_id)
+                except Exception:
+                    skipped += 1
+                    continue
+                queued += 1
+            self._json({"queued": queued, "skipped": skipped, "grabs": self.grabber.status()})
 
         elif route == "/api/grab":
             try:

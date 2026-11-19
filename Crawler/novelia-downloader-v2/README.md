@@ -43,8 +43,8 @@ One instance may use a data directory at a time. API docs are served at `/docs`.
   Novelia can supply; when it cannot supply one (a broken upload, or a build that always
   fails), the next ticked edition stands in and is removed once the preferred one arrives.
   What Novelia could not supply is skipped by later tasks until the volume changes, or for 30
-  days. A work's page lists every edition of each volume in this order; one downloaded from
-  there by name is kept beside the strategy, never removed as a stand-in. A broken picture or font, or a junk `mimetype` entry, is repaired on save. Text
+  days. A work's page is a table of volumes by edition, its columns in this order; an edition
+  downloaded from its cell is kept beside the strategy, never removed as a stand-in. A broken picture or font, or a junk `mimetype` entry, is repaired on save. Text
   (`.txt`) volumes are saved as text.
 - **Conversion** builds editions from bilingual files for volumes without Novelia's own
   edition of that language. The Japanese edition (`[ja]`) keeps the Japanese paragraphs,
@@ -54,6 +54,12 @@ One instance may use a data directory at a time. API docs are served at `/docs`.
   `conversion-report.json` and exits 1 if anything is unverified.
 - **Chinese-only uploads** are no longer on Novelia's pages and many are broken; they are
   skipped and hidden unless a setting brings them back.
+- **Library**: **New volumes** lists the works that gained volumes in the last 7 days
+  (`GET /api/recent`); **See all** sorts the library by **Recently downloaded**. Completeness
+  and edition filters combine. `[` and `]` turn the page in the library and the catalog, whose
+  page size and **Hide works you have** switch are kept in the browser.
+- **Tasks**: running ones come first; two or more clean scheduled sweeps in a row fold into
+  one line that can be cleared at once.
 
 ## Configuration
 

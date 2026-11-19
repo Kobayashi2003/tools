@@ -1,9 +1,5 @@
 """Settings: defaults < data/config.json < `PAWCHIVE_*` environment variables.
 
-Field names match v1 wherever v1 had the setting, so `import-v1` can carry its
-config.json across and an existing `.env` keeps meaning what it meant. Fanbox
-settings are new and all start with `fanbox_`.
-
 The Fanbox session cookie is not a setting: it lives in `data/secrets.json`
 (or `FANBOX_SESSID`), because config.json is meant to be shareable.
 """
@@ -96,7 +92,7 @@ class Settings:
     max_concurrent_creators: int = 2
     max_concurrent_files: int = 2
 
-    # Layout. Folder dates are UTC, matching v1's folders.
+    # Layout. Folder dates are UTC.
     date_format: str = "%Y.%m.%d"
     artist_folder_template: str = "{group}/{alias}/{service}"
     post_folder_template: str = "[{published}][{id}] {title}"
@@ -108,12 +104,10 @@ class Settings:
     )
 
     global_filter: dict = field(default_factory=dict)
-    # Links in a post's text worth keeping: a host or URL containing one of these. v1's
-    # `links_filter.allowed_domains`.
+    # Keep links whose host or URL contains one of these entries.
     link_domains: list[str] = field(default_factory=lambda: list(LINK_DOMAINS))
     global_timer: dict | None = None
-    # Timers (global and per creator) fire only when this is on. Off by default so an
-    # imported v1 timer cannot start a second scheduled run next to v1's own.
+    # Global and per-creator timers run only when enabled.
     timers_enabled: bool = False
 
     def is_image(self, name: str) -> bool:

@@ -26,7 +26,10 @@ export const state = {
   meta: { channel: {}, display: {}, coverage: {} },
   channel: readLocal(CHANNEL_KEY) || "",
   scope: { tail: null },
-  filters: { q: "", kind: "", source: "", savedOnly: false, missingOnly: false, desc: false },
+  // have: "" any, "no" not fetched, "yes" fetched, "failed" its download failed.
+  // sort: "new" newest first, "old" oldest first, "love" most hearts first.
+  // who: a recommender, set by clicking their name.
+  filters: { q: "", kind: "", source: "", savedOnly: false, have: "", who: "", sort: "new" },
   // The crawl running on the server for this channel, as last polled.
   job: { active: false, dir: "older", fetched: 0, added: 0, edge: null, error: "" },
   // The download queue, as last polled: the whole list, and a job -> state map
@@ -39,9 +42,12 @@ export const state = {
 /* Filters persist, the search box does not: coming back to yesterday's chips is
  * helpful, coming back to a half-typed query is not. */
 export function savePrefs() {
-  const { kind, source, savedOnly, missingOnly, desc } = state.filters;
-  writeLocal(PREFS_KEY, JSON.stringify({ kind, source, savedOnly, missingOnly, desc }));
+  const { kind, source, savedOnly, have, sort } = state.filters;
+  writeLocal(PREFS_KEY, JSON.stringify({ kind, source, savedOnly, have, sort }));
 }
+
+const HAVE = ["", "no", "yes", "failed"];
+const SORTS = ["new", "old", "love"];
 
 export function loadPrefs() {
   try {
@@ -50,8 +56,9 @@ export function loadPrefs() {
       kind: saved.kind || "",
       source: saved.source || "",
       savedOnly: !!saved.savedOnly,
-      missingOnly: !!saved.missingOnly,
-      desc: !!saved.desc,
+      // Earlier pages kept a "not yet fetched" switch and a "newest first" switch.
+      have: HAVE.includes(saved.have) ? saved.have : saved.missingOnly ? "no" : "",
+      sort: SORTS.includes(saved.sort) ? saved.sort : "desc" in saved && !saved.desc ? "old" : "new",
     });
   } catch (err) { /* a filter set is not worth a failed boot */ }
   return state.filters;
@@ -64,8 +71,11 @@ export function rememberChannel(id) {
 
 export const filtering = () => {
   const f = state.filters;
-  return !!(f.q || f.kind || f.source || f.savedOnly || f.missingOnly);
+  return !!(f.q || f.kind || f.source || f.savedOnly || f.have || f.who);
 };
+
+// The download queue's word for a job, "failed" included.
+const failed = (post) => state.jobState.get(post.job) === "failed";
 
 /* Whether this one is already on disk. The tick and the ledger can disagree
  * -- a run that ticked a job before the ledger existed, a folder since moved --
@@ -84,7 +94,10 @@ export function indexPost(post) {
 export function passes(post) {
   const f = state.filters;
   if (f.savedOnly && !state.saved.has(post.id)) return false;
-  if (f.missingOnly && have(post)) return false;
+  if (f.have === "no" && have(post)) return false;
+  if (f.have === "yes" && !have(post)) return false;
+  if (f.have === "failed" && !failed(post)) return false;
+  if (f.who && post.who !== f.who) return false;
   if (f.kind && post.kind !== f.kind) return false;
   // The two kinds of job behave differently enough to be worth separating:
   // one opens a reader session, the other is a link somewhere else.

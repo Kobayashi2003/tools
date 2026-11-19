@@ -6,15 +6,15 @@
    The interface is English throughout; the only Japanese on the page is the
    titles themselves, which are the books.
 
-   Written narrow first. The base rules are the phone layout, and each
-   breakpoint adds what a wider window can afford -- the recommender on a card
-   at 420, single-line file rows at 560, the month rail as a column at 900. Anything the virtual list measures is
-   a custom property on :root, so a breakpoint that changes a height changes the
-   arithmetic with it.
+   The page is a grid of covers between the month rail and the dock. Every card is
+   the same size, set here: the virtual list reads --card-h, --card-gap, --day-h
+   and --card-min from :root, so its arithmetic and the drawing cannot disagree.
+   Wide (1500px and up) the dock is a column of the page; narrower it slides over
+   the grid; under 900px the rail goes.
 
    1  tokens          6  cards
-   2  base            7  file rows
-   3  utilities       8  overlays
+   2  base            7  the dock
+   3  controls        8  overlays
    4  the bar         9  breakpoints
    5  stage and rail                                                        */
 
@@ -41,20 +41,19 @@
   --ui: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
 
-  --bar-h: 150px;          /* measured by the page; this is only the first paint */
-  --rail-w: 92px;
-  --page: 1320px;
-  --pad: 12px;
+  --bar-h: 108px;          /* measured by the page; this is only the first paint */
+  --rail-w: 96px;
+  --dock-w: 440px;
+  --pad: 20px;
 
-  /* Every part of a card that could vary is pinned instead, so its height is
-     arithmetic rather than a guess. Nothing here may become `auto`: the virtual
-     list positions rows from these numbers before they are drawn. */
-  --plate-h: 112px;
-  --row-h: 52px;
-  --row-gap: 3px;
-  --title-line: 21px;
-  --day-h: 42px;
-  --card-chrome: 34px;     /* padding + border + margin, the fixed part of a card */
+  /* A card: the cover plate, then a body of fixed lines. --card-h is their sum,
+     written out because the page reads it as a number. */
+  --plate-h: 196px;
+  --card-body: 140px;
+  --card-h: 336px;
+  --card-gap: 14px;
+  --card-min: 250px;
+  --day-h: 44px;
 }
 
 /* ---------- 2. base ---------- */
@@ -63,8 +62,7 @@
 
 html { scrollbar-color: var(--ai-edge) var(--ai-sunk); }
 
-/* `hidden` is a UA rule and any author `display` beats it, which silently left
-   the help dialog and the alert bar on screen. Settle it once, here. */
+/* `hidden` is a UA rule and any author `display` beats it. Settle it once, here. */
 [hidden] { display: none !important; }
 
 body {
@@ -80,129 +78,117 @@ button, input, select { font: inherit; color: inherit; }
 button { touch-action: manipulation; }
 ::selection { background: var(--asagi); color: var(--ai); }
 
-:focus-visible {
-  outline: 2px solid var(--asagi);
-  outline-offset: 2px;
-  border-radius: 3px;
-}
+:focus-visible { outline: 2px solid var(--asagi); outline-offset: 2px; border-radius: 3px; }
 
 mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inherit; border-radius: 2px; }
 
-/* ---------- 3. utilities ---------- */
-
 .sr-only {
-  position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
 
-.quiet { color: var(--nezumi-dim); font-size: 12px; text-decoration: none; }
-.quiet:hover { color: var(--asagi); }
+kbd {
+  display: inline-block; min-width: 18px; padding: 0 5px;
+  border: 1px solid var(--ai-edge); border-bottom-width: 2px; border-radius: 4px;
+  font: 500 11px/16px var(--mono); color: var(--kinari); background: var(--ai-sunk);
+  text-align: center;
+}
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+/* Something on its way: the same size as what it stands for, gently moving. */
+.loading, .sk-line, .sk-card .plate {
+  background: linear-gradient(90deg, var(--ai-sunk) 25%, var(--ai-hover) 50%, var(--ai-sunk) 75%) 0 0 / 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* ---------- 3. controls ---------- */
 
 .quiet-btn {
+  display: inline-flex; align-items: center; gap: 4px;
   background: none; border: none; padding: 5px 8px;
-  color: var(--asagi); font-size: 12.5px; cursor: pointer; border-radius: 5px;
-  text-decoration: none;   /* some are links, and should not look different */
+  color: var(--asagi); font-size: 12.5px; line-height: 18px; cursor: pointer; border-radius: 5px;
+  text-decoration: none;
 }
 .quiet-btn:hover:not(:disabled) { background: var(--ai-raised); }
 .quiet-btn:disabled { opacity: .35; cursor: default; }
 
 .act {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 32px;
   background: var(--ai-raised);
   border: 1px solid var(--ai-line);
   color: var(--kinari);
   border-radius: 6px;
-  padding: 6px 12px;
+  padding: 0 13px;
   font-size: 13px;
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
   transition: background .12s, border-color .12s, color .12s;
 }
 .act:hover:not(:disabled) { background: var(--ai-hover); border-color: var(--ai-edge); }
-.act:disabled { opacity: .35; cursor: default; }
-.act.icon { padding: 6px 11px; font-family: var(--mono); }
-/* The one thing a sheet is for. Teal, because it is an action. */
+.act:disabled { opacity: .4; cursor: default; }
+.act.icon { width: 32px; padding: 0; font-family: var(--mono); }
+/* The one thing a row of buttons is for. Teal, because it is an action. */
 .act.primary { background: var(--asagi); border-color: var(--asagi); color: var(--ai); font-weight: 600; }
 .act.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--asagi) 82%, #fff);
   border-color: color-mix(in srgb, var(--asagi) 82%, #fff);
 }
 
-/* A count on a button. It lights up only when there is something to come back
-   to: vermilion for bookmarks, teal for downloads still running. */
+/* A count on a button or a tab. It lights up only when there is something to
+   come back to: vermilion for bookmarks, teal for downloads still running. */
 .tally {
-  display: inline-block;
-  min-width: 20px;
-  margin-left: 3px;
-  padding: 0 6px;
-  border-radius: 10px;
+  display: inline-grid; place-items: center;
+  min-width: 20px; height: 18px; padding: 0 6px;
+  border-radius: 9px;
   background: var(--ai-sunk);
   color: var(--nezumi);
-  font: 500 11px/17px var(--mono);
-  text-align: center;
-  vertical-align: 1px;
+  font: 500 11px/1 var(--mono);
 }
-#marks-open[data-any="1"] .tally { background: var(--shu); color: #fff; }
-#grabs-open[data-any="1"] .tally { background: var(--asagi); color: var(--ai); }
+.tally:empty { display: none; }
+.tally[data-any="1"] { background: var(--asagi); color: var(--ai); }
+.tally.mark[data-any="1"] { background: var(--shu); color: #fff; }
 
 .chip {
+  display: inline-flex; align-items: center; height: 28px;
   background: none;
   border: 1px solid var(--ai-line);
   color: var(--nezumi);
-  border-radius: 20px;
-  padding: 5px 12px;
+  border-radius: 14px;
+  padding: 0 12px;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
   transition: color .12s, border-color .12s, background .12s;
 }
 .chip:hover { color: var(--kinari); border-color: var(--ai-edge); }
-.chip[aria-pressed="true"] {
-  color: var(--ai);
-  background: var(--asagi);
-  border-color: var(--asagi);
-  font-weight: 600;
-}
+.chip[aria-pressed="true"] { color: var(--ai); background: var(--asagi); border-color: var(--asagi); font-weight: 600; }
 
-/* Source is one choice out of three, so it reads as one control. */
+/* One choice out of a few reads as one control. */
 .seg { display: flex; flex: 0 0 auto; }
 .seg .chip { border-radius: 0; border-right-width: 0; }
-.seg .chip:first-child { border-radius: 20px 0 0 20px; }
-.seg .chip:last-child { border-radius: 0 20px 20px 0; border-right-width: 1px; }
+.seg .chip:first-child { border-radius: 14px 0 0 14px; padding-left: 13px; }
+.seg .chip:last-child { border-radius: 0 14px 14px 0; border-right-width: 1px; padding-right: 13px; }
 
 .switch {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 7px; height: 28px;
   color: var(--nezumi); cursor: pointer; user-select: none;
   font-size: 12.5px; white-space: nowrap; flex: 0 0 auto;
 }
-/* Drawn rather than native, for the same reason as the channel list: the
-   system checkbox is a white square in a page with none. */
+/* Drawn rather than native: the system checkbox is a white square in a page with none. */
 .switch input {
-  appearance: none;
-  position: relative;
-  flex: 0 0 auto;
-  width: 26px;
-  height: 15px;
-  margin: 0;
-  border: 1px solid var(--ai-edge);
-  border-radius: 999px;
-  background: var(--ai-sunk);
-  cursor: inherit;
+  appearance: none; position: relative; flex: 0 0 auto;
+  width: 26px; height: 15px; margin: 0;
+  border: 1px solid var(--ai-edge); border-radius: 999px;
+  background: var(--ai-sunk); cursor: inherit;
   transition: background .12s, border-color .12s;
 }
 .switch input::before {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--nezumi);
-  transition: transform .12s, background .12s;
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--nezumi); transition: transform .12s, background .12s;
 }
 .switch input:checked { background: var(--asagi); border-color: var(--asagi); }
 .switch input:checked::before { transform: translateX(11px); background: var(--ai); }
@@ -216,7 +202,7 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   position: fixed;
   inset: 0 0 auto 0;
   z-index: 30;
-  background: color-mix(in srgb, var(--ai) 92%, transparent);
+  background: color-mix(in srgb, var(--ai) 94%, transparent);
   backdrop-filter: blur(14px) saturate(1.2);
   border-bottom: 1px solid var(--ai-line);
 }
@@ -225,1075 +211,603 @@ mark { background: color-mix(in srgb, var(--asagi) 30%, transparent); color: inh
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  max-width: var(--page);
-  margin: 0 auto;
+  gap: 10px 12px;
   padding: 10px var(--pad);
 }
-.bar-inner.tools { padding-top: 0; padding-bottom: 10px; flex-direction: column; align-items: stretch; }
-/* Stacked, the two rows take the bar's width and keep their own overflow to
-   themselves. Without the explicit width a column flex container sizes its
-   line to the widest item, and a channel with a dozen categories then pushes
-   the search box off the side of the screen. */
-.bar-inner.tools > * { width: 100%; min-width: 0; max-width: 100%; }
+.bar-inner.tools { padding-top: 0; padding-bottom: 10px; gap: 8px 10px; }
 .bar-inner.note,
 .bar-inner.alert { padding-top: 0; padding-bottom: 10px; font-size: 12.5px; }
 .bar-inner.note { color: var(--nezumi); }
 .bar-inner.note b { color: var(--kinari); font-weight: 600; }
 .bar-inner.alert { color: var(--shu); }
-/* A crawl runs for minutes, so it reports from the bar rather than from the
-   sheet that started it -- you should be able to read while it works. */
-.bar-inner.job { color: var(--asagi); font-family: var(--mono); font-size: 11.5px; }
-/* One line, always. Book titles here run to eighty characters, and a status
-   row that wraps to three lines moves the whole feed down while it works. */
-.bar-inner.job > span:first-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* A crawl runs for minutes, so it reports from the bar -- you can read while it works. */
+.bar-inner.job { color: var(--asagi); font-family: var(--mono); font-size: 11.5px; padding-top: 0; padding-bottom: 8px; flex-wrap: nowrap; }
+/* One line, always: a status row that wraps moves the whole grid down while it works. */
+.bar-inner.job > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-inner.job .quiet-btn { margin-left: auto; color: var(--nezumi); flex: 0 0 auto; }
 .bar-inner.alert .quiet-btn { color: var(--nezumi); }
 
-.ident { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.top-row { flex-wrap: nowrap; }
+.ident { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
 
 .logo {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 700;
+  font: 700 11px/1 var(--mono);
   letter-spacing: .08em;
-  line-height: 1;
-  padding: 5px 6px 4px;
-  background: var(--shu);
-  color: #fff;
-  border-radius: 2px;
-  transform: translateY(1px);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--kinari);
   flex: 0 0 auto;
+  margin-right: 6px;
 }
 
-/* The channel switcher sits where the channel name was: the same thing, now
-   answerable. Styled as text rather than a form control so the bar still reads
-   as a title rather than a settings panel. Its list is drawn by the page, not
-   the browser: a native <select> opens in the system's colours and font, the
-   one part of the page that is not indigo and paper. */
-.channel { position: relative; display: flex; align-items: baseline; gap: 2px; min-width: 0; }
-.hash { color: var(--nezumi-dim); }
-#channel-pick {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  max-width: 46vw;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--kinari);
-  font: 600 15px/1.2 var(--ui);
-  letter-spacing: -0.01em;
-  padding: 2px 6px 2px 2px;
-  cursor: pointer;
-}
-#channel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#channel-pick::after {
-  content: "";
+/* The clubs' channels as tabs: the place you are is always named, and the other
+   clubs are one click away rather than inside a list. */
+.ch-tabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ch-tabs::-webkit-scrollbar { display: none; }
+.ch-tab {
   flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
-  border: solid var(--nezumi-dim);
-  border-width: 0 1.5px 1.5px 0;
-  transform: translateY(-2px) rotate(45deg);
-  transition: transform .12s, border-color .12s;
+  height: 32px; padding: 0 12px;
+  background: none; border: none; border-radius: 6px;
+  color: var(--nezumi); font: 500 13.5px/1 var(--ui); text-transform: capitalize;
+  cursor: pointer; position: relative;
 }
-#channel-pick:hover,
-#channel-pick[aria-expanded="true"] { color: var(--asagi); }
-#channel-pick:hover::after,
-#channel-pick[aria-expanded="true"]::after { border-color: var(--asagi); }
-#channel-pick[aria-expanded="true"]::after { transform: translateY(1px) rotate(-135deg); }
+.ch-tab:hover { color: var(--kinari); background: var(--ai-raised); }
+.ch-tab[aria-selected="true"] { color: var(--kinari); font-weight: 600; }
+.ch-tab[aria-selected="true"]::after {
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: -11px;
+  height: 2px; border-radius: 2px; background: var(--asagi);
+}
+
+/* The rest of the server's channels, under More. The chevron keeps its distance
+   from the button's edge. */
+.channel-more { position: relative; flex: 0 0 auto; }
+.more-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 32px; padding: 0 12px 0 12px;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--nezumi); font-size: 13px; cursor: pointer;
+}
+.more-btn::after {
+  content: ""; width: 5px; height: 5px; margin: 0 2px 3px 0;
+  border: solid currentColor; border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg); transition: transform .12s;
+}
+.more-btn:hover, .more-btn[aria-expanded="true"] { color: var(--kinari); border-color: var(--ai-line); }
+.more-btn[aria-expanded="true"]::after { transform: translateY(3px) rotate(-135deg); }
 
 .pick-list {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 35;
-  min-width: 240px;
-  max-width: calc(100vw - 2 * var(--pad));
-  max-height: min(62dvh, 440px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 5px;
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 35;
+  min-width: 240px; max-width: calc(100vw - 2 * var(--pad));
+  max-height: min(62dvh, 460px);
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 6px;
   background: var(--ai-raised);
   border: 1px solid var(--ai-line);
   border-radius: 10px;
   box-shadow: 0 24px 60px -24px #000;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ai-line) transparent;
+  scrollbar-width: thin; scrollbar-color: var(--ai-line) transparent;
 }
 .pick-list:focus-visible { outline: none; }
 .pick-opt {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  color: var(--nezumi);
-  font-size: 13px;
-  white-space: nowrap;
-  cursor: pointer;
+  display: flex; align-items: center; height: 32px; padding: 0 10px;
+  border-radius: 6px; color: var(--nezumi); font-size: 13px;
+  white-space: nowrap; cursor: pointer;
 }
-.pick-opt.read { color: var(--kinari); }
 .pick-opt.on { background: var(--ai-hover); color: var(--kinari); }
-.pick-opt[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--asagi); font-weight: 600; }
-.pick-opt[aria-selected="true"] .pick-name { color: var(--asagi); }
 .pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Already read down, so it opens full rather than empty. */
-.pick-tag {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: .06em;
-  color: var(--nezumi-dim);
-}
 
-/* Narrow: the counts drop to their own line rather than squeezing the actions
-   off the edge. Wide: they sit between the two, right-aligned. */
-.counts {
-  order: 3;
-  flex: 1 1 100%;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  letter-spacing: -0.02em;
-  color: var(--nezumi);
-  line-height: 1.4;
-}
-.counts b { color: var(--kinari); font-weight: 500; }
-.counts .cover-mark { cursor: help; }
+.discord-link { flex: 0 0 auto; color: var(--nezumi-dim); font-size: 12px; text-decoration: none; padding: 0 6px; }
+.discord-link:hover { color: var(--asagi); }
 
-/* Narrow: a row of their own that wraps, so the last button is never pushed
-   past the edge of a phone. Wide: they sit at the end of the title row. */
-.acts { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; }
-.acts .act { flex: 1 0 auto; }
-.acts .act.icon { flex-grow: 0; }
-
-.find { position: relative; display: block; }
+.find { position: relative; display: block; flex: 1 1 360px; max-width: 560px; min-width: 200px; margin: 0 auto; }
 .find input {
-  width: 100%;
+  width: 100%; height: 34px;
   background: var(--ai-sunk);
   border: 1px solid var(--ai-line);
-  border-radius: 6px;
-  padding: 8px 30px 8px 12px;
+  border-radius: 7px;
+  padding: 0 36px 0 12px;
   color: var(--kinari);
 }
 .find input::placeholder { color: var(--nezumi-dim); }
 .find input::-webkit-search-cancel-button {
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
+  appearance: none; width: 14px; height: 14px; cursor: pointer;
   background: var(--nezumi);
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 3.5l7 7m0-7l-7 7' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
-.find input::-webkit-search-cancel-button:hover { background: var(--asagi); }
 .find input:focus { outline: none; border-color: var(--asagi); }
-.find .slash {
-  position: absolute;
-  right: 10px; top: 50%;
-  transform: translateY(-50%);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--nezumi-dim);
-  pointer-events: none;
-}
-.find input:focus ~ .slash { opacity: 0; }
+.find .slash { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.find input:focus ~ .slash, .find input:not(:placeholder-shown) ~ .slash { opacity: 0; }
 
-/* Narrow: one strip that scrolls sideways, so a dozen categories cost one row
-   rather than four. Wide: it wraps like an ordinary toolbar. */
-.filters {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  padding: 0 20px 1px 0;
-  /* The strip runs on past the edge; the fade says so. The padding keeps the
-     last control clear of it once you have scrolled to the end. */
-  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+.acts { display: flex; gap: 6px; flex: 0 0 auto; }
+
+.tools-gap { flex: 1 1 0; }
+.tools-break { flex-basis: 100%; height: 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
+.who-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px;
+  padding: 0 4px 0 12px; border-radius: 14px;
+  background: color-mix(in srgb, var(--asagi) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--asagi) 45%, transparent);
+  color: var(--nezumi); font-size: 12px; white-space: nowrap;
 }
-.filters::-webkit-scrollbar { display: none; }
-.chips { display: flex; gap: 5px; flex-wrap: nowrap; }
+.who-chip b { color: var(--kinari); font-weight: 600; }
+.who-chip button {
+  width: 20px; height: 20px; display: grid; place-items: center;
+  border: none; border-radius: 50%; background: none; color: var(--nezumi); cursor: pointer; font-size: 14px; line-height: 1;
+}
+.who-chip button:hover { background: var(--ai-hover); color: var(--kinari); }
+
+.counts {
+  flex: 0 0 auto; margin-left: auto;
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: -0.02em;
+  color: var(--nezumi); white-space: nowrap; line-height: 28px;
+}
+.counts b { color: var(--kinari); font-weight: 500; }
+.counts .cover-mark { cursor: help; }
 
 /* ---------- 5. stage and rail ---------- */
 
 .stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  max-width: var(--page);
-  margin: 0 auto;
-  padding: calc(var(--bar-h) + 12px) var(--pad) 96px;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  gap: 20px;
+  padding: calc(var(--bar-h) + 16px) var(--pad) 120px;
 }
+.dock-fixed .stage { grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--dock-w); }
 
-/* The month rail: five years of channel, and where the weight sits in them.
-   Narrow, it is a strip you can flick along; wide, a column beside the feed. */
-.rail {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  padding-bottom: 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--ai-line);
-  font-family: var(--mono);
-  font-size: 11px;
-  padding-right: 20px;
-  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+/* The month rail: five years of channel, and where the weight sits in them. */
+.rail,
+.rail:empty {
+  display: block;
+  position: sticky;
+  top: calc(var(--bar-h) + 16px);
+  align-self: start;
+  max-height: calc(100dvh - var(--bar-h) - 32px);
+  overflow-x: hidden; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--ai-line) transparent;
+  font-family: var(--mono); font-size: 11px;
 }
-.rail::-webkit-scrollbar { display: none; }
-/* Narrow, an empty strip is just wasted height. Wide, it must keep its column
-   -- see the note by the rail in the 900 breakpoint. */
-.rail:empty { display: none; }
-
+/* Most ♥ is a ranking, not a timeline: the rail has nothing to point at. */
+.rail.off { opacity: .35; pointer-events: none; }
 .rail-year {
-  flex: 0 0 auto;
-  align-self: flex-end;
-  color: var(--nezumi-dim);
-  letter-spacing: .08em;
-  padding: 0 2px 5px;
+  padding: 10px 4px 4px; margin-top: 6px;
+  border-top: 1px solid var(--ai-line);
+  color: var(--nezumi-dim); letter-spacing: .08em;
 }
+.rail-year:first-child { border-top: none; margin-top: 0; padding-top: 0; }
 .rail-month {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  min-width: 28px;
-  background: none;
-  border: none;
-  padding: 4px 3px;
-  color: var(--nezumi-dim);
-  cursor: pointer;
-  border-radius: 4px;
+  display: grid; grid-template-columns: 20px 1fr; align-items: center; gap: 8px;
+  width: 100%; padding: 4px; text-align: left;
+  background: none; border: none; border-radius: 4px;
+  color: var(--nezumi-dim); cursor: pointer;
 }
 .rail-month:hover { background: var(--ai-raised); color: var(--kinari); }
-.rail-month .bar-fill {
-  width: var(--fill, 100%);
-  min-width: 4px;
-  height: 3px;
-  background: var(--ai-line);
-  border-radius: 2px;
-}
+.rail-month .bar-fill { width: var(--fill, 100%); min-width: 4px; height: 3px; background: var(--ai-line); border-radius: 2px; }
 .rail-month[data-on="1"] { color: var(--kinari); }
 .rail-month[data-on="1"] .bar-fill { background: var(--asagi); }
 
 /* ---------- 6. cards ---------- */
 
-.feed { position: relative; min-height: 60vh; }
+.feed { position: relative; min-height: 60vh; grid-column: 2; min-width: 0; }
 .spacer { width: 1px; }
-/* Positioned with transform rather than `top`: the archive is ~2.4 million
-   pixels tall, and a CSS length that long is serialised to six significant
-   figures, which is a couple of pixels of drift per row. */
+/* Positioned with transform rather than `top`: the archive is millions of pixels
+   tall, and a CSS length that long drifts by a pixel or two per row. */
 .feed > .row { position: absolute; left: 0; right: 0; top: 0; }
 
+/* A month heading: the month, a rule, and how many were shared in it. */
 .day {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: var(--day-h);
-  padding-top: 14px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: .06em;
-  color: var(--nezumi-dim);
+  display: flex; align-items: center; gap: 12px;
+  height: var(--day-h); padding-top: 4px;
+  font: 600 13px/1 var(--ui); color: var(--kinari);
 }
-.day::after { content: ""; flex: 1; height: 1px; background: var(--ai-line); }
+.day::after { content: ""; flex: 1; height: 1px; background: var(--ai-line); order: 1; }
+.day-n { order: 2; font: 11px/1 var(--mono); color: var(--nezumi-dim); }
+
+.cards-row {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  gap: var(--card-gap);
+  height: var(--card-h);
+}
 
 .card {
   display: grid;
-  grid-template-columns: 80px minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px;
+  grid-template-rows: var(--plate-h) var(--card-body);
+  height: var(--card-h);
+  min-width: 0;
   background: var(--ai-raised);
   border: 1px solid transparent;
-  border-radius: 8px;
-  margin-bottom: 8px;
-  scroll-margin-top: calc(var(--bar-h) + 24px);
+  border-radius: 9px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .12s, box-shadow .12s;
 }
-.card:hover { border-color: var(--ai-line); }
-.card.here { border-color: var(--asagi); }
-.card.bare { grid-template-columns: minmax(0, 1fr); }
-.card .col { min-width: 0; }
+.card:hover { border-color: var(--ai-edge); }
+.card.here { border-color: var(--asagi); box-shadow: 0 0 0 1px var(--asagi); }
 
-/* A ribbon along the card edge, so a bookmarked share is findable while
-   scrolling rather than only inside the list. */
-.card.saved { box-shadow: inset -3px 0 0 var(--shu); }
-
-.plate { height: var(--plate-h); }
-.plate img {
-  width: 100%;
-  height: 100%;
-  /* The bot's collage already lays the volumes out side by side, so it is
-     shown whole rather than cropped to a single cover's shape. */
-  object-fit: contain;
-  border-radius: 3px;
-  background: var(--ai-sunk);
-  display: block;
+/* The cover plate. The bot's collage lays volumes out side by side, so it is shown
+   whole, not cropped to one cover's shape. */
+.plate { position: relative; height: var(--plate-h); background: var(--ai-sunk); overflow: hidden; }
+.plate img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.plate.gone {
+  display: grid; place-items: center;
+  background: repeating-linear-gradient(-45deg, var(--ai-sunk) 0 7px, color-mix(in srgb, var(--ai-sunk) 70%, var(--ai-raised)) 7px 14px);
 }
-.plate.empty,
-/* A cover whose link has expired: the striped placeholder rather than the
-   browser's broken-image glyph, which reads as a bug rather than a stale link. */
-.plate img.gone {
-  border-radius: 3px;
-  background: repeating-linear-gradient(-45deg, var(--ai-sunk) 0 6px, transparent 6px 12px);
+.plate-note { font: 11px/1.4 var(--mono); color: var(--nezumi-dim); padding: 0 16px; text-align: center; }
+/* A post without a cover gets one made of its title, so the grid has no holes. */
+.plate.text {
+  display: grid; place-items: center; padding: 28px 22px 18px;
+  background: linear-gradient(160deg, var(--ai-hover), var(--ai-sunk));
 }
-.plate .shot {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: zoom-in;
-}
-.plate .shot .count {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--veil);
-  color: var(--kinari);
-}
-
-.top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-
-.kind {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--asagi);
-  border: 1px solid color-mix(in srgb, var(--asagi) 35%, transparent);
-  border-radius: 3px;
-  padding: 1px 6px;
-  white-space: nowrap;
-}
-
-.title {
-  font-family: var(--jp);
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--title-line);
-  margin: 3px 0 0;
+.plate-title {
+  font: 600 17px/1.45 var(--jp); color: var(--kinari); text-align: center;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
   word-break: break-word;
-  width: 100%;
-  /* Two lines, then ellipsis: these titles run to 80 characters and a card that
-     grows to six lines is both unscannable and unmeasurable in advance. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
-.title.none { color: var(--nezumi-dim); font-weight: 400; }
+.plate .kind {
+  position: absolute; left: 8px; top: 8px; max-width: calc(100% - 52px);
+  font: 600 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  padding: 5px 7px 4px; border-radius: 4px;
+  background: var(--veil); color: var(--asagi);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+.plate .count {
+  position: absolute; right: 8px; bottom: 8px;
+  font: 500 10.5px/1 var(--mono); padding: 4px 6px; border-radius: 4px;
+  background: var(--veil); color: var(--kinari);
+}
+/* The bookmark, as a vermilion corner: the only loud thing on a card. */
+.plate .ribbon { display: none; position: absolute; top: 0; right: 14px; width: 14px; height: 22px; background: var(--shu); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%); }
+.card.saved .plate .ribbon { display: block; }
 
-.line {
-  margin-top: 5px;
-  height: 17px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: -0.01em;
-  color: var(--nezumi-dim);
-  display: flex;
-  gap: 8px;
-  flex-wrap: nowrap;
-  overflow: hidden;
-  white-space: nowrap;
+/* The body: fixed lines, so every card is the same height whatever it carries. */
+.c-body { display: flex; flex-direction: column; min-width: 0; height: var(--card-body); padding: 10px 12px 11px; }
+.c-top {
+  display: flex; justify-content: space-between; gap: 8px;
+  height: 16px; font: 11px/16px var(--mono); color: var(--nezumi);
+  white-space: nowrap; overflow: hidden;
 }
-.line .sep { opacity: .45; flex: 0 0 auto; }
-/* The line is one row high by contract, so on a narrow card its parts give way
-   in order rather than the job id being pushed off the end: the recommender and
-   likes shrink first, the date only once they are gone, the job id last. */
-.line > span:not(.sep) {
-  flex: 0 4 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.line > span:first-child { flex-shrink: 1; }
-/* Under 420 there is not room for the recommender at all, and squeezed to
-   nothing it left its separators behind as a bare "/ /". */
-.line > span:not(:first-child) { display: none; }
-
-.body {
-  margin: 8px 0 0;
-  color: var(--nezumi);
-  font-family: var(--jp);
-  font-size: 12.5px;
-  line-height: 18px;
-  white-space: pre-wrap;
+.c-top > span { overflow: hidden; text-overflow: ellipsis; }
+.c-top .hit { color: var(--asagi); flex: 0 0 auto; }
+.c-title {
+  margin: 4px 0 0; height: 40px;
+  font: 600 14.5px/20px var(--jp);
   word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-
-.tools-row { margin-top: 7px; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-.tools-row button, .tools-row a {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: .03em;
-  color: var(--nezumi-dim);
-  background: none; border: none; padding: 3px 6px;
-  border-radius: 4px; cursor: pointer; text-decoration: none;
+.c-title.none { color: var(--nezumi-dim); font-weight: 400; }
+.c-meta {
+  display: flex; align-items: center; gap: 10px;
+  height: 18px; margin-top: 5px;
+  font-size: 12px; color: var(--nezumi); white-space: nowrap; overflow: hidden;
 }
-.tools-row button:hover, .tools-row a:hover { color: var(--asagi); background: var(--ai-sunk); }
-
-/* A bookmark is a ribbon left in a page, and vermilion is the ribbon colour. */
-.save {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  line-height: 1;
-  background: none;
-  border: 1px solid var(--ai-line);
-  color: var(--nezumi-dim);
-  border-radius: 4px;
-  padding: 4px 7px;
-  cursor: pointer;
-  margin-left: auto;
-  order: 9;                /* last in the row, whatever else the share carries */
-  flex: 0 0 auto;
+.c-meta > * { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.c-meta .love { flex: 0 0 auto; }
+button.who {
+  background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer;
+  text-decoration: underline dotted var(--ai-edge); text-underline-offset: 3px;
 }
-.save:hover { color: var(--shu); border-color: var(--shu); }
-.save[aria-pressed="true"] { color: #fff; background: var(--shu); border-color: var(--shu); }
-
-/* ---------- 7. file rows ---------- */
-
-.files { margin-top: 9px; display: flex; flex-direction: column; gap: var(--row-gap); }
-
-/* Narrow, a row is two lines: the name has the width, the size and the two
-   actions sit under it where a thumb can reach them. */
-.f {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  grid-template-areas:
-    "num name name"
-    "num size copy";
-  align-content: center;
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 2px;
-  padding: 0 8px;
-  height: var(--row-h);
-  border-radius: 5px;
-  background: var(--ai-sunk);
-}
-.f:hover { background: #151b2c; }
-.f.ext { grid-template-areas: "num name name" "num .    copy"; }
-
-/* Just the position in the list. Nothing here is clickable: a row is a
-   filename the bot named, not a file you can act on one at a time. */
-.f .n {
-  grid-area: num;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--nezumi-dim);
-  text-align: right;
-}
-
-.f .nm {
-  grid-area: name;
-  font-family: var(--jp);
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.f .sz {
-  grid-area: size;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--nezumi-dim);
-  white-space: nowrap;
-}
-.f button.cp { grid-area: copy; }
-.f button.cp {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--nezumi);
-  background: none;
-  border: 1px solid var(--ai-line);
-  border-radius: 4px;
-  padding: 3px 9px;
-  cursor: pointer;
-  text-decoration: none;
-  text-align: center;
-}
-.f button.cp:hover { color: var(--ai); background: var(--asagi); border-color: var(--asagi); }
-.f.ext .nm { color: var(--asagi); }
-
-
-.nothing {
-  padding: 90px 0;
-  text-align: center;
-  color: var(--nezumi-dim);
-  font-family: var(--mono);
-  font-size: 12px;
-}
-
-/* ---------- 7b. a recommendation's own row ---------- */
-
-/* The volume range, beside the type. Not a chip: it is a fact about the title
-   rather than something to filter by. */
-.vols {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--nezumi);
-  white-space: nowrap;
-}
-.vols::before { content: "vol "; color: var(--nezumi-dim); }
-
-/* The job id is the handle the channel itself uses, so it is shown as written
-   and copies on a click. */
-.line .job {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--nezumi-dim);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 0 5px;
-  margin-left: auto;
-  cursor: pointer;
-  flex: 0 1 auto;
-  min-width: 8ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.line .job:hover { color: var(--asagi); border-color: var(--ai-line); }
-
-/* What the queue is doing with this one. Empty most of the time, and it takes
-   no height when it is -- the virtual list measures what it draws. */
-.state-line:empty, .claim:empty { display: none; }
-.state-line { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.state {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: .04em;
-  color: var(--nezumi-dim);
-  white-space: nowrap;
-}
+button.who:hover { color: var(--asagi); text-decoration-color: currentColor; }
+.c-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 30px; }
+.state-line { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.state { font: 11px/1 var(--mono); letter-spacing: .02em; color: var(--nezumi-dim); white-space: nowrap; }
 .state.on { color: var(--asagi); }
 .state.bad { color: var(--shu); }
-.state.got::before { content: "✓ "; }
-
-.meter {
-  flex: 1 1 90px;
-  height: 3px;
-  min-width: 60px;
-  border-radius: 2px;
-  background: var(--ai-sunk);
-  overflow: hidden;
-}
+.state.got { color: var(--nezumi); }
+.state.got::before { content: "✓ "; color: var(--asagi); }
+.meter { flex: 1 1 60px; max-width: 120px; height: 4px; border-radius: 2px; background: var(--ai-sunk); overflow: hidden; }
 .meter span { display: block; height: 100%; background: var(--asagi); transition: width .3s; }
-
-/* Already on disk: the card steps back, the way a read book sits further down
-   the pile. Never a colour -- vermilion is a bookmark and teal is an action. */
-.card.got .title { color: var(--nezumi); }
-.card.got .plate img { opacity: .75; }
-
-.claim { margin-top: 8px; display: flex; flex-direction: column; gap: var(--row-gap); }
-.note-text {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--nezumi);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  padding: 8px;
-  border-radius: 5px;
-  background: var(--ai-sunk);
+.c-acts { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* Get is the one thing on a card that costs something -- a press the bot counts. */
+button.get {
+  height: 28px; padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--asagi) 55%, transparent);
+  border-radius: 6px; background: none;
+  color: var(--asagi); font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
-
-/* Get is the one action on a card that costs something -- a press the bot
-   counts -- so it is the only one drawn as a button. */
-.tools-row button.get {
-  border: 1px solid color-mix(in srgb, var(--asagi) 40%, transparent);
-  color: var(--asagi);
+button.get:hover:not(:disabled) { background: var(--asagi); color: var(--ai); }
+button.get.again { border-color: var(--ai-line); color: var(--nezumi); font-weight: 500; }
+button.get.again:hover:not(:disabled) { background: var(--ai-hover); color: var(--kinari); }
+button.get:disabled { opacity: .4; cursor: default; }
+button.save {
+  width: 28px; height: 28px; display: grid; place-items: center;
+  border: 1px solid var(--ai-line); border-radius: 6px; background: none;
+  color: var(--nezumi-dim); cursor: pointer; font-size: 14px; line-height: 1;
 }
-.tools-row button.get:hover:not(:disabled) { background: var(--asagi); color: var(--ai); }
-.tools-row button.get:disabled { opacity: .4; cursor: default; }
+button.save::before { content: "☆"; }
+button.save:hover { color: var(--shu); border-color: var(--shu); }
+button.save[aria-pressed="true"] { color: #fff; background: var(--shu); border-color: var(--shu); }
+button.save[aria-pressed="true"]::before { content: "★"; }
 
-/* ---------- 7c. the download queue ---------- */
+/* Already on disk: the card steps back, the way a read book sits further down the
+   pile. Never a colour -- vermilion is a bookmark and teal is an action. */
+.card.got .c-title { color: var(--nezumi); }
+.card.got .plate img { opacity: .65; }
 
-.sheet-note {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--nezumi-dim);
-  margin-left: 14px;
+/* While the channel is read: placeholder cards the size of real ones. */
+.sk-card { cursor: default; }
+.sk-card .c-body { gap: 10px; padding-top: 14px; }
+.sk-line { display: block; height: 10px; border-radius: 5px; }
+.w40 { width: 40%; } .w70 { width: 70%; } .w90 { width: 90%; }
+
+/* Nothing to show: a mark, a line, a hint, centred in the room there is. */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  min-height: 260px; padding: 32px 24px; text-align: center;
 }
-.sheet-head .sheet-note + .quiet-btn { margin-left: auto; }
-.sheet-head .quiet-btn + .quiet-btn { margin-left: 0; }
-
-.grab {
-  padding: 10px 12px;
-  border-radius: 7px;
-  background: var(--ai-sunk);
-  margin-bottom: 8px;
+.feed .empty-state { min-height: 52vh; }
+.es-mark {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--ai-raised); color: var(--nezumi); font-size: 18px; margin-bottom: 4px;
 }
-.grab.failed { box-shadow: inset 2px 0 0 var(--shu); }
-.grab-head { display: flex; align-items: baseline; gap: 10px; }
-.grab-head .t {
-  font-family: var(--jp);
-  font-size: 13px;
-  min-width: 0;
+.es-mark.mark { color: var(--shu); }
+.es-t { font-size: 15px; font-weight: 600; color: var(--kinari); }
+.es-h { max-width: 340px; font-size: 12.5px; line-height: 1.6; color: var(--nezumi); }
+.empty-state .act { margin-top: 8px; }
+
+/* ---------- 7. the dock ---------- */
+
+.dock {
+  grid-column: 3;
+  position: sticky;
+  top: calc(var(--bar-h) + 16px);
+  align-self: start;
+  height: calc(100dvh - var(--bar-h) - 32px);
+  display: flex; flex-direction: column;
+  background: var(--ai-raised);
+  border: 1px solid var(--ai-line);
+  border-radius: 10px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.grab-head .st {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--nezumi-dim);
-  margin-left: auto;
-  white-space: nowrap;
-}
-.grab.working .grab-head .st, .grab.opening .grab-head .st { color: var(--asagi); }
-.grab.failed .grab-head .st { color: var(--shu); }
-.grab-head .sz { font-family: var(--mono); font-size: 10px; color: var(--nezumi-dim); white-space: nowrap; }
-.grab .meter { margin-top: 8px; flex: none; width: 100%; }
-.grab .why { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--shu); }
-.grab .note-text { margin-top: 8px; background: var(--ai); }
-
-/* A file inside a queued job: name, size, and where it has got to.
-   Flex rather than grid, deliberately: `.f` names its grid areas for a card's
-   file row, and a template that only overrode the *columns* left the name
-   placed into an area that no longer existed -- which squeezed every filename
-   down to one character and an ellipsis. */
-.grab-f {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  height: auto;
-  min-height: 26px;
-  padding: 4px 8px;
-  margin-top: 6px;
-  background: var(--ai);
-}
-.grab-f .nm { grid-area: auto; flex: 1 1 auto; min-width: 0; }
-.grab-f .sz { grid-area: auto; flex: 0 0 auto; }
-.grab-f .st {
-  grid-area: auto;
+.dock-head {
   flex: 0 0 auto;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--nezumi-dim);
-  white-space: nowrap;
-}
-.grab-f.done .st, .grab-f.held .st { color: var(--asagi); }
-.grab-f.failed .st { color: var(--shu); }
-.grab-f .why { flex: 1 0 100%; font-family: var(--mono); font-size: 10px; color: var(--shu); }
-
-.grab-tools { margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap; }
-.grab-tools .quiet-btn { font-family: var(--mono); font-size: 10.5px; text-decoration: none; }
-
-/* ---------- 8. overlays ---------- */
-
-.boot {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  text-align: center;
-  background: var(--ai);
-  color: var(--nezumi-dim);
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: .06em;
-  z-index: 60;
-  transition: opacity .2s;
-}
-.boot.gone { opacity: 0; pointer-events: none; }
-
-.toast {
-  position: fixed;
-  left: 50%; bottom: calc(24px + env(safe-area-inset-bottom));
-  transform: translate(-50%, 14px);
-  max-width: calc(100vw - 32px);
-  background: var(--ai-raised);
-  border: 1px solid var(--ai-line);
-  border-radius: 7px;
-  padding: 9px 18px;
-  font-size: 13px;
-  text-align: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .16s, transform .16s;
-  z-index: 50;
-}
-.toast.on { opacity: 1; transform: translate(-50%, 0); }
-
-/* Growth runs while you scroll, so it says so quietly at the foot rather than
-   taking the page over. */
-.growing {
-  position: fixed;
-  left: 50%;
-  bottom: calc(18px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  background: var(--ai-raised);
-  border: 1px solid var(--ai-line);
-  border-radius: 20px;
-  padding: 6px 16px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--nezumi);
-  z-index: 40;
-}
-
-/* Bookmarks and the key list are the same object: a card on a veil. Narrow, it
-   sits against the bottom edge, which is where a sheet belongs on a phone. */
-.sheet {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  grid-template-rows: 1fr auto;
-  /* Without it the column is as wide as the widest download's row, and the
-     queue sheet ran half its width off a phone. */
-  grid-template-columns: minmax(0, 1fr);
-  background: var(--veil);
-  z-index: 70;
-}
-.sheet-card {
-  grid-row: 2;
-  background: var(--ai-raised);
-  border: 1px solid var(--ai-line);
-  border-bottom: none;
-  border-radius: 12px 12px 0 0;
-  width: 100%;
-  max-height: 82dvh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 -20px 60px -30px #000;
-  padding-bottom: env(safe-area-inset-bottom);
-}
-.sheet-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px 12px;
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 8px; height: 46px;
   border-bottom: 1px solid var(--ai-line);
 }
-.sheet-head h3 {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--nezumi);
-  font-weight: 600;
+.dock-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 46px; padding: 0 12px;
+  background: none; border: none; position: relative;
+  color: var(--nezumi); font-size: 13px; font-weight: 500; cursor: pointer;
 }
-.sheet-head .quiet-btn { margin-left: auto; }
-.sheet-list {
-  overflow-y: auto;
-  padding: 8px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ai-line) transparent;
+.dock-tab:hover { color: var(--kinari); }
+.dock-tab[aria-selected="true"] { color: var(--kinari); font-weight: 600; }
+.dock-tab[aria-selected="true"]::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--asagi); }
+.dock-close { margin-left: auto; color: var(--nezumi); }
+.dock-fixed .dock-close { display: none; }
+.dock-panel {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column;
+  scrollbar-width: thin; scrollbar-color: var(--ai-line) transparent;
 }
-.sheet-empty {
-  padding: 40px 12px;
-  text-align: center;
-  color: var(--nezumi-dim);
-  font-family: var(--mono);
-  font-size: 12px;
+.dock-panel > .empty-state, #dock-detail > .empty-state, .dock-list > .empty-state { flex: 1; }
+#dock-detail { flex: 1 0 auto; display: flex; flex-direction: column; }
+.dock-sub {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--ai-line);
+  font: 11.5px/1.4 var(--mono); color: var(--nezumi); min-height: 40px;
+}
+.dock-sub .quiet-btn { margin-left: auto; }
+.dock-list { flex: 1 0 auto; display: flex; flex-direction: column; padding: 10px; }
+/* The dock is the raised colour already, so its marks sit on the sunk one. */
+.dock .es-mark { background: var(--ai-sunk); }
+.dock-sub:has(#grabs-note:empty) { display: none; }
+/* Under a short list, how to add to it, at the foot of the panel. */
+.dock-foot { margin-top: auto; padding: 14px 6px 4px; font-size: 12px; color: var(--nezumi-dim); text-align: center; }
+
+/* Details: the covers at the dock's width, then the facts in reading order. */
+.d-covers { display: grid; gap: 8px; padding: 14px 14px 0; }
+.d-shot {
+  display: block; width: 100%; padding: 0; border: none; border-radius: 6px;
+  background: var(--ai-sunk); overflow: hidden; cursor: zoom-in; position: relative;
+}
+.d-shot img { display: block; width: 100%; height: auto; }
+.d-shot.loading { min-height: 240px; }
+.d-shot.loading img { opacity: 0; position: absolute; }
+.d-shot.text { aspect-ratio: 3 / 2; display: grid; place-items: center; padding: 24px; cursor: default; background: linear-gradient(160deg, var(--ai-hover), var(--ai-sunk)); }
+.d-shot.gone { aspect-ratio: 3 / 2; display: grid; place-items: center; cursor: default;
+  background: repeating-linear-gradient(-45deg, var(--ai-sunk) 0 7px, color-mix(in srgb, var(--ai-sunk) 70%, var(--ai-raised)) 7px 14px); }
+.d-info { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 24px; }
+.d-kind { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 20px; }
+.kind {
+  font: 600 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--asagi); border: 1px solid color-mix(in srgb, var(--asagi) 40%, transparent);
+  border-radius: 4px; padding: 4px 6px 3px; white-space: nowrap;
+}
+.vols { font: 11px/1 var(--mono); color: var(--nezumi); }
+.d-title { margin: 0; font: 600 18px/1.45 var(--jp); word-break: break-word; }
+.d-blurb {
+  margin: 0; padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--ai-edge);
+  color: var(--kinari); font: italic 13.5px/1.6 var(--ui);
+}
+.d-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 12px; color: var(--nezumi); }
+.d-facts .job {
+  background: none; border: 1px solid var(--ai-line); border-radius: 4px;
+  padding: 2px 6px; font: 11px/1.4 var(--mono); color: var(--nezumi); cursor: pointer;
+}
+.d-facts .job:hover { color: var(--asagi); border-color: var(--asagi); }
+.d-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.d-acts .save-act[aria-pressed="true"] { background: var(--shu); border-color: var(--shu); color: #fff; }
+.d-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 9px 12px; border-radius: 7px; background: var(--ai-sunk); }
+.d-state .meter { max-width: none; }
+.d-dir { flex: 1 0 100%; font: 11px/1.4 var(--mono); color: var(--nezumi-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-sec h3 { margin: 6px 0 8px; font: 600 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--nezumi-dim); }
+.d-body { margin: 0; font: 13px/1.65 var(--jp); color: var(--kinari); white-space: pre-wrap; word-break: break-word; }
+
+/* File rows: in Details and in the queue. */
+.files { display: flex; flex-direction: column; gap: 3px; }
+.f {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; column-gap: 10px;
+  min-height: 32px; padding: 4px 10px; border-radius: 5px; background: var(--ai-sunk);
+}
+.f .n { font: 10.5px/1 var(--mono); color: var(--nezumi-dim); text-align: right; }
+.f .nm { font: 12.5px/1.4 var(--jp); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; }
+.f .sz { font: 10.5px/1 var(--mono); color: var(--nezumi-dim); white-space: nowrap; }
+.f.ext .nm { color: var(--asagi); }
+.f button.cp {
+  font: 500 10.5px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase;
+  color: var(--nezumi); background: none; border: 1px solid var(--ai-line); border-radius: 4px;
+  padding: 4px 9px; cursor: pointer;
+}
+.f button.cp:hover { color: var(--ai); background: var(--asagi); border-color: var(--asagi); }
+.note-text {
+  font: 11.5px/1.5 var(--mono); color: var(--nezumi); white-space: pre-wrap; word-break: break-word;
+  padding: 8px 10px; border-radius: 5px; background: var(--ai-sunk);
 }
 
-.bm {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 12px;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  text-align: left;
-  cursor: pointer;
-  color: var(--kinari);
+/* The queue. */
+.grab { padding: 10px 12px; border-radius: 7px; background: var(--ai-sunk); margin-bottom: 8px; }
+.grab.failed { box-shadow: inset 2px 0 0 var(--shu); }
+.grab-head { display: flex; align-items: center; gap: 10px; }
+.grab-head .t {
+  min-width: 0; flex: 1 1 auto; text-align: left;
+  background: none; border: none; padding: 0; color: var(--kinari); cursor: pointer;
+  font: 13px/1.4 var(--jp); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.grab-head .t:hover { color: var(--asagi); }
+.grab-head .st { flex: 0 0 auto; font: 600 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--nezumi-dim); }
+.grab.working .grab-head .st, .grab.opening .grab-head .st { color: var(--asagi); }
+.grab.failed .grab-head .st { color: var(--shu); }
+.grab .meter { margin-top: 8px; max-width: none; width: 100%; }
+.grab .why { margin-top: 6px; font: 10.5px/1.4 var(--mono); color: var(--shu); }
+.grab .note-text { margin-top: 8px; background: var(--ai); }
+.grab-f { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 28px; margin-top: 6px; background: var(--ai); }
+.grab-f .nm { flex: 1 1 auto; min-width: 0; }
+.grab-f .st { flex: 0 0 auto; font: 10px/1 var(--mono); color: var(--nezumi-dim); white-space: nowrap; }
+.grab-f.done .st, .grab-f.held .st { color: var(--asagi); }
+.grab-f.failed .st { color: var(--shu); }
+.grab-f .why { flex: 1 0 100%; font: 10px/1.4 var(--mono); color: var(--shu); }
+.grab-tools { margin-top: 8px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.grab-tools .sz { font: 10.5px/1 var(--mono); color: var(--nezumi-dim); margin-right: auto; }
+.grab-tools .quiet-btn { font-size: 12px; }
+
+/* Bookmarks. */
+.bm { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-radius: 7px; }
 .bm:hover { background: var(--ai-sunk); }
-.bm .when {
-  display: none;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--nezumi-dim);
+.bm-go {
+  display: grid; grid-template-columns: 82px minmax(0, 1fr); align-items: center; gap: 12px;
+  min-width: 0; padding: 10px 12px; background: none; border: none; text-align: left; color: var(--kinari); cursor: pointer;
 }
+.bm .when { font: 10.5px/1 var(--mono); color: var(--nezumi-dim); }
 .bm .what { min-width: 0; display: block; }
-.bm .t { display: block; font-family: var(--jp); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bm .sub { display: block; font-family: var(--mono); font-size: 10px; color: var(--nezumi-dim); margin-top: 2px; }
+.bm .t { display: block; font: 13px/1.4 var(--jp); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm .sub { display: block; font: 10.5px/1.4 var(--mono); color: var(--nezumi-dim); margin-top: 2px; }
 .bm .drop {
-  font-family: var(--mono); font-size: 10px; color: var(--nezumi-dim);
-  border: 1px solid var(--ai-line); border-radius: 4px; padding: 4px 8px; cursor: pointer;
+  margin-right: 8px; height: 26px; padding: 0 9px;
+  font-size: 12px; color: var(--nezumi); background: none;
+  border: 1px solid var(--ai-line); border-radius: 5px; cursor: pointer;
 }
 .bm .drop:hover { color: #fff; background: var(--shu); border-color: var(--shu); }
 
-.sheet-body { padding: 16px; overflow-y: auto; }
-.fetch-line { margin: 0 0 4px; font-family: var(--mono); font-size: 11.5px; color: var(--nezumi); }
-.fetch-label {
-  margin: 16px 0 8px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--nezumi-dim);
+/* Narrower than 1500px the dock is a panel that slides over the grid. */
+.dock-veil { display: none; }
+body:not(.dock-fixed) .dock {
+  position: fixed; z-index: 40;
+  top: var(--bar-h); right: 0; bottom: 0;
+  width: min(var(--dock-w), 100vw); height: auto;
+  /* A fixed box still obeys align-self inside its insets: stretch it top to bottom. */
+  align-self: stretch;
+  border-radius: 0; border-width: 0 0 0 1px;
+  transform: translateX(100%); visibility: hidden;
+  transition: transform .18s ease-out, visibility 0s .18s;
+  box-shadow: -30px 0 60px -30px #000;
 }
-.sheet-body .chips { flex-wrap: wrap; }
-.fetch-note { margin: 14px 0 0; font-size: 12.5px; color: var(--nezumi); line-height: 1.45; }
-.fetch-go { margin-top: 18px; display: flex; gap: 8px; }
-.fetch-go .act { padding: 8px 16px; }
+body.dock-open:not(.dock-fixed) .dock { transform: none; visibility: visible; transition: transform .18s ease-out; }
+body.dock-open:not(.dock-fixed) .dock-veil { display: block; position: fixed; inset: var(--bar-h) 0 0 0; z-index: 39; background: var(--veil); }
+.dock-fixed .narrow-only { display: none; }
 
-.help-card dl {
-  margin: 0;
-  padding: 16px;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px 18px;
-  align-items: baseline;
+/* ---------- 8. overlays ---------- */
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 14px); max-width: calc(100vw - 32px);
+  background: var(--ai-raised); border: 1px solid var(--ai-line); border-radius: 7px;
+  padding: 9px 18px; font-size: 13px; text-align: center;
+  opacity: 0; pointer-events: none; transition: opacity .16s, transform .16s; z-index: 90;
 }
-.help-card dt {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--asagi);
-  white-space: nowrap;
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* Growth runs while you scroll, so it says so quietly at the foot. */
+.growing {
+  position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: var(--ai-raised); border: 1px solid var(--ai-line); border-radius: 20px;
+  padding: 6px 16px; font: 11px/1.4 var(--mono); color: var(--nezumi); z-index: 40;
 }
+
+/* A card on a veil: Fetch, the confirmation and the keys. */
+.sheet {
+  position: fixed; inset: 0; z-index: 70;
+  display: grid; place-items: center; grid-template-columns: minmax(0, 1fr);
+  background: var(--veil);
+}
+.sheet-card {
+  width: min(560px, 92vw); max-height: 80dvh;
+  display: flex; flex-direction: column;
+  background: var(--ai-raised); border: 1px solid var(--ai-line); border-radius: 10px;
+  box-shadow: 0 30px 80px -30px #000;
+}
+.help-card { width: min(460px, 92vw); }
+.confirm-card { width: min(440px, 92vw); }
+.sheet-head { display: flex; align-items: center; gap: 14px; padding: 14px 16px 12px; border-bottom: 1px solid var(--ai-line); }
+.sheet-head h3 { margin: 0; font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--nezumi); }
+.sheet-head .quiet-btn { margin-left: auto; }
+.sheet-body { padding: 18px; overflow-y: auto; }
+.confirm-title { margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--kinari); }
+.fetch-line { margin: 0 0 4px; font: 11.5px/1.5 var(--mono); color: var(--nezumi); }
+.fetch-label { margin: 16px 0 8px; font: 600 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--nezumi-dim); }
+.sheet-body .chips { flex-wrap: wrap; }
+.fetch-note { margin: 12px 0 0; font-size: 13px; color: var(--nezumi); line-height: 1.55; }
+.fetch-go { margin-top: 20px; display: flex; gap: 8px; }
+
+.help-card dl { margin: 0; padding: 16px 18px; overflow-y: auto; display: grid; grid-template-columns: auto 1fr; gap: 10px 18px; align-items: center; }
+.help-card dt { white-space: nowrap; color: var(--nezumi); font-size: 12px; }
 .help-card dd { margin: 0; font-size: 13px; color: var(--kinari); }
 
 .light {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  background: rgba(8, 10, 17, .93);
+  position: fixed; inset: 0; z-index: 80;
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) 64px; align-items: center;
+  background: rgba(8, 10, 17, .94);
 }
-.light-bar {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-}
-.light-count { font-family: var(--mono); font-size: 11px; color: var(--nezumi); }
+.light-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.light-count { font: 11px/1 var(--mono); color: var(--nezumi); }
 .light-bar .quiet-btn { margin-left: auto; }
 .light-bar .quiet-btn + .quiet-btn { margin-left: 0; }
-
-.light-body {
-  grid-column: 1;
-  display: grid;
-  place-items: center;
-  max-height: 100dvh;
-  padding: 56px 12px 72px;
-}
+.light-body { grid-column: 2; display: grid; place-items: center; max-height: 100dvh; padding: 56px 0 24px; }
 .light-body > *, .light-body::after { grid-area: 1 / 1; }
 .light-body[data-state="loading"]::after,
-.light-body[data-state="gone"]::after {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: .06em;
-  color: var(--nezumi-dim);
-}
+.light-body[data-state="gone"]::after { font: 12px/1 var(--mono); letter-spacing: .06em; color: var(--nezumi-dim); }
 .light-body[data-state="loading"]::after { content: "Loading cover…"; }
 .light-body[data-state="gone"]::after { content: "This cover's link has expired"; }
 .light-body[data-state="gone"] img { display: none; }
-.light-body img {
-  max-width: 100%;
-  max-height: calc(100dvh - 130px);
-  object-fit: contain;
-  border-radius: 4px;
-  background: var(--ai-sunk);
-}
-
-/* Narrow: both steps sit at the foot, within reach. Wide: a column each side. */
-.light-step {
-  position: absolute;
-  bottom: calc(14px + env(safe-area-inset-bottom));
-  background: var(--ai-raised);
-  border: 1px solid var(--ai-line);
-  border-radius: 24px;
-  color: var(--nezumi);
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 8px 22px;
-}
+.light-body img { max-width: 100%; max-height: calc(100dvh - 96px); object-fit: contain; border-radius: 4px; background: var(--ai-sunk); }
+.light-step { background: none; border: none; color: var(--nezumi); font-size: 34px; line-height: 1; cursor: pointer; padding: 20px 0; }
 .light-step:hover { color: var(--kinari); }
-.light-step.prev { left: 22%; }
-.light-step.next { right: 22%; }
+.light-step.prev { grid-column: 1; }
+.light-step.next { grid-column: 3; }
 
 /* ---------- 9. breakpoints ---------- */
 
-/* Room for who recommended it beside the date. */
-@media (min-width: 420px) {
-  .line > span:not(:first-child) { display: inline; }
+/* Under 900px: no rail, the search on a row of its own, smaller covers. */
+@media (max-width: 899px) {
+  :root { --pad: 12px; --plate-h: 168px; --card-h: 308px; --card-min: 200px; --card-gap: 10px; }
+  .stage { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .feed { grid-column: 1; }
+  .rail { display: none !important; }
+  .top-row { flex-wrap: wrap; }
+  .find { order: 3; flex: 1 1 100%; max-width: none; margin: 0; }
+  .acts { margin-left: auto; }
+  .tools-gap { display: none; }
+  .counts { margin-left: 0; }
 }
 
-/* Room for a file row on one line. */
-@media (min-width: 560px) {
-  :root {
-    --plate-h: 146px;
-    --row-h: 32px;
-    --row-gap: 2px;
-    --title-line: 22px;
-    --day-h: 52px;
-    --card-chrome: 40px;
-    --pad: 16px;
-  }
-
-  .card { grid-template-columns: 104px minmax(0, 1fr); gap: 16px; padding: 14px 16px; margin-bottom: 10px; }
-  .day { padding-top: 22px; }
-
-  .f {
-    grid-template-columns: 22px minmax(0, 1fr) auto auto;
-    grid-template-areas: "num name size copy";
-    column-gap: 10px;
-    row-gap: 0;
-  }
-  .f.ext {
-    grid-template-columns: 22px minmax(0, 1fr) auto;
-    grid-template-areas: "num name copy";
-  }
-  .f button.cp { padding: 2px 8px; }
-
-  .bm { grid-template-columns: 78px minmax(0, 1fr) auto; gap: 12px; }
-  .bm .when { display: block; }
-
-  .sheet { place-items: center; grid-template-rows: 1fr; }
-  .sheet-card {
-    grid-row: 1;
-    width: min(680px, 92vw);
-    max-height: 78dvh;
-    border: 1px solid var(--ai-line);
-    border-radius: 10px;
-    box-shadow: 0 30px 80px -30px #000;
-  }
-  .help-card { width: min(420px, 92vw); }
-  .sheet-card.wide { width: min(820px, 94vw); }
-}
-
-/* Room for the rail beside the feed, and for the bar to hold one row. */
-@media (min-width: 900px) {
-  :root { --pad: 24px; }
-
-  .bar-inner.tools { flex-direction: row; align-items: center; gap: 14px; padding-bottom: 12px; }
-  .bar-inner.tools > * { width: auto; }
-  /* The filters dissolve into the bar's own row, so the search, the source and
-     the switches share one line and the types take the whole of the next. Left
-     as one block, it wrapped as one block, and the search sat alone on a row
-     with nothing beside it. */
-  .bar-inner.tools { row-gap: 10px; }
-  .filters { display: contents; }
-  .find { flex: 0 1 360px; min-width: 220px; }
-  .seg { order: 1; }
-  #reset { order: 2; }
-  .filters > .switch { order: 3; }
-  .filters > .switch:first-of-type { margin-left: auto; }
-  .chips { order: 4; flex: 1 1 100%; flex-wrap: wrap; }
-
-  .counts {
-    order: 0;
-    flex: 0 1 auto;
-    margin-left: auto;
-    font-size: 12px;
-    white-space: nowrap;
-    text-align: right;
-  }
-  .acts { flex: 0 0 auto; flex-wrap: nowrap; }
-  .acts .act { flex: none; }
-
-  .stage {
-    grid-template-columns: var(--rail-w) minmax(0, 1fr);
-    gap: 20px;
-    padding-top: calc(var(--bar-h) + 16px);
-    padding-bottom: 160px;
-  }
-
-  /* The rail holds column one whether or not it has months in it, and the feed
-     is pinned to column two. Left to auto-placement, a rail that `:empty` had
-     hidden stopped being a grid item at all -- and the feed slid into the
-     92px track behind it, which squeezed every card to the width of the rail
-     and pushed its file rows out the side. */
-  .feed { grid-column: 2; }
-  .rail,
-  .rail:empty {
-    display: block;
-    position: sticky;
-    top: calc(var(--bar-h) + 16px);
-    align-self: start;
-    max-height: calc(100dvh - var(--bar-h) - 48px);
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--ai-line) transparent;
-    border-bottom: none;
-    padding-bottom: 0;
-    padding-right: 0;
-    margin-bottom: 0;
-    mask-image: none;
-  }
-  .rail-year {
-    padding: 10px 0 4px;
-    border-top: 1px solid var(--ai-line);
-    margin-top: 6px;
-  }
-  .rail-year:first-child { border-top: none; margin-top: 0; padding-top: 0; }
-  .rail-month {
-    display: grid;
-    grid-template-columns: 18px 1fr;
-    align-items: center;
-    gap: 7px;
-    width: 100%;
-    padding: 3px 4px;
-    text-align: left;
-  }
-
-  .light { grid-template-columns: 64px minmax(0, 1fr) 64px; }
-  .light-body { grid-column: 2; padding: 56px 0 24px; }
-  .light-body img { max-height: calc(100dvh - 96px); }
-  .light-step {
-    position: static;
-    background: none;
-    border: none;
-    border-radius: 0;
-    font-size: 34px;
-    padding: 20px 0;
-  }
-  .light-step.prev { grid-column: 1; }
-  .light-step.next { grid-column: 3; }
-}
-
-/* A finger is not a mouse: the small controls get a target, without changing
-   any height the virtual list has already measured. */
 @media (pointer: coarse) {
-  .tools-row button, .tools-row a { padding: 6px 8px; }
-  .rail-month { min-width: 34px; padding: 6px 4px; }
+  .rail-month { padding: 6px 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; }
+  * { transition: none !important; animation: none !important; }
 }

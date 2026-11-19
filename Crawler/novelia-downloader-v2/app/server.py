@@ -5,6 +5,7 @@ import io
 import json
 import os
 from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime, timedelta
 from html import unescape
 from pathlib import Path
 from typing import Annotated, Literal
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .client import Client, Deferred
-from .database import BILINGUAL_SQL, Database, now
+from .database import BILINGUAL_SQL, Database, iso, now
 from .desktop import open_path
 from .schema import (
     CATEGORIES,
@@ -67,7 +68,11 @@ SORTS = {
     "title": "title COLLATE NOCASE",
     "title_zh": "COALESCE(NULLIF(title_zh,''),title) COLLATE NOCASE",
     "volumes": "shown_volumes DESC",
+    # Works with no file at all come last, in no particular order.
+    "downloaded": "last_saved IS NULL, last_saved DESC",
 }
+# Which editions a work has; combined with the completeness filter (`state`).
+EDITION_FILTERS = {key: STATE_FILTERS[key] for key in ("japanese", "bilingual", "chinese")}
 
 
 class RemoveWorks(BaseModel):
@@ -319,7 +324,8 @@ def create_app(data_root=None, download_root=None, start_worker=True):
         category: int | None = None,
         kind: str = "",
         state: Literal["", "saved", "partial", "metadata", "japanese", "bilingual", "chinese"] = "",
-        sort: Literal["checked", "added", "title", "title_zh", "volumes"] = "checked",
+        edition: Literal["", "japanese", "bilingual", "chinese"] = "",
+        sort: Literal["checked", "added", "title", "title_zh", "volumes", "downloaded"] = "checked",
         page: int = Query(1, ge=1),
         page_size: int = Query(48, ge=1, le=200),
     ):
@@ -335,19 +341,45 @@ def create_app(data_root=None, download_root=None, start_worker=True):
             params.append(kind)
         if state:
             clauses.append(STATE_FILTERS[state])
+        if edition:
+            clauses.append(EDITION_FILTERS[edition])
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        inner = f"SELECT w.*,{stats()} FROM works w"
+        hidden = "" if db.settings().download_chinese_uploads else " AND f.mode!='zh-original'"
+        inner = (
+            f"SELECT w.*,{stats()},(SELECT MAX(f.saved_at) FROM files f "
+            f"WHERE f.work_key=w.key{hidden}) AS last_saved FROM works w"
+        )
         total = db.rows(f"SELECT COUNT(*) AS n FROM ({inner}){where}", params)[0]["n"]
         items = db.rows(
             f"""SELECT key,kind,category,title,title_zh,cover,authors,publisher,
             shown_volumes AS volume_count,
-            first_seen,checked_at,file_count,ja_count,bilingual_count,zh_count
+            first_seen,checked_at,last_saved,file_count,ja_count,bilingual_count,zh_count
             FROM ({inner}){where} ORDER BY {SORTS[sort]},key LIMIT ? OFFSET ?""",
             [*params, page_size, (page - 1) * page_size],
         )
         for row in items:
             row["authors"] = json.loads(row["authors"])
         return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+    @app.get("/api/recent")
+    def recent(days: int = Query(7, ge=1, le=90), limit: int = Query(24, ge=1, le=200)):
+        """Works with volumes first saved in the last `days`, the most recent first."""
+        since = iso(datetime.now(UTC) - timedelta(days=days))
+        hidden = "" if db.settings().download_chinese_uploads else " AND f.mode!='zh-original'"
+        items = db.rows(
+            f"""SELECT w.key,w.title,w.title_zh,w.cover,
+            COUNT(DISTINCT f.volume_id) AS new_files,MAX(f.saved_at) AS last_file_at
+            FROM files f JOIN works w ON w.key=f.work_key
+            WHERE f.saved_at>=?{hidden} GROUP BY w.key ORDER BY last_file_at DESC LIMIT ?""",
+            (since, limit),
+        )
+        total = db.row(
+            f"""SELECT COUNT(DISTINCT f.work_key) AS works,
+            COUNT(DISTINCT f.work_key || '/' || f.volume_id) AS volumes
+            FROM files f WHERE f.saved_at>=?{hidden}""",
+            (since,),
+        )
+        return {"items": items, "days": days, **(total or {"works": 0, "volumes": 0})}
 
     def live_work(key):
         """A work not in the library, read from Novelia without adding it."""

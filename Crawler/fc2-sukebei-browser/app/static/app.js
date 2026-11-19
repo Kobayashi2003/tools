@@ -6,6 +6,7 @@
 
 import { enhanceSelect } from './controls.js';
 import { applyStatic, getLang, setLang, t } from './i18n.js';
+import { sortedTorrents, bestTorrent, updateRegion } from './presentation.js';
 
 const PAGE = 60;
 const REFRESH_CAP = 1000;
@@ -43,11 +44,13 @@ const ICONS = {
   play: '<path d="M8 5.5v13l10.5-6.5z"/>',
   alert: '<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.5M12 17.2v.3"/>',
   bookmark: '<path d="M7 4h10v16l-5-3.6L7 20z"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/>',
 };
 
 function icon(name, cls = '') {
   const span = document.createElement('span');
   span.className = `ico ico-${name} ${cls}`.trim();
+  span.setAttribute('aria-hidden', 'true');
   span.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
   return span;
 }
@@ -139,6 +142,7 @@ const state = {
   requestId: 0,
   detailIndex: -1,
   detail: null,
+  detailRequest: 0,
 };
 state.filters.q = '';
 
@@ -158,6 +162,8 @@ async function loadMore(reset = false, size = PAGE) {
   if (!reset && state.done) return;
   const requestId = ++state.requestId;
   state.loading = true;
+  $('#grid').setAttribute('aria-busy', 'true');
+  if (!state.items.length) renderGridSkeleton();
   try {
     const data = await query(reset ? 0 : state.items.length, size);
     if (requestId !== state.requestId) return;
@@ -175,7 +181,12 @@ async function loadMore(reset = false, size = PAGE) {
   } catch (err) {
     toast(`${t('error')}: ${err.message}`, 'error');
   } finally {
-    if (requestId === state.requestId) state.loading = false;
+    if (requestId === state.requestId) {
+      state.loading = false;
+      $('#grid').setAttribute('aria-busy', 'false');
+      $('#grid').querySelectorAll('.skeleton').forEach(el => el.remove());
+      renderCount();
+    }
   }
   // Keep filling while the sentinel is still on screen (large monitors, short pages). The observer
   // only fires on visibility changes, so reaching the end while it stays visible is checked here.
@@ -216,7 +227,11 @@ async function refreshLoaded() {
         if (!card) grid.append(buildCard(item));
         else if (!old || cardKey(old) !== cardKey(item)) {
           if (card.matches(':hover')) return old; // don't interrupt a playing preview; update next poll
-          card.replaceWith(buildCard(item));
+          const focused = card.contains(document.activeElement);
+          const control = focused ? ['.star', '.mark', '.copy', '.magnet', '.code'].find(sel => document.activeElement.matches(sel)) : null;
+          const fresh = buildCard(item);
+          card.replaceWith(fresh);
+          if (focused) (control ? $(control, fresh) : fresh)?.focus({ preventScroll: true });
         }
         return item;
       });
@@ -242,6 +257,16 @@ async function refreshLoaded() {
 
 const cardElements = () => [...$('#grid').querySelectorAll(':scope > .card')];
 
+function renderGridSkeleton() {
+  $('#grid').replaceChildren(...Array.from({ length: PAGE }, () => h('div', { class: 'card skeleton', 'aria-hidden': 'true' },
+    h('div', { class: 'thumb' }), h('div', { class: 'card-body' },
+      h('div', { class: 'sk-line' }), h('div', { class: 'sk-line' }), h('div', { class: 'sk-line short' })))));
+}
+
+function emptyState(title, hint, action = null) {
+  return h('div', { class: 'empty-state' }, icon('image'), h('h3', {}, title), h('p', {}, hint), action);
+}
+
 // Sorted by upload or by addition, the grid is split into days ("Today", "Yesterday", "Oct 7").
 const DAY_FIELDS = { uploaded: 'uploaded', added: 'added' };
 
@@ -261,18 +286,22 @@ function dayLabel(ts) {
 
 function syncDividers() {
   const grid = $('#grid');
-  for (const el of grid.querySelectorAll(':scope > .day')) el.remove();
+  const old = new Map([...grid.querySelectorAll(':scope > .day')].map(el => [el.dataset.day, el]));
   const field = DAY_FIELDS[state.filters.sort];
-  if (!field) return;
+  if (!field) { old.forEach(el => el.remove()); return; }
   let last = null;
   for (const card of cardElements()) {
     const ts = Number(card.dataset[field]) || 0;
     const key = ts ? dayStart(new Date(ts * 1000)) : 0;
     if (key !== last) {
-      card.before(h('h2', { class: 'day' }, ts ? dayLabel(ts) : '—'));
+      const heading = old.get(String(key)) || h('h2', { class: 'day', dataset: { day: key } });
+      old.delete(String(key));
+      heading.textContent = ts ? dayLabel(ts) : '—';
+      if (card.previousElementSibling !== heading) card.before(heading);
       last = key;
     }
   }
+  old.forEach(el => el.remove());
 }
 
 const cardKey = (item) => [item.fc2_state, item.pp_state, item.title, item.cover, item.clips.length, item.samples.length,
@@ -290,7 +319,9 @@ function renderCount() {
   if (nothing) {
     const f = state.filters;
     const filtered = f.q || f.view !== 'all' || f.minSeeders > 0 || f.mediaOnly;
-    empty.innerHTML = filtered ? t('emptyFilter') : t('emptyLibrary'); // static, trusted strings
+    updateRegion(empty, [!!filtered, getLang()], () => emptyState(t(filtered ? 'emptyFilter' : 'emptyTitle'),
+      t(filtered ? 'emptyFilterHint' : 'emptyHint'), h('button', { class: 'btn', type: 'button',
+        onclick: filtered ? clearFilters : () => startJob('update') }, t(filtered ? 'clearFilters' : 'update'))));
   }
 }
 
@@ -326,6 +357,7 @@ function buildCard(item) {
   const card = h('article', {
     class: `card${item.viewed_at ? ' seen' : ''}${item.hidden ? ' is-hidden' : ''}${fresh ? ' fresh' : ''}${marks.has(item.fc2_id) ? ' marked' : ''}`,
     dataset: { id: item.fc2_id, uploaded: item.uploaded_at || 0, added: item.added_at || 0 },
+    'aria-label': code(item.fc2_id),
     tabIndex: 0,
     onclick: (e) => {
       if (e.target.closest('a, button')) return;
@@ -342,11 +374,13 @@ function buildCard(item) {
         fresh ? h('span', { class: 'fresh-dot', title: t('freshTitle') }) : null, code(item.fc2_id)),
       h('button', {
         class: `icon star${item.starred ? ' on' : ''}`, type: 'button', title: item.starred ? t('unstar') : t('star'),
+        'aria-label': item.starred ? t('unstar') : t('star'),
         'aria-pressed': String(item.starred), onclick: () => setFlags(item.fc2_id, { starred: !item.starred }),
       }, icon('star')),
       h('button', {
         class: `icon mark${marks.has(item.fc2_id) ? ' on' : ''}`, type: 'button',
         title: marks.has(item.fc2_id) ? t('unmark') : t('mark'), 'aria-pressed': String(marks.has(item.fc2_id)),
+        'aria-label': marks.has(item.fc2_id) ? t('unmark') : t('mark'),
         onclick: () => toggleMark(item.fc2_id),
       }, icon('bookmark')),
     ),
@@ -440,7 +474,7 @@ async function setFlags(fc2Id, flags) {
         state.total -= 1;
         renderCount();
       } else {
-        card?.replaceWith(buildCard(state.items[i]));
+        updateCardFlags(card, state.items[i]);
       }
     }
     if (state.detail && state.detail.fc2_id === fc2Id) {
@@ -452,12 +486,30 @@ async function setFlags(fc2Id, flags) {
   }
 }
 
+function updateCardFlags(card, item) {
+  if (!card) return;
+  card.classList.toggle('is-hidden', !!item.hidden);
+  card.classList.toggle('marked', marks.has(item.fc2_id));
+  for (const [selector, on, label] of [
+    ['.star', !!item.starred, t(item.starred ? 'unstar' : 'star')],
+    ['.mark', marks.has(item.fc2_id), t(marks.has(item.fc2_id) ? 'unmark' : 'mark')],
+  ]) {
+    const button = $(selector, card);
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.setAttribute('aria-label', label);
+    button.title = label;
+  }
+}
+
 // --- detail view -----------------------------------------------------------------------------
 
 async function openDetail(index) {
   if (index < 0 || index >= state.items.length) return;
   state.detailIndex = index;
   const item = state.items[index];
+  const request = ++state.detailRequest;
+  closeStatusPanel();
   const overlay = $('#detail');
   overlay.hidden = false;
   document.body.classList.add('modal-open');
@@ -468,7 +520,7 @@ async function openDetail(index) {
   $('.detail-panel').focus({ preventScroll: true });
   try {
     const full = await api(`api/titles/${item.fc2_id}`);
-    if (state.detailIndex !== index) return;
+    if (state.detailRequest !== request || state.detail?.fc2_id !== item.fc2_id) return;
     state.detail = full;
     item.viewed_at = full.viewed_at;
     $(`#grid .card[data-id="${item.fc2_id}"]`)?.classList.add('seen');
@@ -499,13 +551,19 @@ async function waitForTitle(fc2Id) {
 function closeDetail() {
   const overlay = $('#detail');
   if (overlay.hidden) return;
-  for (const video of overlay.querySelectorAll('video')) { video.pause(); video.removeAttribute('src'); }
+  for (const video of overlay.querySelectorAll('video')) { video.pause(); video.removeAttribute('src'); video.load(); }
   overlay.hidden = true;
+  $('.detail-panel').dataset.id = '';
   document.body.classList.remove('modal-open');
   const id = state.detail?.fc2_id;
+  state.detailRequest += 1;
   state.detailIndex = -1;
   state.detail = null;
-  if (id) $(`#grid .card[data-id="${id}"]`)?.focus({ preventScroll: true });
+  if (id) {
+    const card = $(`#grid .card[data-id="${id}"]`);
+    card?.focus({ preventScroll: true });
+    card?.scrollIntoView({ block: 'nearest' });
+  }
   refreshLoaded(); // flags changed in the detail view may move cards between views
 }
 
@@ -532,42 +590,81 @@ function section(title, ...body) {
 function renderDetail() {
   const d = state.detail;
   const panel = $('.detail-panel');
-  const scroll = panel.scrollTop;
   const pending = d.fc2_state === '' || d.pp_state === '';
   const images = d.samples.map((s) => s.full);
   const v = d.fetched_at;
+  if (panel.dataset.id !== d.fc2_id) {
+    panel.dataset.id = d.fc2_id;
+    const menu = h('details', { class: 'detail-menu' },
+      h('summary', { class: 'btn square', 'aria-label': t('moreActions'), title: t('moreActions') }, '⋯'),
+      h('div', { class: 'popover action-menu' },
+        h('button', { class: 'menu-hide', type: 'button', onclick: () => setFlags(d.fc2_id, { hidden: !state.detail.hidden }) }),
+        h('button', { type: 'button', onclick: () => refreshTitle(d.fc2_id) }, t('refresh')),
+        ...[
+          ['FC2', `https://adult.contents.fc2.com/article/${d.fc2_id}/`],
+          ['paipancon', `https://paipancon.com/fc2daily/detail/${code(d.fc2_id)}`],
+          ['sukebei', `https://sukebei.nyaa.si/?f=0&c=0_0&q=${d.fc2_id}`],
+        ].map(([site, href]) => h('a', { href, target: '_blank', rel: 'noreferrer' }, t('openOn', { site })))));
+    menu.addEventListener('click', (event) => { if (event.target.closest('.action-menu a, .action-menu button')) menu.open = false; });
+    panel.replaceChildren(
+      h('header', { class: 'd-head' },
+        h('button', { id: 'detail-code', class: 'code big', type: 'button', title: t('copyCode'), onclick: () => copy(code(d.fc2_id)) }, code(d.fc2_id), icon('copy')),
+        h('span', { class: 'spacer' }),
+        h('button', { class: 'btn d-star', type: 'button', onclick: () => setFlags(d.fc2_id, { starred: !state.detail.starred }) }, icon('star'), h('span')),
+        h('button', { class: 'btn d-mark', type: 'button', onclick: () => toggleMark(d.fc2_id) }, icon('bookmark'), h('span')),
+        menu,
+        h('button', { class: 'icon close', type: 'button', 'aria-label': t('close'), onclick: closeDetail }, '×')),
+      h('div', { class: 'd-body' },
+        h('div', { class: 'd-media' }, h('div', { class: 'd-media-top' }), h('div', { class: 'd-sample' }), h('div', { class: 'd-samples' }), h('div', { class: 'd-contact' })),
+        h('div', { class: 'd-sidebar' }, h('div', { class: 'd-info' }), h('section', { class: 'd-section d-torrents' },
+          h('h3'), h('div', { class: 'torrents' })))));
+    panel.scrollTop = 0;
+  }
+  const star = $('.d-star', panel);
+  const mark = $('.d-mark', panel);
+  star.classList.toggle('on', !!d.starred);
+  star.setAttribute('aria-pressed', String(!!d.starred));
+  $('span:not(.ico)', star).textContent = t(d.starred ? 'unstar' : 'star');
+  mark.classList.toggle('on', marks.has(d.fc2_id));
+  mark.setAttribute('aria-pressed', String(marks.has(d.fc2_id)));
+  $('span:not(.ico)', mark).textContent = t(marks.has(d.fc2_id) ? 'unmark' : 'mark');
+  $('.menu-hide', panel).textContent = t(d.hidden ? 'unhide' : 'hide');
+  $('.d-star', panel).setAttribute('aria-label', t(d.starred ? 'unstar' : 'star'));
+  $('.d-mark', panel).setAttribute('aria-label', t(marks.has(d.fc2_id) ? 'unmark' : 'mark'));
+  $('.d-head .close', panel).setAttribute('aria-label', t('close'));
+  $('.detail-menu summary', panel).setAttribute('aria-label', t('moreActions'));
+  $('.detail-menu summary', panel).title = t('moreActions');
+  $('.action-menu button:not(.menu-hide)', panel).textContent = t('refresh');
+  $('.action-menu', panel).querySelectorAll('a').forEach((link, i) => { link.textContent = t('openOn', { site: ['FC2', 'paipancon', 'sukebei'][i] }); });
 
-  const header = h('header', { class: 'd-head' },
-    h('button', { class: 'code big', type: 'button', title: t('copyCode'), onclick: () => copy(code(d.fc2_id)) }, code(d.fc2_id)),
-    h('span', { class: 'spacer' }),
-    h('button', {
-      class: `btn small${d.starred ? ' on' : ''}`, type: 'button', onclick: () => setFlags(d.fc2_id, { starred: !d.starred }),
-    }, d.starred ? `★ ${t('unstar')}` : `☆ ${t('star')}`),
-    h('button', {
-      class: `btn small${marks.has(d.fc2_id) ? ' on' : ''}`, type: 'button', onclick: () => toggleMark(d.fc2_id),
-    }, icon('bookmark'), marks.has(d.fc2_id) ? t('unmark') : t('mark')),
-    h('button', {
-      class: 'btn small', type: 'button', onclick: () => setFlags(d.fc2_id, { hidden: !d.hidden }),
-    }, d.hidden ? t('unhide') : t('hide')),
-    h('button', { class: 'btn small', type: 'button', onclick: () => refreshTitle(d.fc2_id) }, `⟳ ${t('refresh')}`),
-    h('a', { class: 'btn small', href: `https://adult.contents.fc2.com/article/${d.fc2_id}/`, target: '_blank', rel: 'noreferrer' }, 'FC2 ↗'),
-    h('a', { class: 'btn small', href: `https://paipancon.com/fc2daily/detail/${code(d.fc2_id)}`, target: '_blank', rel: 'noreferrer' }, 'paipancon ↗'),
-    h('a', { class: 'btn small', href: `https://sukebei.nyaa.si/?f=0&c=0_0&q=${d.fc2_id}`, target: '_blank', rel: 'noreferrer' }, 'sukebei ↗'),
-    h('button', { class: 'icon close', type: 'button', 'aria-label': 'Close', onclick: closeDetail }, '×'),
-  );
-
+  const sampleImages = () => h('div', { class: 'image-grid' }, d.samples.map((s, i) => h('button', {
+    class: 'image-shot', type: 'button', 'aria-label': `${t('sampleImages')} ${i + 1}`, onclick: () => openLightbox(images, i, v),
+  }, h('img', { src: media(s.thumb, v), loading: 'lazy', alt: '', onerror: (e) => e.target.classList.add('broken') }))));
   const coverUrl = d.cover_full || d.cover;
-  const hero = h('div', { class: 'd-hero' },
-    h('div', { class: 'd-cover' },
-      coverUrl
-        ? h('img', { src: media(coverUrl, v), alt: '', onclick: () => openLightbox([coverUrl, ...images], 0, v) })
-        : h('div', { class: 'cover placeholder' }, pending ? t('fetchingInfo') : t('noCover')),
-    ),
-    h('div', { class: 'd-info' },
+  updateRegion($('.d-media-top', panel), [coverUrl, d.clips, d.samples, pending, v, getLang()], () => !coverUrl && !d.clips.length && !d.samples.length
+    ? h('div', { class: 'media-empty wide' }, emptyState(t(pending ? 'fetchingInfo' : 'noMediaTitle'), t(pending ? 'metadataHint' : 'noMedia')))
+    : [
+    h('div', { class: 'd-cover' }, coverUrl
+      ? h('button', { class: 'cover-shot', type: 'button', 'aria-label': t('viewCover'), onclick: () => openLightbox([coverUrl, ...images], 0, v) },
+        h('img', { src: media(coverUrl, v), alt: '', onerror: (e) => e.target.classList.add('broken') }))
+      : h('div', { class: 'cover placeholder' }, emptyState(t(pending ? 'fetchingInfo' : 'noCover'), t(pending ? 'metadataHint' : 'noMedia')))),
+    d.clips.length ? section(`${t('clips')} (${d.clips.length})`,
+      h('div', { class: 'clip-grid' }, d.clips.map((url, i) => h('div', { class: 'clip-frame' }, h('video', {
+        src: media(url, v), muted: true, loop: true, autoplay: true, playsInline: true, preload: 'metadata',
+        tabindex: 0, 'aria-label': `${t('clipAudio')} ${i + 1}`,
+        onclick: (e) => { e.target.muted = !e.target.muted; },
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.target.muted = !e.target.muted; } },
+      })))))
+      : d.samples.length ? section(`${t('sampleImages')} (${d.samples.length})`, sampleImages())
+        : h('div', { class: 'media-empty' }, emptyState(t(pending ? 'fetchingInfo' : 'noMediaTitle'), t(pending ? 'metadataHint' : 'noMedia'))),
+  ]);
+
+  updateRegion($('.d-info', panel), [d.title, d.seller, d.seller_url, d.released, d.duration, d.rating, d.reviews, d.tags, d.fc2_state, d.pp_state, d.errors, getLang()], () => [
       h('h2', {}, d.title || '—'),
       h('dl', {},
-        d.seller ? [h('dt', {}, t('seller')), h('dd', {}, d.seller_url
-          ? h('a', { href: d.seller_url, target: '_blank', rel: 'noreferrer' }, d.seller) : d.seller)] : null,
+        d.seller ? [h('dt', {}, t('seller')), h('dd', { class: 'seller-line' }, d.seller_url
+          ? h('a', { href: d.seller_url, target: '_blank', rel: 'noreferrer' }, d.seller) : d.seller,
+          h('button', { class: 'text-button', type: 'button', onclick: () => { closeDetail(); setFilterQuery(d.seller); } }, t('filter')))] : null,
         d.released ? [h('dt', {}, t('released')), h('dd', {}, d.released)] : null,
         d.duration ? [h('dt', {}, t('duration')), h('dd', {}, d.duration)] : null,
         d.rating != null ? [h('dt', {}, t('rating')), h('dd', {},
@@ -579,36 +676,58 @@ function renderDetail() {
         [h('dt', {}, t('sources')), h('dd', { class: 'sources' },
           sourceBadge('FC2', d.fc2_state, d.errors?.fc2), sourceBadge('paipancon', d.pp_state, d.errors?.pp))],
       ),
-    ),
-  );
+  ]);
+  updateRegion($('.d-sample', panel), [d.fc2_id, getLang()], () => section(t('sampleVideo'), h('div', { class: 'sample-slot' },
+    h('div', { class: 'sample-prompt' }, icon('play'), h('p', {}, t('sampleHint')),
+      h('button', { class: 'btn', type: 'button', onclick: (e) => loadSample(d.fc2_id, e.currentTarget.closest('.sample-slot')) }, t('loadSample'))))));
+  updateRegion($('.d-samples', panel), [!!d.clips.length, d.samples, v, getLang()], () => d.clips.length && d.samples.length ? section(`${t('sampleImages')} (${d.samples.length})`, sampleImages()) : null);
+  updateRegion($('.d-contact', panel), [d.grid, v, getLang()], () => d.grid ? section(t('contactSheet'), h('button', {
+    class: 'contact-shot', type: 'button', 'aria-label': t('contactSheet'), onclick: () => openLightbox([d.grid], 0, v),
+  }, h('img', { class: 'contact', src: media(d.grid, v), loading: 'lazy', alt: '' }))) : null);
+  renderTorrents();
+}
 
-  const torrents = section(`${t('torrents')}${d.torrents ? ` (${d.torrents.length})` : ''}`,
-    d.torrents ? h('div', { class: 'torrents' }, d.torrents.map(torrentRow)) : h('div', { class: 'dim' }, '…'));
-
-  const clips = d.clips.length ? section(`${t('clips')} (${d.clips.length})`,
-    h('div', { class: 'clip-grid' }, d.clips.map((url) => h('video', {
-      src: media(url, v), muted: true, loop: true, autoplay: true, playsInline: true, preload: 'metadata',
-      onclick: (e) => { e.target.muted = !e.target.muted; },
-    })))) : null;
-
-  const sample = section(t('sampleVideo'), h('div', { class: 'sample-slot' },
-    h('button', { class: 'btn', type: 'button', onclick: (e) => loadSample(d.fc2_id, e.target.parentElement) }, `▶ ${t('loadSample')}`)));
-
-  const samples = d.samples.length ? section(`${t('sampleImages')} (${d.samples.length})`,
-    h('div', { class: 'image-grid' }, d.samples.map((s, i) => h('img', {
-      src: media(s.thumb, v), loading: 'lazy', alt: '', onclick: () => openLightbox(images, i, v),
-      onerror: (e) => e.target.classList.add('broken'),
-    })))) : null;
-
-  const grid = d.grid ? section(t('contactSheet'), h('img', {
-    class: 'contact', src: media(d.grid, v), loading: 'lazy', alt: '', onclick: () => openLightbox([d.grid], 0, v),
-  })) : null;
-
-  const noMedia = !pending && !d.clips.length && !d.samples.length && !d.cover
-    ? h('p', { class: 'notice' }, t('noMedia')) : null;
-
-  panel.replaceChildren(...[header, hero, noMedia, torrents, clips, sample, samples, grid].filter(Boolean));
-  panel.scrollTop = scroll;
+function renderTorrents() {
+  const d = state.detail;
+  const heading = `${t('torrents')}${d.torrents ? ` (${d.torrents.length})` : ''}`;
+  if ($('.d-torrents h3').textContent !== heading) $('.d-torrents h3').textContent = heading;
+  const region = $('.torrents');
+  if (!d.torrents) {
+    if (region.dataset.state !== 'loading') region.replaceChildren(...Array.from({ length: 3 }, () => h('div', { class: 'torrent skeleton', 'aria-hidden': 'true' }, h('div', { class: 'sk-line' }), h('div', { class: 'sk-line short' }))));
+    region.dataset.state = 'loading';
+    return;
+  }
+  if (!d.torrents.length) {
+    const phase = `empty-${getLang()}`;
+    if (region.dataset.state !== phase) region.replaceChildren(emptyState(t('noTorrents'), t('noTorrentsHint')));
+    region.dataset.state = phase;
+    return;
+  }
+  region.dataset.state = 'list';
+  region.querySelectorAll('.skeleton, .empty-state').forEach(node => node.remove());
+  const best = bestTorrent(d.torrents);
+  const wanted = new Set(d.torrents.map(tr => String(tr.view_id)));
+  let previous = null;
+  for (const tr of sortedTorrents(d.torrents)) {
+    const key = String(tr.view_id);
+    let row = $(`.torrent[data-id="${key}"]`, region);
+    const signature = JSON.stringify([tr.view_id, tr.name, tr.seeders, tr.leechers, tr.downloads, tr.size_bytes, tr.risky, tr.flag, getLang()]);
+    if (!row || row.dataset.signature !== signature) {
+      const fresh = torrentRow(tr);
+      fresh.dataset.id = key;
+      fresh.dataset.signature = signature;
+      if (row) row.replaceWith(fresh);
+      row = fresh;
+    }
+    const isBest = best?.view_id === tr.view_id;
+    row.classList.toggle('best', isBest);
+    $('.best-badge', row).hidden = !isBest;
+    $('.t-magnet', row).classList.toggle('primary', isBest);
+    const position = previous ? previous.nextElementSibling : region.firstElementChild;
+    if (position !== row) region.insertBefore(row, position);
+    previous = row;
+  }
+  for (const row of region.children) if (!wanted.has(row.dataset.id)) row.remove();
 }
 
 function torrentRow(tr) {
@@ -628,12 +747,24 @@ function torrentRow(tr) {
       Object.assign(tr, await api(`api/torrents/${tr.view_id}`));
       renderFiles(filesSlot, tr);
       row.querySelector('.badges').replaceChildren(...badges(tr));
+      // A newly read file list can reveal risk after a torrent was recommended.
+      if (tr.risky) {
+        row.classList.add('risky');
+        const best = bestTorrent(state.detail?.torrents || []);
+        for (const other of document.querySelectorAll('.torrent[data-id]')) {
+          const isBest = other.dataset.id === String(best?.view_id);
+          other.classList.toggle('best', isBest);
+          $('.best-badge', other).hidden = !isBest;
+          $('.t-magnet', other).classList.toggle('primary', isBest);
+        }
+      }
     } catch (err) {
       filesSlot.replaceChildren(h('div', { class: 'error' }, `${t('error')}: ${err.message}`));
     }
   });
 
   const row = h('div', { class: `torrent${tr.risky ? ' risky' : ''}` },
+    h('span', { class: 'best-badge', hidden: true }, t('best')),
     h('div', { class: 't-main' },
       h('a', { class: 't-name', href: `https://sukebei.nyaa.si/view/${tr.view_id}`, target: '_blank', rel: 'noreferrer', title: tr.name }, tr.name),
       h('div', { class: 't-meta' },
@@ -646,8 +777,8 @@ function torrentRow(tr) {
       ),
     ),
     h('div', { class: 't-actions' },
-      h('a', { class: 'btn small primary', href: tr.magnet, title: t('openMagnet') }, '🧲 Magnet'),
-      h('button', { class: 'btn small', type: 'button', title: t('copyMagnet'), onclick: () => copy(tr.magnet, t('magnetCopied')) }, '⧉'),
+      h('a', { class: 'btn small t-magnet', href: tr.magnet, title: t('openMagnet') }, icon('magnet'), t('magnet')),
+      h('button', { class: 'btn small', type: 'button', title: t('copyMagnet'), 'aria-label': t('copyMagnet'), onclick: () => copy(tr.magnet, t('magnetCopied')) }, icon('copy')),
       h('a', { class: 'btn small', href: `https://sukebei.nyaa.si/download/${tr.view_id}.torrent`, title: '.torrent' }, '.torrent'),
       toggle,
     ),
@@ -681,12 +812,12 @@ function renderFiles(slot, tr) {
 }
 
 async function loadSample(fc2Id, slot) {
-  slot.replaceChildren(h('span', { class: 'dim' }, t('loadingSample')));
+  slot.replaceChildren(h('div', { class: 'sample-prompt' }, h('p', {}, t('loadingSample'))));
   try {
     const { url } = await api(`api/titles/${fc2Id}/sample`);
     slot.replaceChildren(h('video', { class: 'sample-video', src: url, controls: true, autoplay: true, playsInline: true, referrerpolicy: 'no-referrer' }));
   } catch (err) {
-    slot.replaceChildren(h('span', { class: 'dim' }, err.status === 404 ? t('noSample') : `${t('error')}: ${err.message}`));
+    slot.replaceChildren(h('div', { class: 'sample-prompt' }, h('p', {}, err.status === 404 ? t('noSample') : `${t('error')}: ${err.message}`)));
   }
 }
 
@@ -694,6 +825,7 @@ async function refreshTitle(fc2Id) {
   try {
     await api(`api/titles/${fc2Id}/refresh`, { method: 'POST' });
     toast(t('refreshQueued'));
+    if (state.detail?.fc2_id !== fc2Id) return;
     state.detail.state = 'pending';
     // Poll this title until the worker has re-fetched it.
     for (let i = 0; i < 40; i += 1) {
@@ -714,14 +846,16 @@ async function refreshTitle(fc2Id) {
 
 // --- lightbox --------------------------------------------------------------------------------
 
-const lightbox = { urls: [], index: 0, version: null };
+const lightbox = { urls: [], index: 0, version: null, returnFocus: null };
 
 function openLightbox(urls, index, version = null) {
+  lightbox.returnFocus = document.activeElement;
   lightbox.urls = urls.filter(Boolean);
   lightbox.version = version;
   lightbox.index = index;
   $('#lightbox').hidden = false;
   showLightbox();
+  $('.lb-close').focus({ preventScroll: true });
 }
 
 function showLightbox() {
@@ -736,6 +870,7 @@ function showLightbox() {
 function closeLightbox() {
   $('#lightbox').hidden = true;
   $('#lightbox img').removeAttribute('src');
+  if (lightbox.returnFocus?.isConnected) lightbox.returnFocus.focus({ preventScroll: true });
 }
 
 // --- crawl & status --------------------------------------------------------------------------
@@ -803,30 +938,36 @@ function renderStatus(status) {
     : waiting ? [status.waiting.fc2 ? t('fetchingDetails', { n: status.waiting.fc2 }) : '',
       status.waiting.pp ? t('fetchingClips', { n: status.waiting.pp }) : ''].filter(Boolean).join(' · ') || t('idle')
       : t('idle');
-  $('#job-update').disabled = !!crawling;
+  pill.title = `${t('librarySync')}: ${$('#status-text').textContent}`;
+  pill.setAttribute('aria-label', pill.title);
+  $('#job-update').hidden = !!crawling;
   $('#job-older').disabled = !!crawling || (status.coverage.history_complete && !older.rangeOn);
-  if (!$('#older-options').hidden) renderOlderOptions();
+  renderOlderOptions();
   $('#job-cancel').hidden = !crawling;
+  $('#query-run').disabled = !!crawling;
 
   const s = status.stats;
-  $('#status-stats').replaceChildren(
+  $('#status-stats').removeAttribute('aria-busy');
+  updateRegion($('#status-stats'), [s, getLang()], () => [
     ...[['statTitles', s.titles], ['statTorrents', s.torrents], ['statPending', s.pending],
       ['statFailed', s.failed], ['statStarred', s.starred]].map(([k, v]) => h('span', {}, h('b', {}, v.toLocaleString()), ` ${t(k)}`)),
-  );
+  ]);
   $('#retry-failed').disabled = !s.failed;
 
   const c = status.coverage;
   renderRuler(c);
   const synced = c.last_update_at ? t('covSynced', { ago: ago(c.last_update_at) }) : t('covNever');
   const auto = status.watch_minutes ? ` · ${t('covAuto', { n: status.watch_minutes })}` : '';
-  $('#coverage').replaceChildren(...[
+  updateRegion($('#coverage'), [synced, auto, c, getLang()], () => [
     h('dt', {}, t('covNew')), h('dd', {}, synced + auto),
     h('dt', {}, t('covHistory')), h('dd', {}, coverageText(c).history),
     c.update_gap ? h('dd', { class: 'gap' }, `⚠ ${t('covGap')}`) : null,
   ].filter(Boolean));
   $('#history-reset').disabled = !!crawling || c.history_next == null;
-  $('#status-log').replaceChildren(...status.log.slice().reverse().map((line) => h('li', { class: line.level },
-    h('time', {}, new Date(line.at * 1000).toLocaleTimeString()), ' ', line.message)));
+  const lines = status.log.slice().reverse();
+  updateRegion($('#status-log'), [lines, getLang()], () => lines.length ? lines.map((line) => h('li', { class: line.level },
+    h('time', {}, new Date(line.at * 1000).toLocaleTimeString()), ' ', line.message))
+    : h('li', { class: 'log-empty' }, t('noActivity')));
   renderLibraryEnd();
   noteJobEnd(job);
   return crawling || waiting > 0;
@@ -848,10 +989,10 @@ function noteJobEnd(job) {
 // edge is where Update keeps adding new uploads.
 function renderRuler(c) {
   const ruler = $('#ruler');
-  if (!c.top_block) { ruler.replaceChildren(); return; }
+  if (!c.top_block) { updateRegion(ruler, ['empty'], () => []); return; }
   const pct = (c.history_blocks / c.history_total) * 100;
   const shown = pct === 0 ? '0' : pct < 1 ? pct.toFixed(1) : String(Math.round(pct));
-  ruler.replaceChildren(
+  updateRegion(ruler, [c.history_blocks, c.history_total, c.top_block, getLang()], () => [
     h('div', { class: 'ruler-track', role: 'img', 'aria-label': t('rulerShare', { done: c.history_blocks, total: c.history_total, pct: shown }) },
       c.history_blocks ? h('div', { class: 'ruler-fill', style: `width:max(3px, ${pct.toFixed(2)}%)` }) : null,
       h('div', { class: 'ruler-edge', title: t('covNew') })),
@@ -859,7 +1000,7 @@ function renderRuler(c) {
       h('span', {}, t('rulerOldest')),
       h('span', { class: 'ruler-share' }, t('rulerShare', { done: c.history_blocks.toLocaleString(), total: c.history_total.toLocaleString(), pct: shown })),
       h('span', {}, t('rulerNewest', { id: `${c.top_block}xxx` }))),
-  );
+  ]);
 }
 
 async function startJob(kind, extra = {}, quiet = false) {
@@ -889,7 +1030,7 @@ function renderLibraryEnd() {
   if (!show) return;
   const c = lastStatus.coverage;
   const running = jobRunning();
-  end.replaceChildren(...[
+  updateRegion(end, [coverageText(c).history, c.history_complete, running, lastStatus.job?.kind, getLang()], () => [
     h('span', {}, `${t('libraryEnd')} · ${t('covHistory')}: ${coverageText(c).history}`),
     c.history_complete ? null : h('button', {
       class: 'btn small', type: 'button', disabled: running,
@@ -990,25 +1131,13 @@ function renderOlderOptions() {
   }
   if (older.stopEmpty && !problem) summary += ` ${t('olderSumStop')}`;
   $('#older-summary').textContent = summary;
-  $('#older-run').disabled = jobRunning() || (older.rangeOn ? !!olderRange().error : !!c?.history_complete);
+  $('#job-older').disabled = jobRunning() || (older.rangeOn ? !!olderRange().error : !!c?.history_complete);
 }
 
 function runOlder() {
   const body = olderBody();
   if (!body) { toast(olderRange().error, 'error'); return; }
-  closeOlderOptions();
   startJob('older', body);
-}
-
-function openOlderOptions() {
-  writeOlderControls();
-  $('#older-options').hidden = false;
-  $('#older-toggle').setAttribute('aria-expanded', 'true');
-}
-
-function closeOlderOptions() {
-  $('#older-options').hidden = true;
-  $('#older-toggle').setAttribute('aria-expanded', 'false');
 }
 
 // --- reading marks ---------------------------------------------------------------------------
@@ -1049,7 +1178,7 @@ async function toggleMark(fc2Id) {
   }
   toast(t(marked ? 'markRemoved' : 'markAdded'));
   const i = state.items.findIndex((x) => x.fc2_id === fc2Id);
-  if (i >= 0) $(`#grid .card[data-id="${fc2Id}"]`)?.replaceWith(buildCard(state.items[i]));
+  if (i >= 0) updateCardFlags($(`#grid .card[data-id="${fc2Id}"]`), state.items[i]);
   if (state.detail?.fc2_id === fc2Id) renderDetail();
 }
 
@@ -1206,9 +1335,24 @@ function saveFilters() {
 
 function applyFilters() {
   saveFilters();
+  renderFilterChip();
   viewOrder = null;
   state.done = false;
   loadMore(true);
+}
+
+function clearFilters() {
+  Object.assign(state.filters, { q: '', view: 'all', sort: 'uploaded', minSeeders: 0, mediaOnly: false });
+  $('#filter-q').value = '';
+  syncFilterControls();
+  applyFilters();
+}
+
+function renderFilterChip() {
+  const chip = $('#filter-chip');
+  chip.hidden = !state.filters.q;
+  $('span', chip).textContent = `“${state.filters.q}”`;
+  chip.setAttribute('aria-label', `${t('clearSearch')}: ${state.filters.q}`);
 }
 
 function setFilterQuery(text) {
@@ -1229,6 +1373,85 @@ function syncFilterControls() {
 }
 
 // --- wiring ----------------------------------------------------------------------------------
+
+function closeStatusPanel(refocus = false) {
+  if ($('#status-panel').hidden) return;
+  $('#status-panel').hidden = true;
+  $('#status-pill').setAttribute('aria-expanded', 'false');
+  if (refocus) $('#status-pill').focus();
+}
+
+function openStatusPanel() {
+  $('#status-panel').hidden = false;
+  $('#status-pill').setAttribute('aria-expanded', 'true');
+  $('#status-close').focus({ preventScroll: true });
+}
+
+function renderKeys() {
+  updateRegion($('#keys-list'), getLang(), () => [
+    ['← → ↑ ↓', 'keyGrid'], ['Enter', 'keyOpen'], ['s', 'keyStar'], ['m', 'keyMark'],
+    ['h', 'keyHide'], ['c', 'keyCopy'], ['r', 'keyRefresh'], ['← →', 'keyStep'],
+    ['/', 'keySearch'], ['[ ]', 'keyMarks'], ['Esc', 'keyClose'], ['?', 'shortcuts'],
+  ].map(([keys, label]) => h('div', { class: 'key-row' }, h('kbd', {}, keys), h('span', {}, t(label)))));
+}
+
+function showKeys() {
+  renderKeys();
+  if (!$('#keys-dialog').open) $('#keys-dialog').showModal();
+}
+
+function trapFocus(event, root) {
+  if (event.key !== 'Tab') return;
+  const controls = [...root.querySelectorAll('button, a[href], input, summary, [tabindex="0"]')]
+    .filter(el => !el.disabled && el.getClientRects().length && !el.closest('[hidden]'));
+  const at = controls.indexOf(document.activeElement);
+  if (!controls.length) { event.preventDefault(); return; }
+  if (event.shiftKey && at <= 0) { event.preventDefault(); controls.at(-1).focus(); }
+  else if (!event.shiftKey && (at < 0 || at === controls.length - 1)) { event.preventDefault(); controls[0].focus(); }
+}
+
+let gridMoving = false;
+async function moveGridFocus(key) {
+  if (gridMoving) return;
+  gridMoving = true;
+  try {
+    let cards = cardElements();
+    const current = document.activeElement?.closest('.card');
+    if (!current) { cards[0]?.focus(); return; }
+    let index = cards.indexOf(current);
+    const rows = () => [...new Set(cards.map(card => card.offsetTop))];
+    const target = () => {
+      if (key === 'ArrowLeft') return cards[index - 1];
+      if (key === 'ArrowRight') return cards[index + 1];
+      const tops = rows();
+      const row = tops.indexOf(current.offsetTop) + (key === 'ArrowDown' ? 1 : -1);
+      const candidates = cards.filter(card => card.offsetTop === tops[row]);
+      return candidates.sort((a, b) => Math.abs(a.offsetLeft - current.offsetLeft) - Math.abs(b.offsetLeft - current.offsetLeft))[0];
+    };
+    let next = target();
+    if (!next && !state.done && ['ArrowRight', 'ArrowDown'].includes(key)) {
+      await loadMore();
+      cards = cardElements();
+      index = cards.indexOf(current);
+      next = target();
+    }
+    next?.focus({ preventScroll: true });
+    next?.scrollIntoView({ block: 'nearest' });
+  } finally { gridMoving = false; }
+}
+
+function titleShortcut(key, item, detail = false) {
+  if (!item) return false;
+  if (key === 's') setFlags(item.fc2_id, { starred: !item.starred });
+  else if (key === 'm') toggleMark(item.fc2_id);
+  else if (key === 'h') setFlags(item.fc2_id, { hidden: !item.hidden });
+  else if (key === 'c') {
+    const torrent = detail ? bestTorrent(item.torrents || []) || sortedTorrents(item.torrents || [])[0] : item;
+    if (torrent?.magnet) copy(torrent.magnet, t('magnetCopied'));
+  } else if (detail && key === 'r') refreshTitle(item.fc2_id);
+  else return false;
+  return true;
+}
 
 function wire() {
   const sourceSelect = $('#crawl-source');
@@ -1258,12 +1481,9 @@ function wire() {
   $('#job-update').addEventListener('click', () => startJob('update'));
   $('#job-older').addEventListener('click', runOlder);
   olderDigitsSelect = enhanceSelect($('#older-digits'));
-  $('#older-toggle').addEventListener('click', () => ($('#older-options').hidden ? openOlderOptions() : closeOlderOptions()));
+  writeOlderControls();
   $('#older-options').addEventListener('input', readOlderControls);
   $('#older-options').addEventListener('change', readOlderControls);
-  $('#older-run').addEventListener('click', runOlder);
-  document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#older-group')) closeOlderOptions(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOlderOptions(); });
   $('#search-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const query = $('#search-query').value.trim();
@@ -1286,10 +1506,30 @@ function wire() {
   size.addEventListener('input', () => { applySize(size.value); store.set('cardSize', Number(size.value)); });
 
   $('#status-pill').addEventListener('click', () => {
-    const panel = $('#status-panel');
-    panel.hidden = !panel.hidden;
-    $('#status-pill').setAttribute('aria-expanded', String(!panel.hidden));
+    if ($('#status-panel').hidden) openStatusPanel();
+    else closeStatusPanel();
   });
+  $('#status-close').addEventListener('click', () => closeStatusPanel(true));
+  document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest('#status-panel, #status-pill')) closeStatusPanel();
+    const menu = $('.detail-menu[open]');
+    if (menu && !menu.contains(event.target)) menu.open = false;
+  });
+  const resizeChrome = () => {
+    document.documentElement.style.setProperty('--chrome-h', `${$('.app-chrome').offsetHeight}px`);
+    document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`);
+  };
+  new ResizeObserver(resizeChrome).observe($('.app-chrome'));
+  resizeChrome();
+  $('#keys-open').addEventListener('click', showKeys);
+  $('#keys-close').addEventListener('click', () => $('#keys-dialog').close());
+  $('#keys-dialog').addEventListener('click', event => {
+    if (event.target === event.currentTarget) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) event.currentTarget.close();
+    }
+  });
+  $('#filter-chip').addEventListener('click', () => setFilterQuery(''));
   $('#retry-failed').addEventListener('click', async () => {
     const { queued } = await api('api/retry-failed', { method: 'POST' });
     toast(t('retryQueued', { n: queued }));
@@ -1302,6 +1542,9 @@ function wire() {
     syncDividers();
     renderCount();
     sortSelect.sync();
+    sourceControl.sync();
+    olderDigitsSelect.sync();
+    renderFilterChip();
     renderMarksNav();
     if (state.detail) renderDetail();
     pollStatus();
@@ -1356,28 +1599,47 @@ function wire() {
   });
 
   document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return;
+    if ($('#keys-dialog').open) return;
     if (!box.hidden) {
+      trapFocus(e, box);
       if (e.key === 'Escape') closeLightbox();
       else if (e.key === 'ArrowLeft') { lightbox.index -= 1; showLightbox(); }
       else if (e.key === 'ArrowRight') { lightbox.index += 1; showLightbox(); }
+      if (['Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
       return;
     }
+    const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Escape' && $('.detail-menu[open]')) { $('.detail-menu').open = false; $('.detail-menu summary').focus(); return; }
+    if (e.key === 'Escape' && !$('#status-panel').hidden) { closeStatusPanel(true); return; }
     if (!detail.hidden) {
+      trapFocus(e, $('.detail-panel'));
       if (e.key === 'Escape') closeDetail();
+      else if (typing) return;
       else if (e.key === 'ArrowLeft') stepDetail(-1);
       else if (e.key === 'ArrowRight') stepDetail(1);
+      else if (e.key === '?') showKeys();
+      else if (e.key === '/') { closeDetail(); $('#filter-q').focus(); }
+      else if (e.key === '[' || e.key === ']') { closeDetail(); stepMark(e.key === ']' ? 1 : -1); }
+      else if (!titleShortcut(e.key.toLowerCase(), state.detail, true)) return;
+      e.preventDefault();
       return;
     }
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    if (typing) return;
+    if (!$('#status-panel').hidden) return;
     if (e.key === '/') {
       e.preventDefault();
       $('#filter-q').focus();
     } else if (e.key === ']') stepMark(1);
     else if (e.key === '[') stepMark(-1);
-    else if (e.key === 'm' || e.key === 'M') {
-      const id = hoveredId ?? document.activeElement?.closest?.('.card')?.dataset.id;
-      if (id) toggleMark(id);
-    } else if (e.key === 'Escape') closeMarkList();
+    else if (e.key === '?') showKeys();
+    else if (e.key.startsWith('Arrow') && !document.activeElement.closest('.select')) { e.preventDefault(); moveGridFocus(e.key); }
+    else if (e.key === 'Escape') closeMarkList();
+    else {
+      const id = document.activeElement?.closest?.('.card')?.dataset.id ?? hoveredId;
+      if (titleShortcut(e.key.toLowerCase(), state.items.find(item => item.fc2_id === id))) e.preventDefault();
+    }
   });
 }
 

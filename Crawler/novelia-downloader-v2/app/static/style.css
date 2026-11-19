@@ -188,10 +188,11 @@
   .pager button { min-width: 28px; min-height: 28px; padding: 0; font-size: 16px; border-color: transparent; background: transparent; }
   .page-jump { display: flex; align-items: center; gap: 8px; }
   .page-jump input { width: 44px; text-align: center; }
-  .footnote { display: flex; gap: 16px 24px; justify-content: flex-end; flex-wrap: wrap; margin-top: 20px; font-size: 12px; color: var(--muted); }
-  .empty { text-align: center; padding: 56px 16px; }
-  .empty h3 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
-  .empty p { color: var(--muted); max-width: 48ch; margin: 0 auto 20px; font-size: 13px; }
+  /* Nothing to show: a mark, a line, a hint and what to do, centred in the room. */
+  .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 56px 16px; min-height: 280px; }
+  .empty-mark { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--sunk); color: var(--muted); font-size: 20px; margin-bottom: 4px; }
+  .empty h3 { font-size: 17px; font-weight: 600; }
+  .empty p { color: var(--muted); max-width: 48ch; margin: 0 0 8px; font-size: 13px; line-height: 1.6; }
   .selection-bar { position: fixed; left: calc(50% + var(--rail-width) * .5); bottom: 20px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); z-index: 6; max-width: calc(100vw - var(--rail-width) - 32px); transition: left var(--normal) var(--ease); }
   .selection-bar span { margin-right: 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
   .task { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 240px) auto; gap: 12px 24px; align-items: center; border-bottom: 1px solid var(--line); padding: 20px 0; }
@@ -292,37 +293,17 @@
   .sheet > .dialog-head { position: sticky; top: 0; z-index: 3; background: var(--surface); padding-block: 16px; border-bottom: 1px solid var(--line); }
   .sheet > .dialog-head h2 { font-size: 16px; }
   .sheet > .dialog-head .icon-button { margin-right: -6px; }
-  .work-summary { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px 24px; margin-bottom: 24px; }
-  .work-summary .cover-frame { width: 120px; grid-row: 1 / 4; align-self: start; }
-  .work-info, .work-facts, .work-actions { grid-column: 2; }
-  .work-summary h2 { font-size: 22px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-  .work-summary .alt { color: var(--muted); margin-top: 6px; font-size: 13px; }
-  .work-summary dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 16px; margin: 4px 0; font-size: 12px; }
-  .work-summary dt { color: var(--muted); }
-  .work-summary dd { margin: 0; overflow-wrap: anywhere; }
-  .work-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .work-actions button { font-size: 12px; min-height: 30px; }
   .button-link { display: inline-flex; align-items: center; min-height: 30px; padding: 0 6px; font-size: 12px; text-decoration: none; color: var(--muted); }
   .button-link:hover { color: var(--accent); text-decoration: underline; }
   .introduction { margin-bottom: 28px; }
   .intro-wrap { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 220ms var(--ease); }
   .intro { color: var(--muted); font-size: 13px; line-height: 1.75; white-space: pre-line; overflow: hidden; }
   .intro-toggle { margin-top: 8px; color: var(--accent); font-size: 12px; }
-  .volumes h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
-  .volume { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 16px 0; border-top: 1px solid var(--line); align-items: start; }
-  .volume .name { font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
-  .volume .detail { color: var(--muted); font-size: 11px; margin-top: 6px; display: flex; gap: 6px 10px; flex-wrap: wrap; align-items: center; }
-  .volume .report { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
-  .volumes-hint { margin: -4px 0 8px; }
-  .live-note { margin: -8px 0 20px; }
-  /* Editions of a volume, numbered in the strategy's order. A saved one is a split chip: open,
-     save a copy. */
-  .editions { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; font-size: 11px; font-weight: 550; line-height: 1.5; }
-  .edition-slot { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-  .edition-slot.extra { opacity: .7; }
-  .edition-slot .rank { min-width: 14px; height: 14px; display: inline-grid; place-items: center; border-radius: 50%; background: var(--sunk); color: var(--muted); font-size: 9px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .edition { display: inline-flex; align-items: stretch; border-radius: 3px; font-size: 11px; font-weight: 550; line-height: 1.5; overflow: hidden; }
-  button.edition, .edition > button, .edition > a { min-height: 0; padding: 2px 6px; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-decoration: none; display: inline-flex; align-items: center; }
+  .live-note { margin: 0 0 16px; }
+  /* A saved edition is a split chip: open it, save a copy. */
+  .edition { display: inline-flex; align-items: stretch; border-radius: 4px; font-size: 12px; font-weight: 550; line-height: 1.5; overflow: hidden; }
+  button.edition, .edition > button, .edition > a { min-height: 26px; padding: 2px 8px; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-decoration: none; display: inline-flex; align-items: center; }
+  button.edition { border-radius: 4px; }
   .edition > :not(:first-child) { padding-inline: 5px; box-shadow: inset 1px 0 0 color-mix(in srgb, currentColor 22%, transparent); }
   .folder-button { display: inline-flex; align-items: center; gap: 6px; }
   .folder-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
@@ -338,9 +319,6 @@
   .books .book-open { user-select: none; }
   .selection-bar .selection-hint { color: var(--muted); font-size: 12px; margin-right: 8px; white-space: nowrap; }
   .selection-bar button { white-space: nowrap; }
-  .volume-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; max-width: 240px; }
-  .volume-actions a, .volume-actions button { font-size: 12px; min-height: 28px; padding: 3px 7px; border: 1px solid var(--line); border-radius: var(--radius); text-decoration: none; background: var(--surface); font-weight: 500; transition: background-color var(--fast), border-color var(--fast); }
-  .volume-actions a:hover { border-color: var(--muted); background: var(--sunk); }
   .removal-items { max-height: 240px; overflow: auto; padding-left: 20px; margin-block: 16px; }
   .removal-items li { margin-bottom: 6px; overflow-wrap: anywhere; }
   #delete-files-option { align-items: start; flex-wrap: nowrap; margin-bottom: 12px; }
@@ -386,6 +364,167 @@
   button[aria-busy="true"] { cursor: wait; opacity: .75; }
   button[aria-busy="true"]::after { content: ""; display: inline-block; vertical-align: -.1em; width: 12px; height: 12px; margin-left: 8px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: request-spin 700ms linear infinite; }
   @keyframes request-spin { to { transform: rotate(360deg); } }
+
+  /* ---------- the library and the catalog ---------- */
+  /* Grids of covers use the width a wide screen gives them. */
+  .view.wide { max-width: 1920px; }
+
+  /* The header's ⋯: actions used now and then, out of the way but one click off. */
+  .menu-host { position: relative; }
+  .menu-host > summary { list-style: none; cursor: pointer; width: 32px; min-height: 32px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 16px; line-height: 1; color: var(--muted); }
+  .menu-host > summary::-webkit-details-marker { display: none; }
+  .menu-host > summary:hover, .menu-host[open] > summary { color: var(--ink); border-color: var(--muted); background: var(--sunk); }
+  .menu-host .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 240px; display: grid; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .menu-host .menu > * { display: flex; align-items: center; min-height: 32px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: var(--ink); font-size: 13px; font-weight: 450; text-align: left; text-decoration: none; }
+  .menu-host .menu > *:hover { background: var(--sunk); }
+
+  /* New volumes: one row of small covers; what does not fit is left out, not wrapped. */
+  .new-volumes { margin-bottom: 24px; }
+  .nv-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+  .nv-head h2 { font-size: 15px; font-weight: 600; }
+  .nv-head .muted { font-size: 12px; }
+  .nv-head .link { margin-left: auto; color: var(--accent); font-size: 12px; text-decoration: none; }
+  .nv-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); grid-template-rows: auto; grid-auto-rows: 0; column-gap: 14px; overflow: hidden; }
+  .nv { all: unset; cursor: pointer; display: grid; gap: 6px; min-width: 0; }
+  .nv:hover .cover-frame, .nv:focus-visible .cover-frame { outline-color: var(--accent); }
+  .nv-t { font-size: 12px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.8em; }
+  .nv-d { font-size: 11px; color: var(--muted); margin-top: -2px; }
+
+  /* Toolbar: the pager sits beside the sort, so a page is chosen without scrolling down. */
+  .pager-ctl { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .pager-ctl > button { min-width: 30px; min-height: 30px; padding: 0; font-size: 16px; border-color: transparent; background: transparent; color: var(--muted); }
+  .pager-ctl > button:hover:not(:disabled) { color: var(--ink); background: var(--sunk); }
+  .pager-ctl .page-jump { gap: 6px; color: var(--muted); font-size: 13px; }
+  .pager-ctl .page-jump input { width: 56px; min-height: 30px; text-align: center; font-variant-numeric: tabular-nums; }
+  .pager-ctl .of { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .toolbar .pager-ctl { margin-left: auto; }
+  .per-page { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .per-page select { width: auto; min-width: 72px; }
+  .pager > :last-child { justify-self: end; }
+  .pager { display: grid; grid-template-columns: 1fr auto 1fr; }
+
+  /* Two filters that combine: how complete a work is, and which editions it has. */
+  .filter-groups { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 28px; padding-bottom: 12px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+  .filter-groups .chips { border: 0; padding: 0; margin: 0; align-items: center; }
+  .chips-label { font-size: 12px; color: var(--muted); margin-right: 6px; }
+  .filter-count { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .filter-groups .link { font-size: 12px; color: var(--accent); }
+
+  /* A card's state, said once. Its bar keeps its line when hidden: every card is one height. */
+  .book .meter.blank { visibility: hidden; }
+  .book.meta .cover-frame img { opacity: .62; }
+  .book.meta:hover .cover-frame img { opacity: 1; }
+  .state-done { color: var(--moss); font-weight: 600; }
+  .state-meta { color: var(--muted); }
+  tr.meta td { color: var(--muted); }
+
+  /* Placeholder covers while the first page loads. */
+  .book.sk { pointer-events: none; }
+  .book.sk .cover-frame, .sk-line { background: linear-gradient(90deg, var(--sunk) 25%, color-mix(in srgb, var(--sunk) 60%, var(--surface)) 50%, var(--sunk) 75%) 0 0 / 200% 100%; animation: shimmer 1.4s linear infinite; }
+  .sk-line { display: block; height: 11px; border-radius: 6px; margin-top: 12px; width: 88%; }
+  .sk-line.short { width: 60%; margin-top: 8px; }
+  .sk-line.thin { width: 40%; height: 8px; margin-top: 18px; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  /* The catalog marks what you have on the cover's corner. */
+  .corner { position: absolute; right: 6px; top: 6px; z-index: 1; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .corner.done { background: var(--moss); color: var(--surface); }
+  .corner.part { background: var(--warn); color: var(--surface); }
+  .book.have .cover-frame img { opacity: .62; }
+  .caption-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 24px; flex-wrap: wrap; margin-bottom: 16px; }
+  .caption-row .caption { margin: 0; }
+  .caption-row .check { font-size: 12px; color: var(--muted); }
+
+  /* ---------- tasks ---------- */
+  .chip-n { margin-left: 4px; font-variant-numeric: tabular-nums; opacity: .8; }
+  .chip-n:empty { display: none; }
+  /* Routine sweeps folded into one line; open, their tasks are listed inside. */
+  .task-group { border-bottom: 1px solid var(--line); }
+  .task-group-head { display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 16px 0; cursor: pointer; list-style: none; }
+  .task-group-head::-webkit-details-marker { display: none; }
+  .tg-caret { color: var(--muted); transition: transform var(--fast); }
+  .task-group[open] .tg-caret { transform: rotate(90deg); }
+  .tg-t { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+  .tg-t strong { font-weight: 600; }
+  .tg-m { color: var(--muted); font-size: 12px; }
+  .task-group-head .ghost { font-size: 12px; min-height: 28px; }
+  .task-group > .task { padding-left: 28px; }
+  .task-group > .task:last-child { border-bottom: 0; }
+
+  /* ---------- settings ---------- */
+  /* An index of the sections beside them on a wide screen. */
+  .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; }
+  .settings-nav { display: none; }
+  .settings-main > :first-child { border-top: 0; }
+  .settings-nav a { padding: 6px 12px; border-radius: 4px; color: var(--muted); font-size: 13px; text-decoration: none; }
+  .settings-nav a:hover { background: var(--sunk); color: var(--ink); }
+  .settings-nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .settings-main section, .settings-main .settings-group-head { scroll-margin-top: 24px; }
+  /* Values few need, folded; a change or an error inside opens the fold. */
+  details.advanced { border-top: 1px solid var(--line); }
+  details.advanced > summary { display: flex; align-items: center; gap: 10px; min-height: 48px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 550; color: var(--accent); }
+  details.advanced > summary::-webkit-details-marker { display: none; }
+  details.advanced > summary::before { content: "›"; display: inline-block; width: 12px; color: var(--muted); transition: transform var(--fast); }
+  details.advanced[open] > summary::before { transform: rotate(90deg); }
+  .advanced-note { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 400; }
+  details.advanced > .row:first-of-type { border-top: 1px solid var(--line); padding-top: 12px; min-height: 56px; }
+  /* A changed field: a bar beside it until it is saved. */
+  .row.dirty { box-shadow: inset 2px 0 0 var(--accent); padding-left: 12px; margin-left: -14px; }
+
+  /* ---------- a work's details ---------- */
+  dialog.work-sheet { width: min(1180px, 100vw); }
+  #work-detail { container-type: inline-size; container-name: work; padding-top: 20px; }
+  .work-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px 32px; }
+  .work-side { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px 20px; align-content: start; }
+  .work-side .cover-frame { grid-row: span 2; }
+  .work-side h2 { font-size: 20px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+  .work-side .alt { color: var(--muted); margin-top: 4px; font-size: 13px; }
+  .work-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 16px; margin: 0; font-size: 12px; }
+  .work-facts dt { color: var(--muted); }
+  .work-facts dd { margin: 0; overflow-wrap: anywhere; }
+  .work-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+  .work-actions button, .work-actions .button-link { font-size: 12px; min-height: 32px; }
+  .work-side .introduction { grid-column: 1 / -1; margin: 0; }
+  @container work (min-width: 860px) {
+    .work-layout { grid-template-columns: 260px minmax(0, 1fr); }
+    /* The work stays beside its volumes as the table scrolls. */
+    .work-side { grid-template-columns: minmax(0, 1fr); position: sticky; top: 72px; }
+    .work-side .cover-frame { grid-row: auto; width: 100%; }
+    .work-actions { flex-direction: column; align-items: stretch; }
+    .work-actions > * { justify-content: center; }
+    .work-actions .quiet-danger { margin-top: 12px; }
+  }
+  .vol-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+  .vol-head h3 { font-size: 15px; font-weight: 600; }
+  .vol-head .link { color: var(--warn); }
+  button.small { min-height: 28px; padding: 2px 10px; font-size: 12px; }
+  .vol-legend { margin-bottom: 12px; }
+  .vol-legend .lg { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 11px; font-weight: 550; background: var(--sunk); }
+  .vol-legend .lg.ok { background: var(--moss-soft); color: var(--moss); }
+  .vol-legend .lg.idle { box-shadow: inset 0 0 0 1px var(--line); background: transparent; }
+  /* Volumes down, editions across: each cell one edition of one volume. */
+  .vol-table-wrap { border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; }
+  .vol-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+  .vol-table thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); padding: 10px 12px; }
+  .vol-table th.cell { width: 150px; }
+  .vol-table th.cell.extra { color: var(--muted); font-weight: 400; }
+  .vol-table th .rank { display: inline-grid; place-items: center; min-width: 16px; height: 16px; margin-right: 6px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 650; }
+  .vol-table th.v-num, .vol-table td.v-num { width: 44px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .vol-table th.v-act { width: 120px; }
+  .vol-table td { padding: 10px 12px; vertical-align: top; }
+  .vol-table tbody tr:hover { background: color-mix(in srgb, var(--sunk) 55%, transparent); }
+  .vol-table tbody tr:last-child td { border-bottom: 0; }
+  .v-name .name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-weight: 550; line-height: 1.45; }
+  .v-name small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+  .vol-table td.cell { display: table-cell; }
+  .vol-table td.cell > * + * { margin-top: 4px; }
+  .vol-table td.cell .edition, .vol-table td.cell > button { display: flex; width: fit-content; }
+  .cell-size, .cell-note { display: block; color: var(--muted); font-size: 11px; }
+  .cell.na .dash { color: var(--line); }
+  .v-act { text-align: right; }
+  .v-act > button + button { margin-top: 4px; }
+  tr.unsaved .v-name .name { color: var(--muted); }
+  .quiet-danger { border-color: transparent; background: transparent; }
 }
 
 @layer responsive {
@@ -403,6 +542,11 @@
     :root[data-sidebar="collapsed"] .rail-api-short { display: inline; }
   }
   @media (max-width: 1000px) { .books { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 24px 16px; } }
+  @media (min-width: 1200px) {
+    #settings { max-width: 1280px; }
+    .settings-layout { grid-template-columns: 184px minmax(0, 1fr); }
+    .settings-nav { display: grid; gap: 2px; align-content: start; position: sticky; top: 24px; align-self: start; }
+  }
   @media (max-width: 1200px) {
     .task { grid-template-columns: minmax(0, 1fr) 200px; }
     .task-actions { grid-column: 2; }
@@ -442,9 +586,9 @@
     .chips button { padding-inline: 8px; font-size: 12px; }
     .books { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 24px 16px; }
     .book .pick { opacity: 1; }
-    .pager { flex-wrap: wrap; justify-content: center; gap: 12px; }
-    .pager > span { flex-basis: 100%; text-align: center; }
-    .footnote { justify-content: start; }
+    .pager { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 12px; }
+    #library-filter .pager-ctl, #catalog-filter .pager-ctl { display: none; }
+    .filter-groups { gap: 8px 16px; }
     .task { grid-template-columns: 1fr; gap: 12px; }
     .task > div:first-child { grid-row: auto; }
     .task-actions { grid-column: auto; justify-content: start; }

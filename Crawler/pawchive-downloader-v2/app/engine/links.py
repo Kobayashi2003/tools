@@ -104,25 +104,6 @@ def refresh_links(conn: sqlite3.Connection, creator_id: str, domains: list[str],
     return added
 
 
-def adopt_v1_review(ctx: Context, links_filter: dict) -> int:
-    """v1 marked a creator's links reviewed as a whole, with a date after which new posts
-    showed again. Those links count as done here. Returns how many were marked."""
-    reviewed = list(links_filter.get("reviewed_artists") or [])
-    cutoff = str(links_filter.get("reviewed_before") or "")
-    if not reviewed:
-        return 0
-    marks = ",".join("?" * len(reviewed))
-    # v1 compared the post's edit date (or its publish date) with the cutoff, as text.
-    return ctx.db.run(
-        f"""UPDATE links SET state='done', decided_at=? WHERE state='new'
-            AND creator_id IN ({marks}) AND (? = '' OR EXISTS (
-              SELECT 1 FROM posts p WHERE p.creator_id=links.creator_id
-                AND p.post_id=links.post_id
-                AND COALESCE(NULLIF(p.edited,''), p.published) <= ?))""",
-        (now_utc(), *reviewed, cutoff, cutoff),
-    )
-
-
 def list_links(ctx: Context, state: str | None = None, creator_id: str | None = None) -> list[dict]:
     where, args = ["1=1"], []
     if state:

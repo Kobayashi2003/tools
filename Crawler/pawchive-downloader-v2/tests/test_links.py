@@ -11,7 +11,7 @@ from app.domain.links import LinkCheck, LinkError, find_links
 from app.engine import links
 from app.engine.context import Context
 from app.engine.download import save_dir
-from app.engine.links import adopt_v1_review, list_links, refresh_links, set_state
+from app.engine.links import list_links, refresh_links, set_state
 from app.sources.linkhosts import dropbox, gdrive, gigafile, mega
 from app.sources.linkhosts.common import filename_of
 
@@ -31,7 +31,7 @@ def test_links_are_cut_at_the_text_around_them():
     ]
 
 
-def test_links_keep_their_state_and_v1_review_carries_over(ctx: Context):
+def test_links_keep_their_state_when_refreshed(ctx: Context):
     add_creator(ctx)
     obs(ctx, "1", "pawchive", "full", "2026-01-01T00:00:00", [])
     obs(ctx, "2", "pawchive", "full", "2026-03-01T00:00:00", [])
@@ -40,10 +40,12 @@ def test_links_keep_their_state_and_v1_review_carries_over(ctx: Context):
     reconcile(ctx)
     with ctx.db.tx() as conn:
         assert refresh_links(conn, CID, DOMAINS, "2026-10-23T00:00:00") == 2
+
+    first = [link["id"] for link in list_links(ctx) if link["post_id"] == "1"]
+    assert set_state(ctx, first, "done") == 1
+    with ctx.db.tx() as conn:
         assert refresh_links(conn, CID, DOMAINS, "2026-10-23T00:00:00") == 0
 
-    # v1 had gone through this creator's links up to 2026-02-10: the newer post stays new.
-    assert adopt_v1_review(ctx, {"reviewed_artists": [CID], "reviewed_before": "2026-02-10"}) == 1
     states = {link["url"]: link["state"] for link in list_links(ctx)}
     assert states == {"https://drive.google.com/a": "done", "https://drive.google.com/b": "new"}
 

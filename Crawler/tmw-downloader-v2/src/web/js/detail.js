@@ -55,7 +55,7 @@ async function flush() {
   wanted.clear();
   if (!ids.length) return;
   try {
-    const data = await post("/api/detail", { ids });
+    const data = await post("api/detail", { ids });
     for (const entry of data.posts || []) keep(entry);
   } catch (err) {
     for (const id of ids) state.detail.set(id, { id, covers: [], error: true });
@@ -70,7 +70,7 @@ export async function setSaved(id, on) {
   on ? state.saved.add(id) : state.saved.delete(id);
   announce(savedHooks, id, on);
   try {
-    const data = await post("/api/bookmark", { id, on });
+    const data = await post("api/bookmark", { id, on });
     state.bookmarks = data.bookmarks || [];
     announce(savedHooks, id, on);
   } catch (err) {

@@ -14,7 +14,7 @@ function result(c, extra = '') {
 }
 
 export function mountAdd(el, params, onAdded) {
-  el.innerHTML = `<div class="view">
+  el.innerHTML = `<div class="view narrow">
     <div class="view-head"><div><h1>Add creator</h1><p class="lede">Paste a link, or search Fanbox. A new creator is synced from Pawchive and their own site (Fanbox or Patreon).</p></div></div>
     <div class="cols">
     <div class="col">

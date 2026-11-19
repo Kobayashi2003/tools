@@ -2,7 +2,7 @@
 
 Pawchive already writes naive UTC; Fanbox writes JST with an offset. Both become
 the same string here, so sorting and `last_date` comparisons stay plain string
-comparisons, as they were in v1. Folder dates are rendered from UTC.
+comparisons. Folder dates are rendered from UTC.
 """
 
 from collections.abc import Iterable

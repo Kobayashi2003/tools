@@ -18,6 +18,8 @@ export function on(kind, fn) {
   return () => handlers[kind].delete(fn);
 }
 
+export const current = (kind) => latest[kind];
+
 export function connect() {
   const source = new EventSource('api/stream');
   source.onopen = () => emit('online', true);
@@ -31,8 +33,20 @@ export function connect() {
   });
 }
 
-// Makes `node` look like `fresh` with the fewest DOM writes: a changed progress line
-// rewrites one text node, and the spinner beside it keeps turning.
+// ---------------------------------------------------------------- patching
+// Views redraw by describing the whole of what they show as HTML and letting `patch` bring
+// the page in line with the fewest DOM writes. A changed count rewrites one text node; the
+// rows around it, their images, hover, focus, scroll and an open menu are left alone.
+//
+// Children that all carry `data-key` are matched by key, so a list can gain, lose or
+// reorder rows without the others being rebuilt. Elements marked `data-transient` (an
+// open menu) belong to someone else and are never touched or removed.
+
+const transient = (n) => n.nodeType === Node.ELEMENT_NODE && n.hasAttribute('data-transient');
+const blank = (n) => n.nodeType === Node.TEXT_NODE && !n.nodeValue.trim();
+// Set by the menu while it is open; the fresh markup always says "false".
+const OWNED_ATTRS = new Set(['aria-expanded']);
+
 function morph(node, fresh) {
   if (node.nodeType !== fresh.nodeType || node.nodeName !== fresh.nodeName) {
     node.replaceWith(fresh);
@@ -42,33 +56,86 @@ function morph(node, fresh) {
     if (node.nodeValue !== fresh.nodeValue) node.nodeValue = fresh.nodeValue;
     return node;
   }
-  for (const a of [...node.attributes]) if (!fresh.hasAttribute(a.name)) node.removeAttribute(a.name);
-  for (const a of fresh.attributes) if (node.getAttribute(a.name) !== a.value) node.setAttribute(a.name, a.value);
-  const was = [...node.childNodes];
-  const now = [...fresh.childNodes];
-  if (was.length !== now.length) node.replaceChildren(...now);
-  else was.forEach((c, i) => morph(c, now[i]));
+  for (const a of [...node.attributes]) {
+    if (!fresh.hasAttribute(a.name) && !OWNED_ATTRS.has(a.name)) node.removeAttribute(a.name);
+  }
+  for (const a of fresh.attributes) {
+    if (OWNED_ATTRS.has(a.name) && node.hasAttribute(a.name)) continue;
+    if (node.getAttribute(a.name) !== a.value) node.setAttribute(a.name, a.value);
+  }
+  morphChildren(node, fresh);
   return node;
 }
 
+function morphChildren(node, fresh) {
+  const now = [...fresh.childNodes];
+  const elems = now.filter((c) => !blank(c));
+  const keyed = elems.length > 0 && elems.every((c) => c.nodeType === Node.ELEMENT_NODE && c.dataset.key != null);
+  const was = [...node.childNodes].filter((c) => !transient(c));
+  if (keyed) {
+    const old = new Map();
+    for (const c of was) {
+      if (c.nodeType === Node.ELEMENT_NODE && c.dataset.key != null && !old.has(c.dataset.key)) old.set(c.dataset.key, c);
+      else c.remove();
+    }
+    let prev = null;
+    for (const f of elems) {
+      let n = old.get(f.dataset.key);
+      if (n) { old.delete(f.dataset.key); n = morph(n, f); } else n = f;
+      let want = prev ? prev.nextSibling : node.firstChild;
+      while (want && transient(want)) want = want.nextSibling;
+      if (want !== n) node.insertBefore(n, want);
+      prev = n;
+    }
+    old.forEach((n) => n.remove());
+    return;
+  }
+  if (was.length === now.length) {
+    was.forEach((c, i) => morph(c, now[i]));
+    return;
+  }
+  was.forEach((c) => c.remove());
+  const anchor = [...node.childNodes].find(transient) || null;
+  for (const c of now) node.insertBefore(c, anchor);
+}
+
+const parse = (html) => {
+  const t = document.createElement('template');
+  t.innerHTML = html.trim();
+  return t.content;
+};
+
+// Makes `el`'s content match `html`, keeping every node that did not change.
+export function patch(el, html) {
+  const frag = parse(html);
+  const shell = document.createElement(el.nodeName);
+  shell.append(frag);
+  morphChildren(el, shell);
+}
+
 // Brings `parent`'s children in line with `rows` ([{ key, html }]), touching only what
-// changed, so hover, focus and text selection survive an update.
+// changed. A row whose HTML is the same string as last time is not even compared.
 const shown = new WeakMap();
 export function patchRows(parent, rows) {
-  const old = new Map([...parent.children].map((n) => [n.dataset.key, n]));
+  const old = new Map();
+  for (const n of [...parent.children]) {
+    if (transient(n)) continue;
+    if (n.dataset.key != null && !old.has(n.dataset.key)) old.set(n.dataset.key, n);
+    else n.remove();
+  }
+  for (const n of [...parent.childNodes]) if (n.nodeType !== Node.ELEMENT_NODE) n.remove();
   let prev = null;
   for (const { key, html } of rows) {
     let node = old.get(key);
     old.delete(key);
     if (!node || shown.get(node) !== html) {
-      const t = document.createElement('template');
-      t.innerHTML = html.trim();
-      const fresh = t.content.firstElementChild;
+      const fresh = parse(html).firstElementChild;
       fresh.dataset.key = key;
       node = node ? morph(node, fresh) : fresh;
       shown.set(node, html);
     }
-    const want = prev ? prev.nextElementSibling : parent.firstElementChild;
+    let want = prev ? prev.nextElementSibling : parent.firstElementChild;
+    while (want && transient(want)) want = want.nextElementSibling;
     if (want !== node) parent.insertBefore(node, want);
     prev = node;
   }

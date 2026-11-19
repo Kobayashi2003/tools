@@ -5,34 +5,58 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>FC2 Sukebei Browser</title>
-  <link rel="icon" href="static/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="static/icon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
+  <div class="app-chrome">
   <header class="topbar">
     <div class="brand">
-      <img src="static/icon.svg" alt="" width="22" height="22">
+      <img src="static/icon.svg?v=2" alt="" width="22" height="22">
       <span>FC2 <b>Sukebei</b></span>
     </div>
 
+    <label class="library-search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+      <input id="filter-q" type="search" data-i18n-placeholder="filterPlaceholder" data-i18n-label="filterLibrary" aria-label="Filter library">
+      <kbd>/</kbd>
+    </label>
+    <div class="top-actions">
+      <button id="job-update" class="btn primary" type="button" data-i18n-title="updateHint">
+        <span aria-hidden="true">⟳</span><span data-i18n="update">Update</span>
+      </button>
+      <button id="job-cancel" class="btn" type="button" hidden data-i18n="cancel">Cancel</button>
+      <button id="status-pill" class="status-pill" type="button" aria-expanded="false" aria-controls="status-panel">
+        <span class="dot"></span><span id="status-text">…</span><span class="chevron" aria-hidden="true">⌄</span>
+      </button>
+      <button id="keys-open" class="btn ghost square" type="button" data-i18n-label="shortcuts" data-i18n-title="shortcuts">?</button>
+      <button id="lang-toggle" class="btn ghost lang" type="button" title="Language / 言語">日本語</button>
+    </div>
+  </header>
+
+  <section id="status-panel" class="status-panel" hidden aria-labelledby="sync-title">
+    <div class="sync-title"><h2 id="sync-title" data-i18n="librarySync">Library sync</h2><button id="status-close" class="icon" type="button" data-i18n-label="close">×</button></div>
+    <div class="status-head">
+      <div id="status-stats" class="status-stats" aria-busy="true"></div>
+      <button id="retry-failed" class="btn small" type="button" data-i18n="retryFailed">Retry failed</button>
+    </div>
+    <div id="ruler" class="ruler"></div>
+    <dl id="coverage" class="coverage"></dl>
+
+    <section class="sync-section">
+    <h3 data-i18n="crawl">Crawl</h3>
     <div class="crawl">
       <select id="crawl-source" aria-label="Search source" data-i18n-title="sourceHint">
         <option value="nyaa">sukebei.nyaa.si</option>
         <option value="nyaa_cn">sukebei.cn.nyaa.net</option>
       </select>
-      <button id="job-update" class="btn primary" type="button" data-i18n-title="updateHint">
-        <span aria-hidden="true">⟳</span> <span data-i18n="update">Update</span>
-      </button>
-      <div class="split" id="older-group">
-        <button id="job-older" class="btn split-main" type="button" data-i18n-title="olderHint">
+        <button id="job-older" class="btn" type="button" data-i18n-title="olderHint">
           <span aria-hidden="true">↓</span> <span data-i18n="older">Older</span>
         </button>
-        <button id="older-toggle" class="btn split-toggle" type="button" aria-expanded="false"
-                aria-controls="older-options" data-i18n-title="olderOptions" aria-label="History options">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
-        </button>
-        <div id="older-options" class="popover older-options" hidden>
-          <div class="opt-head" data-i18n="olderOptions">History options</div>
+      <button id="history-reset" class="btn small" type="button" data-i18n="historyReset" data-i18n-title="historyResetHint">Re-check history</button>
+      <label class="check" data-i18n-title="checkFilesHint"><input id="crawl-files" type="checkbox"><span data-i18n="checkFiles">Check files</span></label>
+    </div>
+        <div id="older-options" class="older-options">
           <div class="opt-grid">
             <label for="older-blocks" data-i18n="olderBlocks">Blocks per run</label>
             <div class="opt-inline">
@@ -57,42 +81,21 @@
             <input id="older-range-to" type="number" min="10000" placeholder="4800000" aria-label="Down to FC2 id">
           </div>
           <p id="older-summary" class="opt-note"></p>
-          <div class="opt-actions">
-            <button id="older-run" class="btn primary small" type="button" data-i18n="olderRun">Run</button>
-          </div>
         </div>
-      </div>
+    </section>
+    <section class="sync-section">
+      <h3><label for="search-query" data-i18n="customQuery">Custom sukebei query</label></h3>
       <form id="search-form" class="search" autocomplete="off">
         <input id="search-query" type="search" data-i18n-placeholder="searchPlaceholder" aria-label="Sukebei query">
+        <button id="query-run" class="btn" type="submit" data-i18n="searchSukebei">Search sukebei</button>
       </form>
-      <button id="job-cancel" class="btn" type="button" hidden data-i18n="cancel">Cancel</button>
-    </div>
-
-    <button id="status-pill" class="status-pill" type="button" aria-expanded="false">
-      <span class="dot"></span><span id="status-text">…</span>
-    </button>
-    <button id="lang-toggle" class="btn ghost lang" type="button" title="Language / 言語">日本語</button>
-  </header>
-
-  <section id="status-panel" class="status-panel" hidden>
-    <div class="status-head">
-      <div id="status-stats" class="status-stats"></div>
-      <button id="retry-failed" class="btn small" type="button" data-i18n="retryFailed">Retry failed</button>
-    </div>
-    <div id="ruler" class="ruler"></div>
-    <dl id="coverage" class="coverage"></dl>
-    <div class="status-actions">
-      <button id="history-reset" class="btn small" type="button" data-i18n="historyReset" data-i18n-title="historyResetHint">Re-check history</button>
-      <label class="check" data-i18n-title="checkFilesHint">
-        <input id="crawl-files" type="checkbox">
-        <span data-i18n="checkFiles">Check files</span>
-      </label>
-    </div>
+      <p class="opt-note" data-i18n="queryHint">Reads every page of this query into the library.</p>
+    </section>
+    <h3 class="log-heading" data-i18n="activity">Activity</h3>
     <ol id="status-log" class="status-log"></ol>
   </section>
 
   <nav class="toolbar">
-    <input id="filter-q" type="search" data-i18n-placeholder="filterPlaceholder" aria-label="Filter">
     <div class="segmented" id="filter-view" role="tablist">
       <button type="button" data-view="all" class="active" data-i18n="viewAll">All</button>
       <button type="button" data-view="unseen" data-i18n="viewUnseen">Unseen</button>
@@ -115,12 +118,14 @@
       <input id="filter-media" type="checkbox">
       <span data-i18n="withPreviews">With previews</span>
     </label>
+    <button id="filter-chip" class="filter-chip" type="button" hidden data-i18n-title="clearSearch"><span></span><span aria-hidden="true">×</span></button>
     <span id="result-count" class="result-count"></span>
     <label class="size-control" data-i18n-title="cardSize">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>
       <input id="card-size" type="range" min="160" max="380" step="10" value="232" aria-label="Card size">
     </label>
   </nav>
+  </div>
 
   <main>
     <div id="grid" class="grid"></div>
@@ -132,11 +137,11 @@
   <div id="detail" class="detail" hidden>
     <div class="detail-backdrop" data-close></div>
     <button class="nav prev" type="button" data-step="-1" aria-label="Previous">‹</button>
-    <article class="detail-panel" role="dialog" aria-modal="true" tabindex="-1"></article>
+    <article class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-code" tabindex="-1"></article>
     <button class="nav next" type="button" data-step="1" aria-label="Next">›</button>
   </div>
 
-  <div id="lightbox" class="lightbox" hidden>
+  <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" data-i18n-label="sampleImages" tabindex="-1">
     <img alt="">
     <button class="lb-nav prev" type="button" data-step="-1" aria-label="Previous">‹</button>
     <button class="lb-nav next" type="button" data-step="1" aria-label="Next">›</button>
@@ -159,6 +164,11 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <dialog id="keys-dialog" class="keys-dialog" aria-labelledby="keys-title">
+    <div class="sync-title"><h2 id="keys-title" data-i18n="shortcuts">Keyboard shortcuts</h2><button id="keys-close" class="icon" type="button" data-i18n-label="close">×</button></div>
+    <div id="keys-list"></div>
+  </dialog>
 
   <script type="module" src="static/app.js"></script>
 </body>

@@ -13,17 +13,29 @@ Needs [uv](https://docs.astral.sh/uv/). The first start sets up `.venv`.
 .\start.ps1     # http://127.0.0.1:18060/
 .\stop.ps1
 uv run main.py serve --port 18060   # the same without the launcher
-uv run main.py import-v1 ..\..\..\garbage\crawler\pawchive-downloader   # bring over v1's state
 ```
 
 Unfinished jobs resume after a restart.
+
+## The page
+
+- **A creator's page** lists its posts beside the chosen post's detail when the window is
+  wide enough (the divider can be dragged); narrower, a post opens in place. Keys: `j`/`k`
+  (or ↓/↑ when side by side) move, `x` selects, `d` downloads, `o` opens the folder, `/`
+  searches, `Enter` opens a post in place. The address keeps the filters, the sort and the
+  post (`#/c/<creator>?f=s:failed&post=<id>`), so a link shows the same view.
+- **Inbox** lists posts that finished downloading, newest first, to look through before
+  moving folders by hand. It only reads; "Mark all as reviewed" is kept in the browser.
+- The sidebar's edge can be dragged; Settings › Appearance picks the theme.
 
 ## Behaviour
 
 - **Downloads** try the preferred source first (Fanbox unless changed in Settings or per
   creator) and the other one in the same run. A file Pawchive answers 404 for is failed and
   is not retried by a creator's download or a timer; downloading the post by hand (⋯ →
-  Download) asks for it again. A spent quota pauses without failing.
+  Download) asks for it again. A post whose missing files all 404ed while the own site
+  cannot deliver them is **Blocked**: it is neither waiting nor counted as failed. A spent
+  quota pauses without failing.
 - **Cover and text** come with a post's files: the cover (`0.*`) from the source most of
   them came from, the text (`content.txt`) once, again only when the post is updated. Neither
   holds a post open, and "Got from" counts the files alone. A post folder appears with its
@@ -32,7 +44,7 @@ Unfinished jobs resume after a restart.
   files point at it. Pawchive keeps such bytes once and may never serve the second name,
   while Fanbox lists both: a file whose content hash matches a saved one is not fetched,
   and a download that turns out identical to one is dropped.
-- **Where files go.** As in v1, every download is saved under the download folder by the
+- **Where files go.** Every download is saved under the download folder by the
   folder templates. Post folders moved elsewhere by hand (to an archive drive) are never
   written to; a file a moved post still needs lands in a fresh folder under the download
   folder. The last folder a post was saved to is kept for thumbnails and the post page.
@@ -54,7 +66,6 @@ Unfinished jobs resume after a restart.
   keys the post's text offers (the same link written with its key, or a key-shaped string
   after it) and keeps the one that opens it; otherwise Links asks for the key, the likeliest
   candidate filled in.
-  `import-v1` carries over v1's reviewed creators.
 - **Syncs** read both sources the same way. A list shorter than before is read again, and
   posts count as deleted only when both reads agree.
 - **Site status** (Fanbox or Patreon) of every saved creator is checked in the background
@@ -63,7 +74,7 @@ Unfinished jobs resume after a restart.
 - **Groups are folders.** Drag a creator or group onto another group in the sidebar, or use
   a group's pencil; after a confirmation the folders move with it (merging, never
   overwriting). Changing a creator's alias moves its folder too.
-- **Timers** (imported from v1) fire only once switched on in Settings.
+- **Timers** fire only when enabled in Settings.
 
 ## Fanbox session
 

@@ -204,9 +204,17 @@ def test_headline_priorities():
     assert (
         headline(replace(base, f="locked"))["why"] == "Needs a ¥550 plan · Pawchive metadata only"
     )
+    # Every missing file 404ed and the own site is locked: blocked, not failed, and the
+    # reason leads with what can be done about it.
     lost = PostFacts(p="full", f="locked", fee=550, plan_fee=0, total=2, done=1, missing=1)
-    assert headline(lost)["k"] == "failed"
-    assert headline(lost)["why"] == "1/2 · Pawchive 404, not retried"
+    assert headline(lost)["k"] == "blocked"
+    assert headline(lost)["t"] == "Blocked 1"
+    assert headline(lost)["why"] == "1/2 · Needs a ¥550 plan · Pawchive 404"
+    assert headline(replace(lost, f="na"))["why"] == "1/2 · Pawchive 404"
+    # The own site can still deliver the file: the next run tries it, so it is failed.
+    assert headline(replace(lost, f="open", failed=1))["k"] == "failed"
+    # Some missing files did not 404: still work waiting.
+    assert headline(replace(lost, total=3, failed=1))["k"] == "failed"
     adopted = replace(base, local_done=True, via=["adopted"], unverified=1)
     assert headline(adopted)["why"] == "Adopted · unverified"
     assert coverage("meta", "open") == "both" and coverage("none", "locked") == "fonly"

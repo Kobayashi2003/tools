@@ -25,8 +25,6 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command")
     serve = commands.add_parser("serve", help="Start the Web UI on 127.0.0.1 (default)")
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
-    imp = commands.add_parser("import-v1", help="Import a v1 installation's state")
-    imp.add_argument("root", type=Path, help="The v1 project directory")
     sync = commands.add_parser("sync", help="Sync one creator from both sources")
     sync.add_argument("creator", help="Creator id, e.g. fanbox_1539728")
     sync.add_argument("--deep", action="store_true", help="Re-read every Fanbox post body")
@@ -53,12 +51,6 @@ def main() -> int:
     from app.engine.context import Context
 
     ctx = Context(data_dir())
-    if args.command == "import-v1":
-        from app.library.import_v1 import import_v1
-
-        stats = import_v1(ctx, args.root, progress=print)
-        print(stats)
-        return 0
     cancel = threading.Event()
     if args.command == "sync":
         from app.engine.sync import refresh_subscriptions, sync_creator

@@ -4,15 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Novelia Library</title>
-    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20" />
-    <script src="/static/ui.js?v=11" defer></script>
-    <script src="/static/app.js?v=25" defer></script>
+    <link rel="icon" href="static/icon.svg?v=2" type="image/svg+xml" />
+    <link rel="stylesheet" href="static/style.css?v=22" />
+    <script src="static/ui.js?v=12" defer></script>
+    <script src="static/app.js?v=28" defer></script>
   </head>
   <body>
     <aside class="rail" id="sidebar">
       <div class="rail-head">
-        <a class="brand" href="/" aria-label="Novelia Library home">Novelia</a>
+        <a class="brand" href="./" aria-label="Novelia Library home">Novelia</a>
         <button id="sidebar-toggle" class="icon-button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true" aria-controls="sidebar"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></svg></span></button>
       </div>
       <nav aria-label="Main">
@@ -24,7 +24,7 @@
         <button class="nav" data-view="settings" aria-label="Settings" title="Settings"><span class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg></span><span class="nav-label">Settings</span></button>
       </nav>
       <div class="rail-foot">
-        <a href="/docs" target="_blank" rel="noopener" title="API reference" aria-label="API reference"><span class="rail-api-label">API reference ↗</span><span class="rail-api-short" aria-hidden="true">API</span></a>
+        <a href="docs" target="_blank" rel="noopener" title="API reference" aria-label="API reference"><span class="rail-api-label">API reference ↗</span><span class="rail-api-short" aria-hidden="true">API</span></a>
       </div>
     </aside>
 
@@ -34,13 +34,21 @@
         <span class="meter"><span id="now-running-bar"></span></span>
       </button>
 
-      <section id="library" class="view">
+      <section id="library" class="view wide">
         <header class="view-head">
           <div>
             <h1>Library</h1>
             <p id="schedule-label" class="sub"></p>
           </div>
           <div class="head-actions">
+            <details class="menu-host" id="library-more">
+              <summary class="icon-button more-button" aria-label="More library actions" title="More library actions">⋯</summary>
+              <div class="menu" role="menu">
+                <button role="menuitem" data-action="convert-all">Convert every bilingual volume…</button>
+                <button role="menuitem" data-action="check-files">Check local files</button>
+                <a role="menuitem" href="api/export.csv">Export catalog CSV</a>
+              </div>
+            </details>
             <button data-action="incremental">Check for updates</button>
             <button class="primary" data-action="open-crawl">New download</button>
           </div>
@@ -55,6 +63,15 @@
           </dl>
         </div>
 
+        <section id="new-volumes" class="new-volumes" aria-labelledby="new-volumes-title" hidden>
+          <header class="nv-head">
+            <h2 id="new-volumes-title">New volumes</h2>
+            <span id="new-volumes-sum" class="muted"></span>
+            <button class="link" data-action="see-recent">See all →</button>
+          </header>
+          <div id="new-volumes-list" class="nv-row"></div>
+        </section>
+
         <form id="library-filter" class="toolbar">
           <input id="library-query" type="search" placeholder="Search title, author, or ID" aria-label="Search library" />
           <select id="library-category" aria-label="Collection">
@@ -62,10 +79,12 @@
           </select>
           <select id="library-sort" aria-label="Sort by">
             <option value="checked">Recently checked</option>
+            <option value="downloaded">Recently downloaded</option>
             <option value="added">Recently added</option>
             <option value="title">Title</option>
             <option value="volumes">Most volumes</option>
           </select>
+          <div class="pager-ctl" data-pager="library"></div>
           <div class="view-switch title-switch" role="group" aria-label="Title language">
             <button type="button" data-title-lang="ja" aria-label="Japanese titles" title="Japanese titles">日</button>
             <button type="button" data-title-lang="zh" aria-label="Chinese titles" title="Chinese titles">中</button>
@@ -75,33 +94,40 @@
             <button type="button" data-layout="list" aria-label="List" title="List">☰</button>
           </div>
         </form>
-        <div class="chips" id="state-chips" role="radiogroup" aria-label="Filter by state">
-          <button role="radio" data-state="" aria-checked="true">All</button>
-          <button role="radio" data-state="saved">Saved</button>
-          <button role="radio" data-state="partial">Missing volumes</button>
-          <button role="radio" data-state="metadata">Metadata only</button>
-          <button role="radio" data-state="japanese">Has Japanese</button>
-          <button role="radio" data-state="bilingual">Has bilingual</button>
-          <button role="radio" data-state="chinese">Has Chinese</button>
+        <div class="filter-groups">
+          <div class="chips" id="state-chips" role="radiogroup" aria-label="Completeness">
+            <span class="chips-label">Completeness</span>
+            <button role="radio" data-state="" aria-checked="true">All</button>
+            <button role="radio" data-state="saved">Saved</button>
+            <button role="radio" data-state="partial">Missing volumes</button>
+            <button role="radio" data-state="metadata">Metadata only</button>
+          </div>
+          <div class="chips" id="edition-chips" role="radiogroup" aria-label="Editions">
+            <span class="chips-label">Editions</span>
+            <button role="radio" data-edition="" aria-checked="true">Any</button>
+            <button role="radio" data-edition="japanese">Japanese</button>
+            <button role="radio" data-edition="bilingual">Bilingual</button>
+            <button role="radio" data-edition="chinese">Chinese</button>
+          </div>
+          <span id="library-shown" class="filter-count"></span>
+          <button class="link" id="library-clear" data-action="clear-library-filters" hidden>Clear filters</button>
         </div>
 
         <div id="library-list" class="content-region" tabindex="-1"></div>
         <nav class="pager" aria-label="Library pages">
           <span id="library-total"></span>
-          <div>
-            <button data-action="library-prev" aria-label="Previous page">‹</button>
-            <span id="library-page"></span>
-            <button data-action="library-next" aria-label="Next page">›</button>
-          </div>
+          <div class="pager-ctl" data-pager="library"></div>
+          <label class="per-page">Per page
+            <select id="library-size" aria-label="Works per page">
+              <option value="48">48</option>
+              <option value="96">96</option>
+              <option value="200">200</option>
+            </select>
+          </label>
         </nav>
-        <p class="footnote">
-          <button class="link" data-action="convert-all">Convert every bilingual volume</button>
-          <button class="link" data-action="check-files">Check local files</button>
-          <a href="/api/export.csv">Export catalog CSV</a>
-        </p>
       </section>
 
-      <section id="catalog" class="view" hidden>
+      <section id="catalog" class="view wide" hidden>
         <header class="view-head">
           <div>
             <h1>Catalog</h1>
@@ -115,20 +141,21 @@
           <input id="catalog-query" type="search" placeholder="Search Novelia" aria-label="Search Novelia" />
           <select id="catalog-category" aria-label="Category"></select>
           <button type="submit">Search</button>
+          <div class="pager-ctl" data-pager="catalog"></div>
           <div class="view-switch title-switch" role="group" aria-label="Title language">
             <button type="button" data-title-lang="ja" aria-label="Japanese titles" title="Japanese titles">日</button>
             <button type="button" data-title-lang="zh" aria-label="Chinese titles" title="Chinese titles">中</button>
           </div>
         </form>
-        <p id="catalog-caption" class="caption"></p>
+        <div class="caption-row">
+          <p id="catalog-caption" class="caption"></p>
+          <label class="check"><input id="hide-complete" type="checkbox" /> Hide works I already have complete</label>
+        </div>
         <div id="catalog-list" class="content-region" tabindex="-1"></div>
         <nav class="pager" aria-label="Catalog pages">
           <span id="catalog-total"></span>
-          <div>
-            <button data-action="catalog-prev" aria-label="Previous page">‹</button>
-            <label class="page-jump">Page <input id="catalog-page" type="number" min="1" value="1" /> <span id="catalog-pages"></span></label>
-            <button data-action="catalog-next" aria-label="Next page">›</button>
-          </div>
+          <div class="pager-ctl" data-pager="catalog"></div>
+          <span></span>
         </nav>
       </section>
 
@@ -144,10 +171,10 @@
           </div>
         </header>
         <div class="chips" id="task-chips" role="radiogroup" aria-label="Filter tasks">
-          <button role="radio" data-task-filter="all" aria-checked="true">All</button>
-          <button role="radio" data-task-filter="active">Active</button>
-          <button role="radio" data-task-filter="attention">Needs attention</button>
-          <button role="radio" data-task-filter="done">Completed</button>
+          <button role="radio" data-task-filter="all" aria-checked="true">All <span class="chip-n" data-n="all"></span></button>
+          <button role="radio" data-task-filter="active">Active <span class="chip-n" data-n="active"></span></button>
+          <button role="radio" data-task-filter="attention">Needs attention <span class="chip-n" data-n="attention"></span></button>
+          <button role="radio" data-task-filter="done">Completed <span class="chip-n" data-n="done"></span></button>
         </div>
         <div id="task-list" class="content-region"></div>
       </section>
@@ -159,7 +186,20 @@
             <p class="sub">Appearance updates immediately. Queued tasks keep their content settings; pacing and retry settings apply when a task starts or resumes.</p>
           </div>
         </header>
-        <section class="appearance-settings" aria-labelledby="appearance-title">
+        <div class="settings-layout">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <a href="#set-appearance" data-section="set-appearance">Appearance</a>
+          <a href="#set-storage" data-section="set-storage">Download directory</a>
+          <a href="#set-auto" data-section="set-auto">Automatic updates</a>
+          <a href="#set-conversion" data-section="set-conversion">Conversion</a>
+          <a href="#set-strategy" data-section="set-strategy">Download strategy</a>
+          <a href="#set-source" data-section="set-source">Download source</a>
+          <a href="#set-pacing" data-section="set-pacing">Pacing</a>
+          <a href="#set-failures" data-section="set-failures">Failures and rate limits</a>
+          <a href="#set-hours" data-section="set-hours">Active hours</a>
+        </nav>
+        <div class="settings-main">
+        <section class="appearance-settings" id="set-appearance" aria-labelledby="appearance-title">
           <header class="settings-group-head"><h2 id="appearance-title">Appearance</h2><p>Choose a colour theme.</p></header>
           <div class="settings-group-body">
             <div class="row">
@@ -173,7 +213,7 @@
           </div>
         </section>
         <form id="storage-form" class="storage-settings">
-          <header class="settings-group-head"><h2>Download directory</h2><p>Choose where EPUB files are saved.</p></header>
+          <header class="settings-group-head" id="set-storage"><h2>Download directory</h2><p>Choose where EPUB files are saved.</p></header>
           <div class="storage-fields">
             <label for="download-directory">Absolute directory path</label>
             <input id="download-directory" placeholder="D:\Books\Novelia" required />
@@ -184,7 +224,7 @@
           </div>
         </form>
         <form id="settings-form" class="settings">
-          <section>
+          <section id="set-auto">
             <header class="settings-group-head"><h2>Automatic updates</h2><p>Keep your library up to date.</p></header><div class="settings-group-body">
             <div class="row">
               <div><strong id="label-incremental_enabled">Sweep the light novel collection</strong><p>Checks the works uploaded to since the last sweep and downloads their new volumes.</p></div>
@@ -196,7 +236,7 @@
             </div>
             </div>
           </section>
-          <section>
+          <section id="set-conversion">
             <header class="settings-group-head"><h2>Conversion</h2><p>Editions built from bilingual downloads, for volumes without Novelia's own edition of that language. Each conversion task can choose differently.</p></header><div class="settings-group-body">
             <div class="row">
               <div><strong id="label-auto_convert">Convert after downloading</strong><p>Builds the editions below next to each bilingual download.</p></div>
@@ -216,7 +256,7 @@
             </div>
             </div>
           </section>
-          <section>
+          <section id="set-strategy">
             <header class="settings-group-head"><h2>Download strategy</h2><p>Which editions each volume gets, and what stands in when Novelia cannot supply one.</p></header><div class="settings-group-body">
             <div class="row">
               <div><strong>Editions</strong><p>Tick the editions to download; order sets preference. Japanese original: the upload itself, downloaded again only when it changes. Bilingual and Chinese: Novelia's builds with the translations below.</p></div>
@@ -236,7 +276,7 @@
             </div>
             </div>
           </section>
-          <section>
+          <section id="set-source">
             <header class="settings-group-head"><h2>Download source</h2><p>Set the bilingual layout and translation priority.</p></header><div class="settings-group-body">
             <div class="row">
               <div><strong>Bilingual order</strong><p>Which language comes first in downloaded EPUBs.</p></div>
@@ -262,14 +302,16 @@
             </div>
             </div>
           </section>
-          <section>
+          <section id="set-pacing">
             <header class="settings-group-head"><h2>Pacing</h2><p>How quickly requests are sent. Applies to running tasks when they next start or resume.</p></header><div class="settings-group-body">
             <div class="row">
-              <div><strong>Preset</strong><p>Fills the pacing and backoff fields below. Use Gentle for long sweeps or after being refused.</p></div>
+              <div><strong>Preset</strong><p>Sets every value below. Use Gentle for long sweeps or after being refused.</p></div>
               <div class="segmented" role="group" aria-label="Pacing preset">
                 <button type="button" data-preset="gentle">Gentle</button><button type="button" data-preset="standard">Standard</button><button type="button" data-preset="fast">Fast</button>
               </div>
             </div>
+            <details class="advanced" id="pacing-custom">
+              <summary><span>Custom values</span><span class="advanced-note" id="pacing-note"></span></summary>
             <div class="row">
               <div><strong>Delay between requests</strong><p>Minimum gap between any two requests, shared by every task and the catalog browser.</p></div>
               <label class="unit"><input name="request_delay" type="number" min="0.2" max="60" step="0.1" required aria-label="Delay between requests" />seconds</label>
@@ -302,10 +344,13 @@
               <div><strong>Read timeout</strong></div>
               <label class="unit"><input name="timeout" type="number" min="5" max="600" required aria-label="Read timeout" />seconds</label>
             </div>
+            </details>
             </div>
           </section>
-          <section>
+          <section id="set-failures">
             <header class="settings-group-head"><h2>Failures and rate limits</h2><p>What happens when a request fails or the site starts refusing.</p></header><div class="settings-group-body">
+            <details class="advanced" id="failures-custom">
+              <summary><span>Advanced — retries, backoff and pauses</span><span class="advanced-note">The defaults suit most runs</span></summary>
             <div class="row">
               <div><strong>Attempts per request</strong><p>For network errors, server errors and interrupted transfers.</p></div>
               <label class="unit"><input name="retries" type="number" min="1" max="10" required aria-label="Attempts per request" />tries</label>
@@ -346,9 +391,10 @@
               <div><strong>Network pause</strong></div>
               <label class="unit"><input name="network_pause" type="number" min="1" max="1440" required aria-label="Network pause length" />minutes</label>
             </div>
+            </details>
             </div>
           </section>
-          <section>
+          <section id="set-hours">
             <header class="settings-group-head"><h2>Active hours</h2><p>Limit downloads to a daily window, for example overnight.</p></header><div class="settings-group-body">
             <div class="row">
               <div><strong id="label-active_hours">Only download during these hours</strong><p>Outside the window, tasks wait in the queue and continue when it opens. Conversion is not limited. Times use this computer's clock.</p></div>
@@ -365,6 +411,8 @@
             <div class="head-actions"><button id="discard-settings" type="button" disabled>Discard changes</button><button id="save-settings" class="primary" type="submit" disabled>Save settings</button></div>
           </footer>
         </form>
+        </div>
+        </div>
       </section>
     </main>
 
@@ -458,7 +506,7 @@
       </form>
     </dialog>
 
-    <dialog id="work-dialog" class="sheet" aria-labelledby="work-title">
+    <dialog id="work-dialog" class="sheet work-sheet" aria-labelledby="work-title">
       <header class="dialog-head">
         <h2 id="work-title">Work details</h2>
         <button class="icon-button" data-close="work-dialog" aria-label="Close">✕</button>

@@ -63,7 +63,7 @@ def post_dir(ctx: Context, creator: sqlite3.Row, post: sqlite3.Row) -> Path:
 
 
 def save_dir(ctx: Context, creator: sqlite3.Row, post: sqlite3.Row) -> Path:
-    """Where a post's files are saved: always the download folder's layout, as in v1. Folders
+    """Where a post's files are saved: always the download folder's layout. Folders
     are moved elsewhere by hand once looked at (to an archive drive), so a recorded folder
     outside this layout is never written to."""
     return ctx.creator_dir(creator) / ctx.post_folder_name(creator, post)
@@ -512,7 +512,7 @@ class Downloader:
         return result
 
     def _advance_last_date(self, creator_id: str):
-        """The newest date up to which every kept post is settled, as v1 kept it."""
+        """The newest date up to which every kept post is settled."""
         creator = self.ctx.creator(creator_id)
         if creator is None:
             return

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>The Moe Way Reading Club</title>
+  <rect width="32" height="32" rx="6" fill="#1c2237"/>
+  <path d="M5 6h22v17H14l-7 5v-5H5z" fill="#ece4d6"/>
+  <path d="M19 6h5v11l-2.5-2-2.5 2z" fill="#c64435"/>
+  <path d="M9 12h7m-7 5h5" stroke="#343c55" stroke-width="2" stroke-linecap="round"/>
+</svg>

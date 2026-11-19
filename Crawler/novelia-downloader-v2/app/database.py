@@ -57,6 +57,9 @@ ADDED_COLUMNS = {
         "zh_path": "TEXT",
         # Downloaded by name rather than by the strategy: never removed as a stand-in.
         "pinned": "INTEGER NOT NULL DEFAULT 0",
+        # When the volume first landed on disk. Unlike updated_at it does not move when an
+        # edition is converted or the same volume is fetched again, so "new volumes" means new.
+        "saved_at": "TEXT",
     },
 }
 
@@ -115,6 +118,10 @@ class Database:
                 for name, kind in columns.items():
                     if name not in present:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+                        if (table, name) == ("files", "saved_at"):
+                            # The best record there is of files saved before the column existed.
+                            db.execute("UPDATE files SET saved_at=updated_at")
+            db.execute("CREATE INDEX IF NOT EXISTS file_saved_idx ON files(saved_at)")
 
     @contextmanager
     def connect(self):
@@ -316,12 +323,12 @@ class Database:
     def save_file(self, key, volume, mode, fingerprint, path, size, sha256):
         self.execute(
             """INSERT INTO files(work_key,volume_id,mode,fingerprint,raw_path,size,sha256,
-            status,updated_at) VALUES (?,?,?,?,?,?,?,'downloaded',?)
+            status,updated_at,saved_at) VALUES (?,?,?,?,?,?,?,'downloaded',?,?)
             ON CONFLICT(work_key,volume_id,mode) DO UPDATE SET fingerprint=excluded.fingerprint,
             raw_path=excluded.raw_path,size=excluded.size,sha256=excluded.sha256,
             ja_path=NULL,zh_path=NULL,verification=NULL,report=NULL,status='downloaded',
-            updated_at=excluded.updated_at""",
-            (key, volume, mode, fingerprint, str(path), size, sha256, now()),
+            updated_at=excluded.updated_at,saved_at=COALESCE(files.saved_at,excluded.saved_at)""",
+            (key, volume, mode, fingerprint, str(path), size, sha256, now(), now()),
         )
 
     def save_original(self, key, volume, fingerprint, path, size, sha256):

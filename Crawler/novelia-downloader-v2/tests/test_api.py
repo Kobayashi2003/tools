@@ -250,6 +250,34 @@ def test_library_filters_and_task_removal(client):
     assert client.get(f"/api/jobs/{job_id}").status_code == 404
 
 
+def test_completeness_and_editions_combine_and_new_volumes_are_listed(client):
+    db = client.app.state.db
+    other = "wenku/other"
+    db.save_work(
+        KEY,
+        {"title": "Alpha", "authors": [], "volumeJp": [{"volumeId": "a"}, {"volumeId": "b"}]},
+        1,
+    )
+    db.save_work(other, {"title": "Beta", "authors": [], "volumeJp": [{"volumeId": "c"}]}, 1)
+    db.save_file(KEY, "a", "jp-zh", "hash", Path("a.epub"), 1, "digest")
+    db.save_original(other, "c", "hash", Path("c [jp-original].epub"), 1, "digest")
+    # Missing volumes AND bilingual: only Alpha; complete AND bilingual: nothing.
+    partial = client.get("/api/works?state=partial&edition=bilingual").json()
+    assert [w["key"] for w in partial["items"]] == [KEY]
+    assert client.get("/api/works?state=partial&edition=japanese").json()["total"] == 0
+    assert client.get("/api/works?edition=bogus").status_code == 422
+    # The most recently first-saved volume puts its work first.
+    db.execute("UPDATE files SET saved_at='2020-01-01T00:00:00+00:00' WHERE work_key=?", (KEY,))
+    order = client.get("/api/works?sort=downloaded").json()["items"]
+    assert [w["key"] for w in order] == [other, KEY]
+    recent = client.get("/api/recent?days=7").json()
+    assert [w["key"] for w in recent["items"]] == [other]
+    assert (recent["works"], recent["volumes"]) == (1, 1)
+    # Fetching the same volume again, or converting it, does not make it new.
+    db.save_file(KEY, "a", "jp-zh", "hash2", Path("a.epub"), 2, "digest2")
+    assert client.get("/api/recent?days=7").json()["works"] == 1
+
+
 def test_retry_while_running_only_temporary(client):
     db = client.app.state.db
     other = "wenku/688da4c4c923db0b7aa9943f"

@@ -1,4 +1,4 @@
-"""Path templates and filesystem-safe names, ported from v1 so existing folders still match."""
+"""Path templates and filesystem-safe names."""
 
 import re
 from collections.abc import Sequence
@@ -129,7 +129,7 @@ def post_folder(
 def file_names(
     names: Sequence[str], template: str, rename_images_only: bool, is_image
 ) -> list[str]:
-    """v1's rule: with `rename_images_only`, images get a 0-based `{idx}` counted over
+    """With `rename_images_only`, images get a 0-based `{idx}` counted over
     images only (the cover is image 0), everything else keeps its own name."""
     result = []
     image_index = 0

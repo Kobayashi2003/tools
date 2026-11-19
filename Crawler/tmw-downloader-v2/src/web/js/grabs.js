@@ -9,7 +9,7 @@
  * nothing is, and it tells the cards what changed rather than redrawing the
  * feed itself. */
 
-import { $, alarm, copy, el, show, sizeBar, toast } from "./dom.js";
+import { $, alarm, copy, el, sizeBar, toast } from "./dom.js";
 import { get, post } from "./net.js";
 import { state } from "./store.js";
 
@@ -17,23 +17,16 @@ const POLL_MS = 900;
 let timer = null;
 
 const changeHooks = [];
-/* The cards and the bar listen; this module knows what the queue is doing and
- * nothing about what is on screen. */
+/* The cards, the dock and the bar listen; this module knows what the queue is
+ * doing and nothing about what is on screen. */
 export const onGrabs = (fn) => changeHooks.push(fn);
 const announce = (jobs) => { for (const hook of changeHooks) hook(jobs); };
 
 /* ---------- polling ---------- */
 
-/* A job that finished put files on disk, and the card should say so at once.
- *
- * The index carries `taken` and `held`, but only when it is fetched -- so
- * without this the card went blank the moment a download finished: the word
- * "downloading" stopped applying, and the tick that replaces it lives in state
- * the poll never touched. It came back on the next reload, which is exactly the
- * moment you should not have to ask for.
- *
- * The server has already recorded this; mirroring it is what makes the mark
- * appear as the last byte lands rather than afterwards. */
+/* A job that finished put files on disk, and the card should say so at once. The
+ * server has already recorded this; mirroring it is what makes the mark appear as
+ * the last byte lands rather than on the next reload. */
 function landed(task) {
   if (task.state !== "done") return;
   const got = (task.files || []).filter((f) => f.state === "done" || f.state === "held");
@@ -53,15 +46,16 @@ function adopt(data) {
   }
   state.jobState = now;
 
-  // Only the jobs whose word changed are worth telling anyone about: a poll
-  // every second that redrew every visible card would be the page's whole cost.
-  const moved = [];
-  for (const [job, word] of now) if (before.get(job) !== word) moved.push(job);
-  for (const job of before.keys()) if (!now.has(job)) moved.push(job);
+  // Only the jobs whose word changed are worth telling anyone about; a running
+  // job's progress is told too, so its bar moves.
+  const moved = new Set();
+  for (const [job, word] of now) if (before.get(job) !== word) moved.add(job);
+  for (const job of before.keys()) if (!now.has(job)) moved.add(job);
+  for (const task of state.grabs.tasks || []) if (task.state === "working") moved.add(task.job);
 
   paintQueueRow();
   paintSheet();
-  if (moved.length) announce(moved);
+  if (moved.size) announce([...moved]);
   if (state.grabs.error && !state.grabs.active) alarm(state.grabs.error);
   return state.grabs;
 }
@@ -70,7 +64,7 @@ function startPolling() {
   if (timer) return;
   timer = setInterval(async () => {
     try {
-      const data = await adopt(await get("/api/grabs"));
+      const data = await adopt(await get("api/grabs"));
       if (!data.active && !data.queued) stopPolling();
     } catch (err) {
       stopPolling();
@@ -88,7 +82,7 @@ function stopPolling() {
  * what is already running rather than assuming nothing is. */
 export async function checkGrabs() {
   try {
-    const data = adopt(await get("/api/grabs"));
+    const data = adopt(await get("api/grabs"));
     if (data.active || data.queued) startPolling();
   } catch (err) {
     paintQueueRow();
@@ -99,7 +93,7 @@ export async function checkGrabs() {
 
 export async function grab(post_, { force = false } = {}) {
   try {
-    const data = await post("/api/grab", { id: post_.id, force });
+    const data = await post("api/grab", { id: post_.id, force });
     adopt(data.grabs);
     startPolling();
     const task = data.task || {};
@@ -116,12 +110,27 @@ export async function grab(post_, { force = false } = {}) {
   }
 }
 
+/* Many at once. The server leaves out what is on disk or already queued, and
+ * still presses one job at a time. */
+export async function grabMany(posts) {
+  try {
+    const data = await post("api/grab", { ids: posts.map((p) => p.id) });
+    adopt(data.grabs);
+    startPolling();
+    toast(`Queued ${data.queued}${data.skipped ? ` · ${data.skipped} already on disk or queued` : ""}`);
+    return data;
+  } catch (err) {
+    alarm("Could not queue them: " + err.message);
+    return null;
+  }
+}
+
 /* Press the button and say what is behind it, without fetching. The claim
  * stays live on the server, so a Get straight afterwards costs no second
  * press -- which matters, because presses are rate-limited and counted. */
 export async function peek(post_) {
   try {
-    const data = await post("/api/peek", { id: post_.id });
+    const data = await post("api/peek", { id: post_.id });
     const claim = data.claim || {};
     state.claims.set(post_.job, claim);
     announce([post_.job]);
@@ -133,25 +142,25 @@ export async function peek(post_) {
 }
 
 export async function cancelGrab(job) {
-  try { adopt(await post("/api/grab/cancel", { job })); }
+  try { adopt(await post("api/grab/cancel", { job })); }
   catch (err) { alarm("Could not stop it: " + err.message); }
 }
 
 export async function retryGrab(job) {
   try {
-    adopt(await post("/api/grab/retry", { job }));
+    adopt(await post("api/grab/retry", { job }));
     startPolling();
   } catch (err) { alarm("Could not start it again: " + err.message); }
 }
 
 export async function clearGrabs() {
-  try { adopt(await post("/api/grabs/clear")); }
+  try { adopt(await post("api/grabs/clear")); }
   catch (err) { alarm("Could not clear the list: " + err.message); }
 }
 
 export async function reveal(job) {
   try {
-    await post("/api/reveal", { job });
+    await post("api/reveal", { job });
   } catch (err) {
     alarm("Could not open the folder: " + err.message);
   }
@@ -163,10 +172,10 @@ export function paintQueueRow() {
   const row = $("#queue");
   if (!row) return;
   const { active, queued, failed } = state.grabs;
-  const busy = (state.grabs.tasks || []).find((t) =>
-    t.state === "working" || t.state === "opening");
-  const on = !!(active || queued || failed);
-  show(row, on);
+  const busy = (state.grabs.tasks || []).find((t) => t.state === "working" || t.state === "opening");
+  // With the dock on screen its Queue tab says all of this already.
+  const on = !!(active || queued || failed) && !document.body.classList.contains("dock-fixed");
+  row.hidden = !on;
   if (on) {
     const bits = [];
     if (busy) {
@@ -178,16 +187,17 @@ export function paintQueueRow() {
     if (failed) bits.push(`${failed} failed`);
     $("#queue-text").textContent = bits.join("  ·  ") || "Downloading…";
   }
-  const count = $("#grabs-count");
-  if (count) {
-    count.textContent = active + queued ? String(active + queued) : String(
-      (state.grabs.tasks || []).length);
-    $("#grabs-open").dataset.any = active + queued ? "1" : "0";
+  const n = active + queued;
+  for (const id of ["#grabs-count", "#tab-queue-n"]) {
+    const count = $(id);
+    if (!count) continue;
+    count.textContent = n ? String(n) : String((state.grabs.tasks || []).length || "");
+    count.dataset.any = n ? "1" : "0";
   }
   sizeBar();
 }
 
-/* ---------- the sheet ---------- */
+/* ---------- the dock's Queue ---------- */
 
 const WORDS = {
   queued: "waiting", opening: "asking the bot", working: "downloading",
@@ -205,80 +215,85 @@ function fileRow(file) {
 
 function taskRow(task) {
   const head = el("div", { class: "grab-head" }, [
-    el("span", { class: "t", text: task.title || task.job }),
+    el("button", {
+      class: "t", text: task.title || task.job, title: "Show it in the feed",
+      onclick: () => document.dispatchEvent(new CustomEvent("tmw:job", { detail: task.job })),
+    }),
     el("span", { class: "st", text: WORDS[task.state] || task.state }),
-    task.size ? el("span", { class: "sz", text: `${task.got ? task.pct + "% of " : ""}${task.size_human}` }) : null,
   ]);
-
   const tools = el("div", { class: "grab-tools" }, [
+    task.size ? el("span", { class: "sz", text: `${task.got ? task.pct + "% of " : ""}${task.size_human}` }) : null,
     task.state === "queued" || task.state === "working" || task.state === "opening"
-      ? el("button", { class: "quiet-btn", text: "stop", onclick: () => cancelGrab(task.job) })
+      ? el("button", { class: "quiet-btn", text: "Stop", onclick: () => cancelGrab(task.job) })
       : null,
     task.state === "failed" || task.state === "cancelled"
-      ? el("button", { class: "quiet-btn", text: "try again", onclick: () => retryGrab(task.job) })
+      ? el("button", { class: "quiet-btn", text: "Try again", onclick: () => retryGrab(task.job) })
       : null,
     task.folder && task.files.length
-      ? el("button", { class: "quiet-btn", text: "open folder", onclick: () => reveal(task.job) })
+      ? el("button", { class: "quiet-btn", text: "Open folder", onclick: () => reveal(task.job) })
       : null,
     ...(task.links || []).map((url) => el("a", {
-      class: "quiet-btn", href: url, target: "_blank", rel: "noreferrer", text: "open link",
+      class: "quiet-btn", href: url, target: "_blank", rel: "noreferrer", text: "Open link",
     })),
     (task.links || []).length
-      ? el("button", {
-          class: "quiet-btn", text: "copy link",
-          onclick: () => copy(task.links.join("\n"), "Link copied"),
-        })
+      ? el("button", { class: "quiet-btn", text: "Copy link", onclick: () => copy(task.links.join("\n"), "Link copied") })
       : null,
   ]);
-
-  return el("div", { class: "grab " + task.state }, [
+  return el("div", { class: "grab " + task.state, "data-job": task.job }, [
     head,
-    task.size ? el("div", { class: "meter" }, [
-      el("span", { style: `width:${Math.max(2, task.pct)}%` }),
-    ]) : null,
+    task.size ? el("div", { class: "meter" }, [el("span", { style: `width:${Math.max(2, task.pct)}%` })]) : null,
     task.error ? el("div", { class: "why", text: task.error }) : null,
     // An external job has no files of ours to list; what it has is a link, and
     // the note is what the bot said about it.
-    !task.files.length && task.note
-      ? el("div", { class: "note-text", text: task.note })
-      : null,
+    !task.files.length && task.note ? el("div", { class: "note-text", text: task.note }) : null,
     ...task.files.map(fileRow),
     tools,
   ]);
 }
 
+/* Rebuilt row by row: a task whose state did not change keeps its node, so the
+ * list does not flicker under the pointer on every poll. */
+const drawnTasks = new Map();
+
 export function paintSheet() {
-  if ($("#grabs").hidden) return;
   const box = $("#grabs-list");
-  box.textContent = "";
+  if (!box) return;
   const tasks = state.grabs.tasks || [];
-  if (!tasks.length) {
-    box.appendChild(el("div", {
-      class: "sheet-empty",
-      text: "Nothing queued. Press Get on a card, or d on the one under the cursor.",
-    }));
-  } else {
-    for (const task of tasks) box.appendChild(taskRow(task));
-  }
   const { active, queued, failed } = state.grabs;
   $("#grabs-note").textContent = [
     active ? `${active} in flight` : "",
     queued ? `${queued} waiting` : "",
     failed ? `${failed} failed` : "",
-  ].filter(Boolean).join("  ·  ");
-}
-
-export function showGrabs(on) {
-  show($("#grabs"), on);
-  if (on) { paintSheet(); checkGrabs(); }
-}
-
-export const grabsOpen = () => !$("#grabs").hidden;
-
-export function bindGrabs() {
-  $("#grabs-open").onclick = () => showGrabs(!grabsOpen());
-  $("#grabs-close").onclick = () => showGrabs(false);
-  $("#grabs").onclick = (ev) => { if (ev.target === $("#grabs")) showGrabs(false); };
-  $("#grabs-clear").onclick = clearGrabs;
-  $("#queue-open").onclick = () => showGrabs(true);
+  ].filter(Boolean).join("  ·  ") || (tasks.length ? "Nothing running" : "");
+  $("#grabs-clear").disabled = !tasks.some((t) => !["queued", "opening", "working"].includes(t.state));
+  if (!tasks.length) {
+    drawnTasks.clear();
+    if (!box.querySelector(".empty-state")) {
+      box.replaceChildren(el("div", { class: "empty-state" }, [
+        el("span", { class: "es-mark", text: "↓" }),
+        el("span", { class: "es-t", text: "Nothing queued" }),
+        el("span", { class: "es-h", text: "Press Get on a card, or d on the chosen one. Jobs wait here and the bot is asked for them one at a time." }),
+      ]));
+    }
+    return;
+  }
+  box.querySelector(".empty-state")?.remove();
+  const keep = new Set();
+  let prev = null;
+  for (const task of tasks) {
+    const sig = JSON.stringify(task);
+    let node = drawnTasks.get(task.job);
+    if (!node || node.dataset.sig !== sig) {
+      const fresh = taskRow(task);
+      fresh.dataset.sig = sig;
+      if (node) node.replaceWith(fresh);
+      node = fresh;
+      drawnTasks.set(task.job, node);
+    }
+    keep.add(task.job);
+    const want = prev ? prev.nextSibling : box.firstChild;
+    if (want !== node) box.insertBefore(node, want);
+    prev = node;
+  }
+  for (const [job, node] of drawnTasks) if (!keep.has(job)) { node.remove(); drawnTasks.delete(job); }
 }

@@ -1,0 +1,99 @@
+/* Tokens, reset and base type. The other sheets use only these names.
+
+   Two colour families never mix: violet/blue name a SOURCE, green/amber/red/slate name a
+   LOCAL state. Shape carries the meaning too, so nothing depends on colour alone.
+   Blocked is a warm grey: it must read apart from the cool grey of Unavailable and never
+   shout like Failed, and it may not borrow a source colour. */
+:root {
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --surface-3: #e4e7ee;
+  --line: #dde1e9;
+  --line-strong: #c3c9d5;
+  --fg: #1a2030;
+  --fg-2: #485266;
+  --fg-3: #7b8497;
+  --ink: #1f2638;
+  --ink-fg: #ffffff;
+  --focus: #4d6bff;
+  --src-p: #7b52b8;
+  --src-p-soft: #efe8f9;
+  --src-f: #1c84c4;
+  --src-f-soft: #e2f1fa;
+  --ok: #2c8448;
+  --ok-soft: #e3f3e8;
+  --warn: #a8700f;
+  --warn-soft: #fbf0db;
+  --bad: #c2392f;
+  --bad-soft: #fbe5e3;
+  --block: #7a6f66;
+  --block-soft: #efebe7;
+  --wait: #52668f;
+  --wait-soft: #e6ebf5;
+  --mute: #8a92a3;
+  --mute-soft: #eceef2;
+  --shadow: 0 1px 2px rgb(20 28 45 / .06), 0 8px 24px rgb(20 28 45 / .10);
+  --font-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Yu Gothic UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --r-s: 4px;
+  --r-m: 7px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --side-w: 300px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151c; --surface: #191d26; --surface-2: #20252f; --surface-3: #2a303c;
+    --line: #2b313d; --line-strong: #3b4352; --fg: #e6e9f0; --fg-2: #b4bbc9; --fg-3: #858e9f;
+    --ink: #e6e9f0; --ink-fg: #12151c; --focus: #7d93ff;
+    --src-p: #b493e6; --src-p-soft: #2c2440; --src-f: #5fb5ea; --src-f-soft: #16303f;
+    --ok: #5cc27c; --ok-soft: #173223; --warn: #e0a647; --warn-soft: #3a2c12;
+    --bad: #ef7b70; --bad-soft: #3f1c1a; --block: #a89c90; --block-soft: #2b2723;
+    --wait: #93a6cf; --wait-soft: #232b3c; --mute: #7d8697; --mute-soft: #242934;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px rgb(0 0 0 / .45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151c; --surface: #191d26; --surface-2: #20252f; --surface-3: #2a303c;
+  --line: #2b313d; --line-strong: #3b4352; --fg: #e6e9f0; --fg-2: #b4bbc9; --fg-3: #858e9f;
+  --ink: #e6e9f0; --ink-fg: #12151c; --focus: #7d93ff;
+  --src-p: #b493e6; --src-p-soft: #2c2440; --src-f: #5fb5ea; --src-f-soft: #16303f;
+  --ok: #5cc27c; --ok-soft: #173223; --warn: #e0a647; --warn-soft: #3a2c12;
+  --bad: #ef7b70; --bad-soft: #3f1c1a; --block: #a89c90; --block-soft: #2b2723;
+  --wait: #93a6cf; --wait-soft: #232b3c; --mute: #7d8697; --mute-soft: #242934;
+  --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px rgb(0 0 0 / .45);
+  color-scheme: dark;
+}
+
+/* A Patreon creator's own site takes Fanbox's place, in a colour of its own. */
+.site-patreon { --src-f: #0f8a84; --src-f-soft: #e0f3f1; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .site-patreon { --src-f: #3fc1b6; --src-f-soft: #12312f; }
+}
+:root[data-theme="dark"] .site-patreon { --src-f: #3fc1b6; --src-f-soft: #12312f; }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.55; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+[hidden] { display: none !important; }
+a { color: inherit; }
+.mono { font-family: var(--font-mono); font-size: .92em; }
+.num { font-variant-numeric: tabular-nums; }
+.clip { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.nowrap { white-space: nowrap; }
+.small { font-size: 12px; }
+.muted { font-size: 12px; color: var(--fg-3); }
+.muted-dash { color: var(--line-strong); }
+.lvl-error { color: var(--bad); }
+.tick { color: var(--ok); font-weight: 700; } .cross { color: var(--bad); font-weight: 700; }
+.arrow { color: var(--fg-3); font-family: var(--font-mono); padding: 0 4px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

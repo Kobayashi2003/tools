@@ -5,7 +5,8 @@ Fanbox coverage     open · locked (restricted for you) · gone (deleted) · unk
                     Fanbox creator)
 Subscription        free · yes (Fanbox opens it to you) · no · unknown (no cookie)
 Selection           kept · filtered (with the rule) · creator ignored
-Local               derived from the post's files
+Local               derived from the post's files; "blocked" is a post whose missing files
+                    all 404ed on Pawchive while the own site cannot deliver them
 Downloaded via      per file: pawchive · fanbox · adopted · local
 
 "Fanbox" in these keys means the creator's own site: Fanbox for a Fanbox creator, Patreon
@@ -86,23 +87,28 @@ def can_fanbox(facts: PostFacts) -> bool:
     return facts.f == "open"
 
 
-def unavailable_reason(facts: PostFacts, service: str = "fanbox") -> str:
-    """The creator's own site first: a plan you could take is the one part you can act on,
-    and the list clips this line from the right."""
+def site_reason(facts: PostFacts, service: str = "fanbox") -> str:
+    """Why the creator's own site cannot deliver the post; empty when it can or has none."""
     site, money = site_label(service), site_currency(service)
     locked = (
         f"Needs a {money}{facts.fee} plan"
         if service != "patreon" or facts.fee > 1
         else "Needs a paid tier"
     )
+    return {
+        "open": "",
+        "locked": locked,
+        "gone": f"Deleted on {site}",
+        "unknown": f"{site} not checked",
+        "na": "",
+    }[facts.f]
+
+
+def unavailable_reason(facts: PostFacts, service: str = "fanbox") -> str:
+    """The creator's own site first: a plan you could take is the one part you can act on,
+    and the list clips this line from the right."""
     parts = [
-        {
-            "open": "",
-            "locked": locked,
-            "gone": f"Deleted on {site}",
-            "unknown": f"{site} not checked",
-            "na": "",
-        }[facts.f],
+        site_reason(facts, service),
         {
             "full": "",
             "meta": "Pawchive metadata only",
@@ -154,12 +160,14 @@ def headline(facts: PostFacts, preference: str = "fanbox-first", service: str = 
             why = "Adopted · unverified"
         return {"k": "done", "t": "Done", "why": why, "progress": None}
     remaining = facts.total - facts.done
-    # Every missing file 404ed on Pawchive: failed, and no run retries it by itself.
+    # Every missing file 404ed on Pawchive and the own site cannot stand in: no run asks
+    # again by itself, so this is not work waiting, only a download by hand retries it.
     if facts.missing and facts.missing >= remaining and not can_fanbox(facts):
+        why = " · ".join(p for p in (site_reason(facts, service), "Pawchive 404") if p)
         return {
-            "k": "failed",
-            "t": f"Failed {remaining}",
-            "why": f"{facts.done}/{facts.total} · Pawchive 404, not retried",
+            "k": "blocked",
+            "t": f"Blocked {remaining}",
+            "why": f"{facts.done}/{facts.total} · {why}",
             "progress": progress,
         }
     if facts.failed:

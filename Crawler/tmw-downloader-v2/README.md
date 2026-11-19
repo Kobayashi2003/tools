@@ -23,11 +23,20 @@ uv run main.py --doctor            # test the token and the gateway step by step
 
 On Windows, `start.ps1` / `stop.ps1` start and stop the server.
 
-**get** (or `d`) queues a job; its button is pressed only when the queue reaches it, because a
-claim is one-time and expires in about ten minutes. Files are written to
+The page is a grid of covers, a month at a time, with the clubs' channels as tabs (the rest
+under **More**). Clicking a card shows it in the panel on the right (**Details**: its covers,
+blurb and files), beside **Queue** and **Marks**; under 1500px wide that panel slides in over
+the grid. Filters: where the files are, whether you have them (not fetched, fetched, failed),
+bookmarked, type, and a recommender (click their name). Order: newest, oldest or most ♥.
+
+**Get** (or `d`) queues a job; its button is pressed only when the queue reaches it, because a
+claim is one-time and expires in about ten minutes. With a filter on, **Get n shown** queues
+every shown recommendation not yet on disk (more than ten asks first); the bot is still pressed
+one job at a time, `press_pause` apart. Files are written to
 `downloads/<club>/<title>/` via `<name>.part`, so a broken transfer resumes, and recorded in
-`downloads/ledger.json`, so a fetched book is never fetched twice. **look** (`Enter`) lists a
-job's files without downloading. `?` shows every keyboard shortcut.
+`downloads/ledger.json`, so a fetched book is never fetched twice. **Look** (`Enter`) lists a
+job's files without downloading. `?` shows every keyboard shortcut (`j`/`k` and the arrow keys
+move, `1` `2` `3` switch the panel's tabs).
 
 | Option | Description | Default |
 |---|---|---|

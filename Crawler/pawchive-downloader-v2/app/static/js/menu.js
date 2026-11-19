@@ -15,6 +15,7 @@ export function closeMenu(returnFocus = false) {
 }
 
 export const menuOpenFor = (trigger) => current && current.trigger === trigger;
+export const menuOpen = () => !!current;
 
 function place(el, host) {
   // Flip sideways when it would overflow, upward when there is clearly more room above,
@@ -28,7 +29,8 @@ function place(el, host) {
   const above = r.top;
   if (below < Math.min(el.offsetHeight, 300) + 12 && above > below) el.classList.add('up');
   const room = (el.classList.contains('up') ? above : below) - 18;
-  el.style.maxHeight = Math.max(180, Math.min(420, room)) + 'px';
+  // As tall as its content where there is room, so a list of options is not cut mid-group.
+  el.style.maxHeight = Math.max(180, Math.min(640, room)) + 'px';
 }
 
 function render(state, keepFocusIndex) {
@@ -62,6 +64,8 @@ export function openMenu(trigger, { build, onPick, className = '', sub = null, k
   const el = document.createElement('div');
   el.className = 'menu ' + className;
   el.setAttribute('role', 'menu');
+  // A live patch of the row the menu hangs from must leave it open (see live.js).
+  el.setAttribute('data-transient', '');
   host.appendChild(el);
   current = { trigger, el, build, onPick, sub };
   render(current);

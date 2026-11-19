@@ -5,33 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#151a2a">
-<title>book-recommendations — the moe way</title>
-<link rel="stylesheet" href="/static/style.css">
+<title>the moe way</title>
+<link rel="icon" href="static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="static/style.css">
 </head>
 <body>
 
 <header class="bar">
-  <div class="bar-inner ident-row">
+  <div class="bar-inner top-row">
     <div class="ident">
-      <span class="logo">TMW</span>
-      <div class="channel">
-        <span class="hash">#</span>
-        <button id="channel-pick" type="button" aria-label="Channel" aria-haspopup="listbox"
-                aria-expanded="false" aria-controls="channel-list"><span id="channel-name"></span></button>
-        <div id="channel-list" class="pick-list" role="listbox" aria-label="Channel"
+      <span class="logo"><img src="static/icon.svg" width="24" height="24" alt="">TMW</span>
+      <nav class="ch-tabs" id="tabs" role="tablist" aria-label="Channels"></nav>
+      <div class="channel-more" id="channel-more" hidden>
+        <button id="channel-pick" class="more-btn" type="button" aria-haspopup="listbox"
+                aria-expanded="false" aria-controls="channel-list">More</button>
+        <div id="channel-list" class="pick-list" role="listbox" aria-label="Other channels"
              tabindex="-1" hidden></div>
       </div>
-      <a id="channel-link" class="quiet" href="#" target="_blank" rel="noreferrer">Discord</a>
+      <a id="channel-link" class="discord-link" href="#" target="_blank" rel="noreferrer"
+         title="Open this channel in Discord">Discord ↗</a>
     </div>
 
-    <div class="counts" id="counts"></div>
+    <label class="find">
+      <span class="sr-only">Search</span>
+      <input id="search" type="search" placeholder="Search titles, filenames, job ids"
+             autocomplete="off" spellcheck="false">
+      <kbd class="slash" aria-hidden="true">/</kbd>
+    </label>
 
     <div class="acts">
-      <button id="marks-open" class="act" title="Bookmarks (b to add)">
-        Bookmarks <span id="marks-count" class="tally">0</span>
+      <button id="marks-open" class="act narrow-only" title="Bookmarks (3)">
+        Bookmarks <span id="marks-count" class="tally mark"></span>
       </button>
-      <button id="grabs-open" class="act" title="Downloads (d to queue the one under the cursor)">
-        Downloads <span id="grabs-count" class="tally">0</span>
+      <button id="grabs-open" class="act narrow-only" title="Downloads (2)">
+        Downloads <span id="grabs-count" class="tally"></span>
       </button>
       <button id="sync" class="act" title="Ask Discord for anything newer">Refresh</button>
       <button id="fetch-open" class="act" title="Read more of the channel">Fetch</button>
@@ -41,25 +48,31 @@
   </div>
 
   <div class="bar-inner tools">
-    <label class="find">
-      <span class="sr-only">Search</span>
-      <input id="search" type="search" placeholder="Search titles, filenames, job ids"
-             autocomplete="off" spellcheck="false">
-      <span class="slash" aria-hidden="true">/</span>
-    </label>
-
-    <div class="filters">
-      <div class="seg" id="source" role="group" aria-label="Where the files are">
-        <button class="chip" data-source="" aria-pressed="true">All</button>
-        <button class="chip" data-source="hosted" aria-pressed="false">Hosted</button>
-        <button class="chip" data-source="external" aria-pressed="false">Elsewhere</button>
-      </div>
-      <div class="chips" id="chips" role="group" aria-label="Type"></div>
-      <label class="switch"><input type="checkbox" id="saved-only"><span>Bookmarked</span></label>
-      <label class="switch"><input type="checkbox" id="missing-only"><span>Not yet fetched</span></label>
-      <label class="switch"><input type="checkbox" id="descending"><span>Newest first</span></label>
-      <button id="reset" class="quiet-btn" hidden>Clear filters</button>
+    <div class="seg" id="source" role="group" aria-label="Where the files are">
+      <button class="chip" data-value="">All</button>
+      <button class="chip" data-value="hosted">Hosted</button>
+      <button class="chip" data-value="external">Elsewhere</button>
     </div>
+    <div class="seg" id="have" role="group" aria-label="Whether you have it">
+      <button class="chip" data-value="">Any</button>
+      <button class="chip" data-value="no">Not fetched</button>
+      <button class="chip" data-value="yes">Fetched</button>
+      <button class="chip" data-value="failed">Failed</button>
+    </div>
+    <label class="switch"><input type="checkbox" id="saved-only"><span>Bookmarked</span></label>
+    <span class="who-chip" id="who" hidden>rec. <b id="who-name"></b>
+      <button id="who-clear" type="button" aria-label="Show every recommender" title="Show every recommender">×</button></span>
+    <button id="reset" class="quiet-btn" hidden>Clear filters</button>
+    <span class="tools-gap"></span>
+    <button id="get-shown" class="act primary" hidden></button>
+    <div class="seg" id="sort" role="group" aria-label="Order">
+      <button class="chip" data-value="new">Newest</button>
+      <button class="chip" data-value="old">Oldest</button>
+      <button class="chip" data-value="love">Most ♥</button>
+    </div>
+    <span class="tools-break" aria-hidden="true"></span>
+    <div class="chips" id="chips" role="group" aria-label="Type"></div>
+    <div class="counts" id="counts"></div>
   </div>
 
   <div class="bar-inner job" id="job" role="status" hidden>
@@ -86,11 +99,27 @@
 <div class="stage">
   <nav class="rail" id="rail" aria-label="Timeline"></nav>
   <main class="feed" id="feed"><div class="spacer" id="spacer"></div></main>
+
+  <div class="dock-veil" id="dock-veil"></div>
+  <aside class="dock" id="dock" aria-label="Details, queue and bookmarks">
+    <div class="dock-head" role="tablist">
+      <button class="dock-tab" data-tab="detail" role="tab" title="Details (1)">Details</button>
+      <button class="dock-tab" data-tab="queue" role="tab" title="Download queue (2)">Queue <span class="tally" id="tab-queue-n"></span></button>
+      <button class="dock-tab" data-tab="marks" role="tab" title="Bookmarks (3)">Marks <span class="tally mark" id="tab-marks-n"></span></button>
+      <button class="dock-close quiet-btn" id="dock-close" type="button" aria-label="Close">Close</button>
+    </div>
+    <div class="dock-panel" data-tab="detail" role="tabpanel"><div id="dock-detail"></div></div>
+    <div class="dock-panel" data-tab="queue" role="tabpanel" hidden>
+      <div class="dock-sub"><span id="grabs-note"></span><button id="grabs-clear" class="quiet-btn">Clear finished</button></div>
+      <div id="grabs-list" class="dock-list"></div>
+    </div>
+    <div class="dock-panel" data-tab="marks" role="tabpanel" hidden>
+      <div id="marks-list" class="dock-list"></div>
+    </div>
+  </aside>
 </div>
 
 <div id="growing" class="growing" role="status" hidden></div>
-
-<div id="boot" class="boot">Reading the archive…</div>
 
 <div id="light" class="light" role="dialog" aria-modal="true" aria-label="Cover" hidden>
   <div class="light-bar">
@@ -132,25 +161,16 @@
   </div>
 </div>
 
-<div id="grabs" class="sheet" hidden>
-  <div class="sheet-card wide" role="dialog" aria-modal="true" aria-label="Downloads">
-    <div class="sheet-head">
-      <h3>Downloads</h3>
-      <span class="sheet-note" id="grabs-note"></span>
-      <button id="grabs-clear" class="quiet-btn">Clear finished</button>
-      <button id="grabs-close" class="quiet-btn">Close</button>
+<div id="confirm" class="sheet" hidden>
+  <div class="sheet-card confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="sheet-body">
+      <h3 id="confirm-title" class="confirm-title"></h3>
+      <p id="confirm-text" class="fetch-note"></p>
+      <div class="fetch-go">
+        <button id="confirm-ok" class="act primary"></button>
+        <button id="confirm-cancel" class="act">Cancel</button>
+      </div>
     </div>
-    <div id="grabs-list" class="sheet-list"></div>
-  </div>
-</div>
-
-<div id="marks" class="sheet" hidden>
-  <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Bookmarks">
-    <div class="sheet-head">
-      <h3>Bookmarks</h3>
-      <button id="marks-close" class="quiet-btn">Close</button>
-    </div>
-    <div id="marks-list" class="sheet-list"></div>
   </div>
 </div>
 
@@ -161,21 +181,23 @@
       <button id="help-close" class="quiet-btn">Close</button>
     </div>
     <dl>
-      <dt>/</dt><dd>search</dd>
-      <dt>j / k</dt><dd>next / previous recommendation</dd>
-      <dt>d</dt><dd>download the one under the cursor</dd>
-      <dt>b</dt><dd>bookmark it</dd>
-      <dt>Home / End</dt><dd>oldest / newest</dd>
-      <dt>Enter</dt><dd>look at what the job holds, without fetching it</dd>
-      <dt>c</dt><dd>copy its job id</dd>
-      <dt>Esc</dt><dd>clear search, or close this</dd>
-      <dt>?</dt><dd>this list</dd>
+      <dt><kbd>/</kbd></dt><dd>search</dd>
+      <dt><kbd>j</kbd> <kbd>k</kbd> · <kbd>←</kbd> <kbd>→</kbd></dt><dd>next / previous recommendation</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>the card above / below</dd>
+      <dt><kbd>d</kbd></dt><dd>download the chosen one</dd>
+      <dt><kbd>Enter</kbd></dt><dd>look at what its job holds, without fetching it</dd>
+      <dt><kbd>b</kbd></dt><dd>bookmark it</dd>
+      <dt><kbd>c</kbd></dt><dd>copy its job id</dd>
+      <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Details / Queue / Marks</dd>
+      <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>first / last shown</dd>
+      <dt><kbd>Esc</kbd></dt><dd>clear the search, or close what is open</dd>
+      <dt><kbd>?</kbd></dt><dd>this list</dd>
     </dl>
   </div>
 </div>
 
 <div id="toast" class="toast" role="status"></div>
 
-<script type="module" src="/static/js/app.js"></script>
+<script type="module" src="static/js/app.js"></script>
 </body>
 </html>

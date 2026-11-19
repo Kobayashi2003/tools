@@ -4,18 +4,20 @@
  * the bar, the bar does not know how to reload a channel -- so this file is the
  * only place that knows about all of them. */
 
-import { $, alarm, clearAlarm, copy, show, sizeBar, toast } from "./dom.js";
+import { $, $$, alarm, clearAlarm, copy, show, sizeBar, toast } from "./dom.js";
 import * as chrome from "./chrome.js";
 import * as feed from "./feed.js";
 import { onDetail, onSaved, setSaved } from "./detail.js";
+import { closeDock, currentTab, dockFixed, dockShown, openDock, paintDetail, showTab } from "./dock.js";
 import { bindFetch, checkFetch, onFetchDone, onFetchProgress, showFetch } from "./fetch.js";
-import { bindGrabs, checkGrabs, grab, onGrabs, peek, showGrabs } from "./grabs.js";
+import { checkGrabs, clearGrabs, grab, grabMany, onGrabs, paintSheet, peek } from "./grabs.js";
 import { closeLightbox, isLightboxOpen, stepLightbox } from "./lightbox.js";
 import { getIndex, post } from "./net.js";
 import { indexPost, loadPrefs, rememberChannel, savePrefs, state } from "./store.js";
 
-const SEARCH_PAUSE = 130;   // ms after the last keystroke before the list moves
-const BOOT_FADE = 260;
+const SEARCH_PAUSE = 130;   // ms after the last keystroke before the grid moves
+// A batch this large asks first: the bot is pressed one job at a time.
+const ASK_ABOVE = 10;
 
 /* ---------- taking delivery of an archive ---------- */
 
@@ -33,20 +35,15 @@ function adopt(data) {
     state.filters.kind = "";
   }
   chrome.paintChips();
-  chrome.paintSource();
+  chrome.paintSegs();
   chrome.paintRail();
   feed.resetView();
   feed.redraw();
+  chrome.paintMarks();
   if (state.meta.error) alarm(state.meta.error);
 }
 
 const reload = async () => adopt(await getIndex());
-
-function bootAway() {
-  const boot = $("#boot");
-  boot.classList.add("gone");
-  setTimeout(() => show(boot, false), BOOT_FADE);
-}
 
 /* The bot writes recommenders as mentions with pings suppressed, so the id is
  * all Discord sends. Names come from a separate lookup, asked for once per
@@ -58,7 +55,7 @@ async function learnNames() {
   if (!state.index.some((p) => p.who && p.who.startsWith("<@"))) return;
   asked.add(channel);
   try {
-    const data = await post("/api/names");
+    const data = await post("api/names");
     if (!data.added) return;
     // Only the recommender line changes, so the index is patched rather than
     // rebuilt: a reload here would throw away the reader's place.
@@ -79,17 +76,16 @@ async function switchChannel(id) {
   feed.resetView();
   state.index = [];
   state.detail.clear();
+  state.meta = { ...state.meta, channel: { ...state.meta.channel, channel_id: id } };
   clearAlarm();
-  const boot = $("#boot");
-  boot.classList.remove("gone");
-  show(boot, true);
+  feed.paint();
+  window.scrollTo({ top: 0, behavior: "instant" });
   try {
     await reload();
   } catch (err) {
     alarm("Could not open that channel. " + err.message);
   }
-  bootAway();
-  window.scrollTo({ top: 0, behavior: "instant" });
+  openAtTheEnd();
   // A crawl belongs to a channel, so the page asks again about the new one.
   checkFetch();
   learnNames();
@@ -99,45 +95,73 @@ async function switchChannel(id) {
 async function sync() {
   const button = $("#sync");
   button.disabled = true;
-  button.textContent = "Syncing";
+  button.textContent = "Refreshing…";
   try {
-    const data = await post("/api/sync");
+    const data = await post("api/sync");
     adopt(data);
     const added = (data.synced || {}).added || 0;
     toast(added ? `${added} new message${added > 1 ? "s" : ""}` : "Nothing new");
   } catch (err) {
-    // The alert bar, not a toast: a refusal names a cause worth reading twice,
-    // and two seconds is not long enough to read it once.
-    alarm("Sync failed. " + err.message);
+    // The alert bar, not a toast: a refusal names a cause worth reading twice.
+    alarm("Refresh failed. " + err.message);
   } finally {
     button.disabled = false;
     button.textContent = "Refresh";
   }
 }
 
-/* ---------- the keyboard actions ---------- */
+/* ---------- a small question ---------- */
 
-function focused() {
-  const post_ = feed.focused();
-  if (!post_) { toast("No recommendation selected — press j first"); return null; }
-  return post_;
-}
-
-function grabFocused() {
-  const post_ = focused();
-  if (post_) grab(post_);
-}
-
-function peekFocused() {
-  const post_ = focused();
-  if (post_) peek(post_).then((claim) => {
-    if (claim) feed.refreshJobs([post_.job]);
+/* Yes or no on a sheet, for the one action that spends many presses at once. */
+function confirmSheet({ title, text, ok }) {
+  return new Promise((resolve) => {
+    $("#confirm-title").textContent = title;
+    $("#confirm-text").textContent = text;
+    $("#confirm-ok").textContent = ok;
+    show($("#confirm"), true);
+    $("#confirm-ok").focus();
+    const done = (answer) => {
+      show($("#confirm"), false);
+      $("#confirm-ok").onclick = $("#confirm-cancel").onclick = $("#confirm").onclick = null;
+      resolve(answer);
+    };
+    $("#confirm-ok").onclick = () => done(true);
+    $("#confirm-cancel").onclick = () => done(false);
+    $("#confirm").onclick = (ev) => { if (ev.target === $("#confirm")) done(false); };
   });
 }
 
-function copyFocused() {
-  const post_ = focused();
-  if (post_) copy(post_.job, "Job id copied");
+async function getShown() {
+  const posts = chrome.gettable();
+  if (!posts.length) return;
+  if (posts.length > ASK_ABOVE) {
+    const pause = state.meta.press_pause;
+    const ok = await confirmSheet({
+      title: `Queue ${posts.length.toLocaleString()} downloads?`,
+      text: "They wait in the queue and the bot is asked for them one at a time"
+        + (pause ? `, at least ${pause} seconds apart` : "") + ". Anything already on disk is left out.",
+      ok: `Queue ${posts.length.toLocaleString()}`,
+    });
+    if (!ok) return;
+  }
+  await grabMany(posts);
+  chrome.paintGetShown();
+}
+
+/* ---------- choosing ---------- */
+
+/* A card chosen by click or key shows in Details; narrower than the dock's
+ * breakpoint, the dock slides in to show it. */
+function choose(id, scroll = false) {
+  feed.setHere(id, scroll);
+  showTab("detail");
+  if (!dockFixed()) openDock("detail");
+}
+
+function focused() {
+  const post_ = feed.focused();
+  if (!post_) { toast("No recommendation chosen — press j first"); return null; }
+  return post_;
 }
 
 function bookmarkFocused() {
@@ -158,42 +182,64 @@ function bindControls() {
   $("#search").addEventListener("input", (ev) => {
     const text = ev.target.value.trim().toLowerCase();
     clearTimeout(typing);
-    typing = setTimeout(() => { state.filters.q = text; feed.newQuery(); }, SEARCH_PAUSE);
+    typing = setTimeout(() => { state.filters.q = text; feed.newQuery(); chrome.paintHead(); }, SEARCH_PAUSE);
   });
 
   $("#saved-only").onchange = (ev) => {
     state.filters.savedOnly = ev.target.checked;
     savePrefs();
     feed.applyFilter();
+    chrome.paintHead();
   };
-  $("#missing-only").onchange = (ev) => {
-    state.filters.missingOnly = ev.target.checked;
-    savePrefs();
-    feed.applyFilter();
-  };
-  $("#descending").onchange = (ev) => {
-    state.filters.desc = ev.target.checked;
-    savePrefs();
-    chrome.paintRail();
-    feed.redraw();
-    window.scrollTo({ top: 0, behavior: "instant" });
-  };
-  for (const chip of document.querySelectorAll("#source .chip")) {
-    chip.onclick = () => {
-      state.filters.source = chip.dataset.source;
+  // The segmented choices: where the files are, whether they are here, the order.
+  for (const [box, key] of [["#source", "source"], ["#have", "have"], ["#sort", "sort"]]) {
+    $(box).addEventListener("click", (ev) => {
+      const chip = ev.target.closest("[data-value]");
+      if (!chip || state.filters[key] === chip.dataset.value) return;
+      state.filters[key] = chip.dataset.value;
       savePrefs();
-      chrome.paintSource();
-      feed.applyFilter();
-    };
+      chrome.paintSegs();
+      if (key === "sort") {
+        chrome.paintRail();
+        feed.redraw();
+        window.scrollTo({ top: 0, behavior: "instant" });
+      } else {
+        feed.applyFilter();
+      }
+      chrome.paintHead();
+    });
   }
-  $("#reset").onclick = chrome.resetFilters;
+  $("#reset").onclick = () => { chrome.resetFilters(); chrome.paintHead(); };
+  $("#who-clear").onclick = () => chrome.setWho("");
+  $("#get-shown").onclick = getShown;
   $("#alert-dismiss").onclick = clearAlarm;
+  document.addEventListener("tmw:who", (ev) => chrome.setWho(ev.detail));
+  document.addEventListener("tmw:job", (ev) => {
+    const hit = state.index.find((p) => p.job === ev.detail);
+    if (hit && chrome.gotoShare(hit.id)) showTab("detail");
+    else toast("That one is not in this channel");
+  });
 
-  $("#marks-open").onclick = () => chrome.showMarks(!chrome.marksOpen());
-  $("#marks-close").onclick = () => chrome.showMarks(false);
-  $("#marks").onclick = (ev) => { if (ev.target === $("#marks")) chrome.showMarks(false); };
+  // The grid: a click on a card (not on one of its buttons) chooses it.
+  $("#feed").addEventListener("click", (ev) => {
+    const card = ev.target.closest(".card");
+    if (!card || ev.target.closest("button, a") || !card.dataset.id) return;
+    choose(card.dataset.id);
+  });
+  $("#feed").addEventListener("dblclick", (ev) => {
+    if (ev.target.closest(".plate") && feed.focused()) $(".d-shot")?.click();
+  });
+
+  // The dock: its tabs, and (narrow) the buttons that bring it in.
+  for (const button of $$(".dock-tab")) button.onclick = () => showTab(button.dataset.tab);
+  $("#dock-close").onclick = closeDock;
+  $("#dock-veil").onclick = closeDock;
+  $("#marks-open").onclick = () => openDock("marks");
+  $("#grabs-open").onclick = () => openDock("queue");
+  $("#queue-open").onclick = () => openDock("queue");
+  $("#grabs-clear").onclick = clearGrabs;
+
   bindFetch();
-  bindGrabs();
   $("#help-open").onclick = () => chrome.showHelp(true);
   $("#help-close").onclick = () => chrome.showHelp(false);
   $("#help").onclick = (ev) => { if (ev.target === $("#help")) chrome.showHelp(false); };
@@ -216,9 +262,8 @@ function bindWindow() {
     });
   }, { passive: true });
 
-  // A resize changes every estimate and fires in a burst while a window is
-  // dragged, so it is coalesced and keeps the reader's place rather than
-  // dropping them back at the top.
+  // A resize changes how many columns fit; it is coalesced and keeps the
+  // reader's place rather than dropping them back at the top.
   let resizing = null;
   window.addEventListener("resize", () => {
     clearTimeout(resizing);
@@ -228,6 +273,14 @@ function bindWindow() {
       chrome.markRail();
     }, 120);
   });
+  // Wide, the dock is part of the page; narrower, it is a panel that comes and goes.
+  const wide = matchMedia("(min-width: 1500px)");
+  const sync_ = () => {
+    document.body.classList.toggle("dock-fixed", wide.matches);
+    if (wide.matches) closeDock();
+  };
+  wide.addEventListener("change", () => { sync_(); sizeBar(); feed.relayout(); });
+  sync_();
 }
 
 function bindKeys() {
@@ -245,31 +298,45 @@ function bindKeys() {
       return;
     }
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (!$("#confirm").hidden) {
+      if (ev.key === "Escape") $("#confirm-cancel").click();
+      return;
+    }
 
     if (ev.key === "Escape") {
-      chrome.showHelp(false);
-      chrome.showMarks(false);
-      showFetch(false);
-      showGrabs(false);
-      closeLightbox();
+      // One thing at a time, innermost first.
+      if (isLightboxOpen()) closeLightbox();
+      else if (chrome.helpOpen()) chrome.showHelp(false);
+      else if (!$("#fetch").hidden) showFetch(false);
+      else if (!dockFixed() && dockShown()) closeDock();
       return;
     }
     if (isLightboxOpen()) {
-      if (ev.key === "ArrowLeft") { ev.preventDefault(); stepLightbox(-1); return; }
-      if (ev.key === "ArrowRight") { ev.preventDefault(); stepLightbox(1); return; }
+      if (ev.key === "ArrowLeft") { ev.preventDefault(); stepLightbox(-1); }
+      if (ev.key === "ArrowRight") { ev.preventDefault(); stepLightbox(1); }
+      return;
     }
+    if (ev.key === "Enter" && ev.target.closest && ev.target.closest("button, a")) return;
 
+    const onCard = () => { if (feed.focused()) showTab("detail"); };
     const keys = {
       "?": () => chrome.showHelp(!chrome.helpOpen()),
       "/": () => $("#search").focus(),
-      j: () => feed.step(1),
-      k: () => feed.step(-1),
-      Home: () => { if (feed.view.rows.length) feed.scrollToRow(0); },
-      End: () => { if (feed.view.rows.length) feed.scrollToRow(feed.view.rows.length - 1, "end"); },
-      Enter: () => peekFocused(),
-      d: grabFocused,
-      c: () => copyFocused(),
+      j: () => { feed.step(1); onCard(); },
+      k: () => { feed.step(-1); onCard(); },
+      ArrowRight: () => { feed.step(1); onCard(); },
+      ArrowLeft: () => { feed.step(-1); onCard(); },
+      ArrowDown: () => { feed.stepRow(1); onCard(); },
+      ArrowUp: () => { feed.stepRow(-1); onCard(); },
+      Home: () => { if (feed.view.order.length) feed.setHere(feed.view.order[0]); },
+      End: () => { if (feed.view.order.length) feed.setHere(feed.view.order[feed.view.order.length - 1]); },
+      Enter: () => { const p = focused(); if (p) peek(p).then((claim) => { if (claim) feed.refreshJobs([p.job]); }); },
+      d: () => { const p = focused(); if (p) grab(p, { force: false }); },
+      c: () => { const p = focused(); if (p) copy(p.job, "Job id copied"); },
       b: bookmarkFocused,
+      1: () => (dockFixed() ? showTab("detail") : openDock("detail")),
+      2: () => (dockFixed() ? showTab("queue") : openDock("queue")),
+      3: () => (dockFixed() ? showTab("marks") : openDock("marks")),
     };
     const act = keys[ev.key];
     if (!act) return;
@@ -280,9 +347,8 @@ function bindKeys() {
 
 /* ---------- boot ---------- */
 
-/* Open at the mark. Asserted twice: on a document this tall the browser's own
- * scroll restoration can land after the first attempt and undo it. The second
- * pass is skipped the moment the reader touches anything. */
+/* Open at the newest: the top when newest comes first, else the bottom. Asserted
+ * twice: the browser's own scroll restoration can land after the first attempt. */
 function openAtTheEnd() {
   let touched = false;
   for (const event of ["wheel", "keydown", "pointerdown"]) {
@@ -290,8 +356,7 @@ function openAtTheEnd() {
   }
   const open = () => {
     sizeBar();
-    // Newest is the bottom running forwards and the top running backwards.
-    if (state.filters.desc) { window.scrollTo({ top: 0, behavior: "instant" }); return; }
+    if (state.filters.sort !== "old") { window.scrollTo({ top: 0, behavior: "instant" }); feed.paint(); return; }
     if (feed.view.rows.length) feed.scrollToRow(feed.view.rows.length - 1, "end");
   };
   requestAnimationFrame(() => requestAnimationFrame(open));
@@ -302,24 +367,29 @@ async function start() {
   if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
   loadPrefs();
-  $("#descending").checked = state.filters.desc;
   $("#saved-only").checked = state.filters.savedOnly;
-  $("#missing-only").checked = state.filters.missingOnly;
 
-  // The feed reports what it holds; the bar and the rail listen.
+  // The feed reports what it holds; the bar, the rail and the dock listen.
   feed.onChange(chrome.paintHead);
   feed.onGrew(() => { chrome.paintChips(); chrome.paintRail(); chrome.markRail(); });
-  onDetail((ids) => feed.refreshCards(ids));
+  feed.onHere(() => paintDetail());
+  onDetail((ids) => {
+    feed.refreshCards(ids);
+    if (feed.focused() && ids.includes(feed.focused().id)) paintDetail();
+  });
   onSaved((id, on) => {
     feed.markSaved(id, on);
-    chrome.paintMarksButton();
-    if (chrome.marksOpen()) chrome.paintMarks();
+    chrome.paintMarksCount();
+    chrome.paintMarks();
+    if (feed.focused() && feed.focused().id === id) paintDetail();
   });
   onGrabs((jobs) => {
     feed.refreshJobs(jobs);
     // A finished job is a job whose files are now on disk, which is a filter
     // and a count as much as a badge.
     chrome.paintHead();
+    const here = feed.focused();
+    if (here && jobs.includes(here.job)) paintDetail();
   });
   chrome.actions.showEverything = () => { state.scope.tail = false; reload(); };
 
@@ -331,15 +401,20 @@ async function start() {
   bindControls();
   bindWindow();
   bindKeys();
-  chrome.paintSource();
+  chrome.paintSegs();
+  showTab(currentTab());
+  paintDetail();
+  paintSheet();
+  sizeBar();
+  // Placeholder cards the size of real ones while the archive is read.
+  feed.paint();
 
   try {
     await reload();
   } catch (err) {
-    $("#boot").textContent = "Could not read the archive: " + err.message;
+    alarm("Could not read the archive: " + err.message);
     return;
   }
-  bootAway();
   sizeBar();
   openAtTheEnd();
   chrome.markRail();

@@ -1,1 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect x="6" y="3" width="36" height="42" rx="3" fill="#355da1"/><path d="M12 3v42" stroke="#9abcf7" stroke-width="4"/><path d="M19 34V14l14 20V14" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Novelia Library</title>
+  <rect width="32" height="32" rx="6" fill="#355da1"/>
+  <path d="M4 7c5-.7 8.2 0 11 2.3v16c-2.8-2.1-6.3-2.9-11-2.2z" fill="#f8faff"/>
+  <path d="M17 9.3c3.1-2.3 6.4-3 11-2.3v16.1c-4.6-.7-8.2.1-11 2.2z" fill="#c6dafa"/>
+  <path d="M21 6.8c1.4-.3 2.5-.4 4-.4V16l-2-1.6-2 2.1z" fill="#355da1"/>
+</svg>

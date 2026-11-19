@@ -1,177 +1,320 @@
-import { ago, api, attempt, esc, fmtCount, fmtSize, groupEvents, localTime, toast } from './api.js';
-import { I } from './icons.js';
+import { ago, api, attempt, esc, prefs, toast } from './api.js';
+import { dialog } from './dialog.js';
+import { on, patch } from './live.js';
+
+// Settings: one column of sections and one save bar. A changed field is marked until it is
+// saved; everything changed goes in one request. Sessions, the theme and the timer switch
+// act at once instead, since each is a deliberate step of its own.
 
 const SESSION = {
-  none: ['k-pending', 'Not set', 'mute'],
-  unchecked: ['k-wait', 'Unverified', 'wait'],
-  valid: ['k-done', 'Valid', 'ok'],
-  rejected: ['k-failed', 'Rejected', 'bad'],
+  none: ['k-pending', 'Not set'],
+  unchecked: ['k-wait', 'Unverified'],
+  valid: ['k-done', 'Valid'],
+  rejected: ['k-failed', 'Rejected'],
 };
 
 // [key, label, kind, hint]; kind: text | number | size ("8MB") | list (comma separated) |
-// a CHOICES key (one of a few values, as buttons)
+// choice (one of CHOICES, as buttons)
 const CHOICES = {
   source_preference: [['pawchive-first', 'Pawchive'], ['fanbox-first', 'Their site']],
   update_policy: [['keep', 'Keep both'], ['overwrite', 'Overwrite']],
 };
-const PANELS = [
-  ['Downloads', [
-    ['download_dir', 'Download folder', 'text', 'Every download goes here, as in v1. Folders you have moved elsewhere are never written to.'],
+const FIELDS = {
+  downloads: ['Downloads', [
+    ['download_dir', 'Download folder', 'text', 'Every download goes here. Folders you have moved elsewhere are never written to.'],
     ['source_preference', 'Source first', 'choice', 'Their site is the creator\'s Fanbox or Patreon. If that source cannot deliver a file, the other is tried in the same run. Each creator can override this.'],
     ['update_policy', 'When a post is updated', 'choice', 'Keep both: before a file is replaced by a different one, the post folder is copied beside it as "<folder> [old <date of its newest file>]". Overwrite: the file is just replaced.'],
     ['max_concurrent_creators', 'Creators at once', 'number', ''],
     ['max_concurrent_files', 'Files per post at once', 'number', ''],
   ]],
-  ['Pawchive limits', [
-    ['max_file_requests_per_second', 'Requests per second', 'number', "The operator asks for at most 1/s and 5 parallel downloads."],
-    ['max_concurrent_downloads', 'Parallel downloads', 'number', ''],
-    ['daily_download_quota', 'Daily quota', 'size', 'e.g. 60GB; 0 = none. When spent, downloads pause; nothing is marked failed.'],
-    ['max_download_rate', 'Speed limit', 'size', 'Per second, e.g. 4MB; 0 = none.'],
-  ]],
-  ['Fanbox limits', [
-    ['fanbox_requests_per_second', 'Requests per second', 'number', 'Requests go out under your account; 0.5 or less is advised.'],
-    ['fanbox_max_concurrent_downloads', 'Parallel downloads', 'number', ''],
-  ]],
-  ['Folders and names', [
+  folders: ['Folders and names', [
     ['artist_folder_template', 'Creator folder', 'text', 'Variables: {group} {alias} {name} {service} {user_id}'],
     ['post_folder_template', 'Post folder', 'text', 'Variables: {published} {id} {title}. Keep {id}: migrations recognise folders by it. Dates are UTC.'],
     ['file_template', 'File name', 'text', '{idx} numbers images only (the cover is 0); other files keep their names.'],
     ['date_format', 'Date format', 'text', ''],
   ]],
-  ['Filters', [
+  filters: ['Filters', [
     ['global_filter.exclude_keywords', 'Skip titles containing', 'list', 'Comma separated. Each creator can override.'],
     ['global_filter.include_keywords', 'Only titles containing', 'list', ''],
     ['global_filter.published_after', 'Only published after', 'text', 'YYYY-MM-DD'],
   ]],
+  plimits: ['Pawchive limits', [
+    ['max_file_requests_per_second', 'Requests per second', 'number', 'The operator asks for at most 1/s and 5 parallel downloads.'],
+    ['max_concurrent_downloads', 'Parallel downloads', 'number', ''],
+    ['daily_download_quota', 'Daily quota', 'size', 'e.g. 60GB; 0 = none. When spent, downloads pause; nothing is marked failed.'],
+    ['max_download_rate', 'Speed limit', 'size', 'Per second, e.g. 4MB; 0 = none.'],
+  ]],
+  flimits: ['Fanbox limits', [
+    ['fanbox_requests_per_second', 'Requests per second', 'number', 'Requests go out under your account; 0.5 or less is advised.'],
+    ['fanbox_max_concurrent_downloads', 'Parallel downloads', 'number', ''],
+  ]],
+};
+const SECTIONS = [
+  ['appearance', 'Appearance'], ['fanbox', 'Fanbox session'], ['patreon', 'Patreon session'],
+  ['downloads'], ['folders'], ['filters'], ['plimits'], ['flimits'], ['schedule', 'Scheduled downloads'],
 ];
-
-const getPath = (values, key) => key.split('.').reduce((o, k) => (o == null ? undefined : o[k]), values);
-const press = (b) => b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-
-function field(values, env, [key, label, kind, hint]) {
-  const top = key.split('.')[0];
-  const locked = env.includes(top);
-  const v = getPath(values, key);
-  const id = 'set-' + key.replace(/\./g, '-');
-  let input;
-  if (kind === 'choice') {
-    input = `<div class="seg" role="group" aria-label="${label}">${CHOICES[key].map(([k, l]) => `<button type="button" data-choice="${key}" data-value="${k}" aria-pressed="${v === k}" ${locked ? 'disabled' : ''}>${l}</button>`).join('')}</div>`;
-  } else {
-    const shown = kind === 'list' ? (v || []).join(', ') : v ?? '';
-    input = `<label class="field${kind === 'number' || kind === 'size' ? ' narrow' : ''}"><input id="${id}" data-key="${key}" data-kind="${kind}" value="${esc(shown)}" ${locked ? 'disabled' : ''} ${kind === 'number' ? 'inputmode="decimal"' : ''}></label>`;
-  }
-  const note = locked ? `Set by PAWCHIVE_${top.toUpperCase()} in .env. ` : '';
-  return `<label class="lab" for="${id}">${label}${locked ? '<span class="env">.env</span>' : ''}</label><div class="ctl">${input}${hint || note ? `<div class="hint">${esc(note + hint)}</div>` : ''}</div>`;
-}
-
-let watching = false;
+const KINDS = Object.fromEntries(Object.values(FIELDS).flatMap(([, fields]) => fields.map(([key, , kind]) => [key, kind])));
 
 // The sites whose session cookie the app keeps: what the panel says about each.
 const SITES = {
   fanbox: {
-    title: 'Fanbox session', cookie: 'FANBOXSESSID', env: 'FANBOX_SESSID', field: 'sessid',
+    title: 'Fanbox session', cookie: 'FANBOXSESSID', env: 'FANBOX_SESSID', field: 'sessid', state: 'session', fromEnv: 'session_from_env',
     valid: (s) => `Supporting ${s.supporting ?? 0} plans`,
     none: 'Free posts and post lists work without it.',
   },
   patreon: {
-    title: 'Patreon session', cookie: 'session_id', env: 'PATREON_SESSION_ID', field: 'session_id',
+    title: 'Patreon session', cookie: 'session_id', env: 'PATREON_SESSION_ID', field: 'session_id', state: 'patreon_session', fromEnv: 'patreon_session_from_env',
     valid: (s) => `Signed in${s.user ? ` as ${s.user}` : ''}`,
     none: 'Post lists and free posts work without it; paid posts need the tier on your account.',
   },
 };
 
-// Polls a running browser sign-in until it ends, then redraws the page if it is still shown.
-async function watchLogin(el, site) {
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 1500));
-    const st = await api(`${site}/login`).catch(() => null);
-    if (st?.state === 'waiting') continue;
-    if (st) toast(st.message || st.state, st.state === 'failed');
-    if (location.hash.startsWith('#/settings')) mountSettings(el);
-    return;
+const getPath = (values, key) => key.split('.').reduce((o, k) => (o == null ? undefined : o[k]), values);
+const shownValue = (kind, v) => (kind === 'list' ? (v || []).join(', ') : v ?? '');
+const parse = (kind, text) => {
+  const v = text.trim();
+  if (kind === 'number') return v === '' ? v : Number(v);
+  if (kind === 'list') return v ? v.split(/[,，]/).map((x) => x.trim()).filter(Boolean) : [];
+  return v;
+};
+const same = (a, b) => JSON.stringify(a ?? '') === JSON.stringify(b ?? '');
+
+export function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+}
+
+let T = null;
+
+function fieldHTML([key, label, kind, hint]) {
+  const top = key.split('.')[0];
+  const locked = T.env.includes(top);
+  const v = getPath(T.values, key);
+  const id = 'set-' + key.replace(/\./g, '-');
+  let input;
+  if (kind === 'choice') {
+    input = `<div class="seg" role="group" aria-label="${label}">${CHOICES[key].map(([k, l]) => `<button type="button" data-choice="${key}" data-value="${k}" aria-pressed="${T.choice[key] === k}" ${locked ? 'disabled' : ''}>${l}</button>`).join('')}</div>`;
+  } else {
+    input = `<label class="field${kind === 'number' || kind === 'size' ? ' narrow' : ''}"><input id="${id}" data-field="${key}" data-kind="${kind}" value="${esc(shownValue(kind, v))}" ${locked ? 'disabled' : ''} ${kind === 'number' ? 'inputmode="decimal"' : ''}></label>`;
   }
+  const note = locked ? `Set by PAWCHIVE_${top.toUpperCase()} in .env. ` : '';
+  const tag = kind === 'choice' ? 'span' : 'label';
+  return `<${tag} class="lab" ${kind === 'choice' ? '' : `for="${id}"`} data-lab="${key}">${label}${locked ? '<span class="env">.env</span>' : ''}</${tag}><div class="ctl">${input}${hint || note ? `<div class="hint">${esc(note + hint)}</div>` : ''}</div>`;
+}
+
+function sessionHTML(site) {
+  const d = SITES[site];
+  const s = T.state[d.state] || {};
+  const env = T.state[d.fromEnv];
+  const lg = T.login[site] || {};
+  const [k, t] = SESSION[s.state] || SESSION.none;
+  const signing = lg.state === 'waiting';
+  const otherSigning = Object.entries(T.login).some(([key, v]) => key !== site && v?.state === 'waiting');
+  const note = signing ? lg.message
+    : s.state === 'valid' ? `${d.valid(s)} · checked ${ago(s.checked_at)}${s.source === 'browser' ? ' · from the browser sign-in' : ''}`
+    : s.message || (s.state === 'none' ? d.none : '');
+  return `<div class="panel-head" data-key="h"><h2>${d.title}</h2><span class="chip ${k}">${t}</span></div>
+    <div class="form" data-key="f">
+      <span class="lab">Sign in</span>
+      <div class="ctl">
+        ${env ? '' : `<div class="row-inline nowrap">${signing
+          ? '<button class="btn" type="button" data-cancellogin>Cancel sign-in</button>'
+          : `<button class="btn primary" type="button" data-login ${otherSigning ? 'disabled' : ''}>Sign in with browser</button>`}
+          <button class="btn" type="button" data-clearsess ${s.state === 'none' || signing ? 'disabled' : ''}>Clear</button></div>`}
+        <div class="hint">${esc(note)}${env ? ` Provided by ${d.env} in the environment.` : ''}</div>
+        ${env ? '' : '<div class="hint">Opens Chrome (or Edge) on its own profile in data/browser and closes it once the cookie is read. Sign in there once; later sign-ins finish on their own. The cookie stays on this machine.</div>'}
+      </div>
+      ${env ? '' : `<label class="lab" for="sess-${site}">Or paste</label>
+      <div class="ctl"><div class="row-inline nowrap">
+        <label class="field grow"><input id="sess-${site}" type="password" autocomplete="off" placeholder="${d.cookie} value"><button class="linkbtn" type="button" data-reveal>Show</button></label>
+        <button class="btn" type="button" data-savesess>Save</button></div></div>`}
+    </div>`;
+}
+
+function timerHTML() {
+  const t = T.timer;
+  return `<div class="panel-head"><h2>Scheduled downloads</h2></div>
+    <div class="form">
+      <span class="lab">Timers</span>
+      <div class="ctl"><div class="seg" role="group" aria-label="Timers"><button type="button" data-timers="off" aria-pressed="${!T.values.timers_enabled}">Off</button><button type="button" data-timers="on" aria-pressed="${!!T.values.timers_enabled}">On</button></div>
+        <div class="hint">Off by default. Turn on to run global and creator timers. Changes take effect immediately.</div></div>
+      <span class="lab" data-lab="global_timer">Default timer</span>
+      <div class="ctl"><div class="row-inline">
+        <div class="seg" role="group" aria-label="Frequency">${[['', 'None'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']].map(([v, l]) => `<button type="button" data-timer="${v}" aria-pressed="${t.type === v}">${l}</button>`).join('')}</div>
+        <label class="field tiny" title="Time (HH:MM)"><input id="t-time" data-timerfield value="${esc(t.time)}" aria-label="Time"></label>
+        <label class="field tiny" title="Day"><input id="t-day" data-timerfield value="${esc(t.day)}" placeholder="Day" aria-label="Day"></label></div>
+        <div class="hint">Local time. Weekly: day 0 is Monday. Monthly: day of the month. A creator can have its own timer.</div></div>
+    </div>`;
+}
+
+function appearanceHTML() {
+  const theme = prefs.get('theme', 'system');
+  return `<div class="panel-head"><h2>Appearance</h2></div>
+    <div class="form"><span class="lab">Theme</span><div class="ctl"><div class="seg" role="group" aria-label="Theme">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([k, l]) => `<button type="button" data-theme="${k}" aria-pressed="${theme === k}">${l}</button>`).join('')}</div>
+      <div class="hint">Kept in this browser. System follows the operating system's light or dark mode.</div></div></div>`;
+}
+
+const savedTimer = () => {
+  const g = T.values.global_timer || {};
+  return { type: g.type || '', time: g.time || '00:00', day: g.day ?? '' };
+};
+
+// What differs from the saved settings, as the request body would carry it.
+function changes() {
+  const out = {};
+  for (const input of T.el.querySelectorAll('input[data-field]:not([disabled])')) {
+    const key = input.dataset.field;
+    const kind = input.dataset.kind;
+    const now = parse(kind, input.value);
+    if (!same(now, parse(kind, String(shownValue(kind, getPath(T.values, key)))))) out[key] = now;
+  }
+  for (const [key, value] of Object.entries(T.choice)) if (value !== T.values[key]) out[key] = value;
+  const t = { type: T.timer.type, time: T.el.querySelector('#t-time').value.trim() || '00:00', day: T.el.querySelector('#t-day').value.trim() };
+  const was = savedTimer();
+  if (t.type !== was.type || (t.type && (t.time !== was.time || String(t.day) !== String(was.day)))) {
+    out.global_timer = t.type ? { type: t.type, time: t.time, ...(t.day !== '' ? { day: Number(t.day) } : {}) } : null;
+  }
+  return out;
+}
+
+function syncDirty() {
+  const changed = changes();
+  const keys = new Set(Object.keys(changed));
+  T.el.querySelectorAll('[data-lab]').forEach((l) => l.classList.toggle('dirty', keys.has(l.dataset.lab)));
+  const n = keys.size;
+  T.dirty = n;
+  const running = T.running;
+  patch(T.el.querySelector('[data-savebar]'), `<span class="msg" data-key="m">${running ? 'A job is running; settings can be saved when it ends.' : n ? `${n} unsaved change${n === 1 ? '' : 's'}` : 'All changes saved'}</span>
+    <button class="btn" type="button" data-key="d" data-discard ${n ? '' : 'disabled'}>Discard</button>
+    <button class="btn primary" type="button" data-key="s" data-save ${n && !running ? '' : 'disabled'}>Save changes</button>`);
+  T.el.querySelector('[data-savebar]').classList.toggle('dirty', !!n);
+}
+
+// Sends every change in one request. Nested values (the filter) go as their whole object.
+async function save() {
+  const changed = changes();
+  const body = {};
+  for (const [key, v] of Object.entries(changed)) {
+    const [top, sub] = key.split('.');
+    if (!sub) { body[top] = v; continue; }
+    body[top] = body[top] || { ...(T.values[top] || {}) };
+    if ((Array.isArray(v) && !v.length) || v === '') delete body[top][sub];
+    else body[top][sub] = v;
+  }
+  const out = await attempt(() => api('settings', { method: 'PATCH', body }), 'Saved');
+  if (!out) return;
+  T.values = out.values;
+  // Show the values as the server keeps them (a size typed as "60gb" comes back normalised).
+  for (const input of T.el.querySelectorAll('input[data-field]')) {
+    if (changed[input.dataset.field] !== undefined) input.value = shownValue(input.dataset.kind, getPath(T.values, input.dataset.field));
+  }
+  syncDirty();
+}
+
+function discard() {
+  for (const input of T.el.querySelectorAll('input[data-field]')) input.value = shownValue(input.dataset.kind, getPath(T.values, input.dataset.field));
+  T.choice = Object.fromEntries(Object.keys(CHOICES).map((k) => [k, T.values[k]]));
+  T.el.querySelectorAll('[data-choice]').forEach((b) => b.setAttribute('aria-pressed', String(T.choice[b.dataset.choice] === b.dataset.value)));
+  T.timer = savedTimer();
+  patch(T.el.querySelector('[data-sec="schedule"]'), timerHTML());
+  syncDirty();
+}
+
+async function refreshSession(site) {
+  const mine = T;
+  const [state, login] = await Promise.all([api('state'), api(`${site}/login`)]);
+  if (T !== mine) return;
+  T.state = state;
+  T.login[site] = login;
+  for (const s of Object.keys(SITES)) patch(T.el.querySelector(`[data-sec="${s}"]`), sessionHTML(s));
+  if (login.state === 'waiting') watchLogin(site);
+}
+
+// Polls a running browser sign-in until it ends, redrawing only its panel.
+async function watchLogin(site) {
+  const mine = T;
+  if (mine.watching.has(site)) return;
+  mine.watching.add(site);
+  try {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1500));
+      if (T !== mine) return;
+      const st = await api(`${site}/login`).catch(() => null);
+      if (st?.state === 'waiting') continue;
+      if (st) toast(st.message || st.state, st.state === 'failed');
+      break;
+    }
+  } finally {
+    mine.watching.delete(site);
+  }
+  if (T === mine) refreshSession(site);
 }
 
 export async function mountSettings(el) {
   const [settings, state, login, plogin] = await Promise.all([
     api('settings'), api('state'), api('fanbox/login'), api('patreon/login'),
   ]);
-  const values = settings.values;
-  const sessions = {
-    fanbox: { s: state.session || {}, env: state.session_from_env, login },
-    patreon: { s: state.patreon_session || {}, env: state.patreon_session_from_env, login: plogin },
+  T = {
+    el, values: settings.values, env: settings.env, state, login: { fanbox: login, patreon: plogin },
+    choice: Object.fromEntries(Object.keys(CHOICES).map((k) => [k, settings.values[k]])),
+    timer: null, dirty: 0, running: false, watching: new Set(),
   };
-  const signingSite = Object.keys(sessions).find((k) => sessions[k].login.state === 'waiting');
-  const sessionPanel = (site) => {
-    const { s, env, login: lg } = sessions[site];
-    const d = SITES[site];
-    const [k, t] = SESSION[s.state] || SESSION.none;
-    const signing = lg.state === 'waiting';
-    const note = signing ? lg.message
-      : s.state === 'valid' ? `${d.valid(s)} · checked ${ago(s.checked_at)}${s.source === 'browser' ? ' · from the browser sign-in' : ''}`
-      : s.message || (s.state === 'none' ? d.none : '');
-    return `<section class="panel" data-site="${site}">
-      <div class="panel-head"><h2>${d.title}</h2><span class="chip ${k}">${t}</span></div>
-      <div class="form">
-        <span class="lab">Sign in</span>
-        <div class="ctl">
-          ${env ? '' : `<div class="row-inline nowrap">${signing
-            ? `<button class="btn" type="button" data-cancellogin>Cancel sign-in</button>`
-            : `<button class="btn primary" type="button" data-login ${signingSite ? 'disabled' : ''}>Sign in with browser</button>`}
-            <button class="btn" type="button" data-clearsess ${s.state === 'none' || signing ? 'disabled' : ''}>Clear</button></div>`}
-          <div class="hint">${esc(note)}${env ? ` Provided by ${d.env} in the environment.` : ''}</div>
-          ${env ? '' : `<div class="hint">Opens Chrome (or Edge) on its own profile in data/browser and closes it once the cookie is read. Sign in there once; later sign-ins finish on their own. The cookie stays on this machine.</div>`}
-        </div>
-        ${env ? '' : `<label class="lab" for="sess-${site}">Or paste</label>
-        <div class="ctl"><div class="row-inline nowrap">
-          <label class="field grow"><input id="sess-${site}" type="password" autocomplete="off" placeholder="${d.cookie} value"><button class="linkbtn" type="button" data-reveal>Show</button></label>
-          <button class="btn" type="button" data-savesess>Save</button></div></div>`}
-      </div>
-    </section>`;
+  T.timer = savedTimer();
+  const mine = T;
+  const title = (id) => SECTIONS.find(([k]) => k === id)[1] || FIELDS[id][0];
+  const section = (id) => {
+    if (id === 'appearance') return appearanceHTML();
+    if (id === 'fanbox' || id === 'patreon') return sessionHTML(id);
+    if (id === 'schedule') return timerHTML();
+    return `<div class="panel-head"><h2>${FIELDS[id][0]}</h2></div><div class="form">${FIELDS[id][1].map(fieldHTML).join('')}</div>`;
   };
-  const panel = (i) => {
-    const [title, fields] = PANELS[i];
-    return `<section class="panel" data-panel="${i}"><div class="panel-head"><h2>${title}</h2><button class="btn sm" type="button" data-save="${i}">Save</button></div>
-      <div class="form">${fields.map((f) => field(values, settings.env, f)).join('')}</div></section>`;
-  };
-  // Two independent columns on wide screens: each stacks top-down, so panels of different
-  // heights never leave ragged gaps the way a flowing grid would.
-  el.innerHTML = `<div class="view">
-    <div class="view-head"><div><h1>Settings</h1><p class="lede">Saved in data/config.json. PAWCHIVE_* values in .env win. Settings cannot change while a job runs.</p></div></div>
-    <div class="cols">
-    <div class="col">
-    ${sessionPanel('fanbox')}${sessionPanel('patreon')}
-    ${panel(0)}${panel(3)}
+  el.innerHTML = `<div class="view narrow">
+    <div class="view-head"><div><h1>Settings</h1><p class="lede">Saved in data/config.json. PAWCHIVE_* values in .env win.</p></div></div>
+    <div class="settings">
+      <nav class="set-nav" aria-label="Sections">${SECTIONS.map(([id]) => `<a href="#/settings" data-goto="${id}">${title(id)}</a>`).join('')}</nav>
+      <div class="set-main">${SECTIONS.map(([id]) => `<section class="panel" id="sec-${id}" data-sec="${id}">${section(id)}</section>`).join('')}</div>
     </div>
-    <div class="col">
-    ${panel(1)}${panel(2)}${panel(4)}
-    <section class="panel">
-      <div class="panel-head"><h2>Scheduled downloads</h2><button class="btn sm" type="button" data-savetimer>Save</button></div>
-      <div class="form">
-        <span class="lab">Timers</span>
-        <div class="ctl"><div class="seg" role="group" aria-label="Timers"><button type="button" data-timers="off" aria-pressed="${!values.timers_enabled}">Off</button><button type="button" data-timers="on" aria-pressed="${!!values.timers_enabled}">On</button></div>
-          <div class="hint">Off by default. Timers imported from v1 are kept but only fire once this is on. Keep it off while v1 still runs, or both pull from Pawchive at once.</div></div>
-        <span class="lab">Default timer</span>
-        <div class="ctl"><div class="row-inline">
-          <div class="seg" role="group" aria-label="Frequency">${[['', 'None'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']].map(([v, l]) => `<button type="button" data-timer="${v}" aria-pressed="${(values.global_timer?.type || '') === v}">${l}</button>`).join('')}</div>
-          <label class="field tiny" title="Time (HH:MM)"><input id="t-time" value="${esc(values.global_timer?.time || '00:00')}" aria-label="Time"></label>
-          <label class="field tiny" title="Day"><input id="t-day" value="${esc(values.global_timer?.day ?? '')}" placeholder="Day" aria-label="Day"></label></div>
-          <div class="hint">Local time. Weekly: day 0 is Monday. Monthly: day of the month. A creator can have its own timer.</div></div>
-      </div>
-    </section>
-    </div>
-    </div>
+    <div class="savebar" data-savebar></div>
   </div>`;
-  if (signingSite && !watching) {
-    watching = true;
-    watchLogin(el, signingSite).finally(() => { watching = false; });
-  }
-  let timerType = values.global_timer?.type || '';
-  const picked = Object.fromEntries(Object.keys(CHOICES).map((k) => [k, values[k]]));
+  syncDirty();
+  for (const site of Object.keys(SITES)) if (T.login[site]?.state === 'waiting') watchLogin(site);
+
+  // The section in view is marked in the index beside it.
+  const navLinks = new Map([...el.querySelectorAll('[data-goto]')].map((a) => [a.dataset.goto, a]));
+  const seen = new Map();
+  const observer = new IntersectionObserver((entries) => {
+    for (const e of entries) seen.set(e.target.dataset.sec, e.isIntersecting);
+    const first = SECTIONS.map(([id]) => id).find((id) => seen.get(id));
+    navLinks.forEach((a, id) => a.classList.toggle('on', id === first));
+  }, { root: el, rootMargin: '0px 0px -60% 0px' });
+  el.querySelectorAll('[data-sec]').forEach((s) => observer.observe(s));
+
+  const offState = on('state', (s) => {
+    if (T !== mine) return;
+    const running = s.jobs.some((j) => j.status === 'running');
+    if (running !== T.running) { T.running = running; syncDirty(); }
+  });
+  const unload = (e) => { if (T === mine && T.dirty) { e.preventDefault(); e.returnValue = ''; } };
+  window.addEventListener('beforeunload', unload);
+
+  el.oninput = (e) => { if (e.target.closest('[data-field], [data-timerfield]')) syncDirty(); };
   el.onclick = async (e) => {
+    const go = e.target.closest('[data-goto]');
+    if (go) {
+      e.preventDefault();
+      el.querySelector(`#sec-${go.dataset.goto}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     const b = e.target.closest('button');
     if (!b) return;
-    const site = b.closest('[data-site]')?.dataset.site;
+    const press = () => b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    const site = b.closest('[data-sec="fanbox"], [data-sec="patreon"]')?.dataset.sec;
+    if (b.dataset.theme) {
+      prefs.set('theme', b.dataset.theme);
+      applyTheme(b.dataset.theme);
+      press();
+      return;
+    }
     if (b.dataset.reveal !== undefined) {
       const i = el.querySelector(`#sess-${site}`);
       i.type = i.type === 'password' ? 'text' : 'password';
@@ -179,7 +322,7 @@ export async function mountSettings(el) {
       return;
     }
     if (b.dataset.login !== undefined) {
-      if (await attempt(() => api(`${site}/login`, { method: 'POST' }))) await mountSettings(el);
+      if (await attempt(() => api(`${site}/login`, { method: 'POST' }))) await refreshSession(site);
       return;
     }
     if (b.dataset.cancellogin !== undefined) {
@@ -191,202 +334,27 @@ export async function mountSettings(el) {
       if (b.dataset.savesess !== undefined && !value) return toast('Paste the cookie first', true);
       const out = await attempt(() => api(`${site}/session`, { method: 'POST', body: { [SITES[site].field]: value } }));
       if (out) toast(out.state === 'valid' ? `Cookie valid; ${SITES[site].valid(out).toLowerCase()}` : out.state === 'none' ? 'Cleared' : `Result: ${out.message || out.state}`, out.state === 'rejected');
-      return mountSettings(el);
+      return refreshSession(site);
     }
-    if (b.dataset.choice) { picked[b.dataset.choice] = b.dataset.value; press(b); return; }
+    if (b.dataset.choice) { T.choice[b.dataset.choice] = b.dataset.value; press(); syncDirty(); return; }
     if (b.dataset.timers) {
-      const on = b.dataset.timers === 'on';
-      const out = await attempt(() => api('settings', { method: 'PATCH', body: { timers_enabled: on } }), on ? 'Timers on' : 'Timers off');
-      if (out) { values.timers_enabled = out.values.timers_enabled; press(b); }
+      const turnOn = b.dataset.timers === 'on';
+      const out = await attempt(() => api('settings', { method: 'PATCH', body: { timers_enabled: turnOn } }), turnOn ? 'Timers on' : 'Timers off');
+      if (out) { T.values.timers_enabled = out.values.timers_enabled; press(); }
       return;
     }
-    if (b.dataset.timer !== undefined) { timerType = b.dataset.timer; press(b); return; }
-    if (b.dataset.savetimer !== undefined) {
-      const day = el.querySelector('#t-day').value.trim();
-      const timer = timerType ? { type: timerType, time: el.querySelector('#t-time').value.trim() || '00:00', ...(day ? { day: Number(day) } : {}) } : null;
-      await attempt(() => api('settings', { method: 'PATCH', body: { global_timer: timer } }), 'Saved');
-      return;
-    }
-    if (b.dataset.save) {
-      const panel = el.querySelector(`[data-panel="${b.dataset.save}"]`);
-      const body = {};
-      for (const input of panel.querySelectorAll('input[data-key]:not([disabled])')) {
-        const [top, sub] = input.dataset.key.split('.');
-        let v = input.value.trim();
-        if (input.dataset.kind === 'number') v = Number(v);
-        if (input.dataset.kind === 'list') v = v ? v.split(/[,，]/).map((x) => x.trim()).filter(Boolean) : [];
-        if (sub) {
-          body[top] = body[top] || { ...(values[top] || {}) };
-          if ((Array.isArray(v) && !v.length) || v === '') delete body[top][sub];
-          else body[top][sub] = v;
-        } else body[top] = v;
-      }
-      for (const k of new Set([...panel.querySelectorAll('[data-choice]:not([disabled])')].map((x) => x.dataset.choice))) body[k] = picked[k];
-      const out = await attempt(() => api('settings', { method: 'PATCH', body }), 'Saved');
-      if (out) Object.assign(values, out.values);
-    }
+    if (b.dataset.timer !== undefined) { T.timer.type = b.dataset.timer; press(); syncDirty(); return; }
+    if (b.dataset.save !== undefined) return save();
+    if (b.dataset.discard !== undefined) return discard();
   };
-}
 
-// ---------------------------------------------------------------- overview
-
-function nameOf(creators, id) {
-  const c = creators.find((x) => x.id === id);
-  return c ? c.alias || c.name : id;
-}
-
-// "Sync 遠藤弘土: …" next to a 遠藤弘土 link reads as "Sync: …".
-function withoutName(text, name) {
-  if (!name) return text;
-  for (const sep of [': ', '：']) {
-    if (text.startsWith(name + sep)) return text.slice(name.length + sep.length);
-    if (text.includes(` ${name}${sep}`)) return text.replace(` ${name}${sep}`, sep);
-  }
-  return text;
-}
-
-// Kept posts by local state, in the order a reader scans them: settled, then the work left.
-const STATES = [
-  ['done', 'Done', 'ok'], ['partial', 'Partial', 'warn'], ['pending', 'Pending', 'warn'],
-  ['failed', 'Failed', 'bad'], ['na', 'Unavailable', 'mute'], ['filtered', 'Filtered', 'line'],
-];
-
-function statusPanel(o) {
-  const total = STATES.reduce((n, [k]) => n + (o.status[k] || 0), 0) || 1;
-  const shown = STATES.filter(([k]) => o.status[k]);
-  const got = [['pawchive', 'Pawchive'], ['fanbox', 'Fanbox'], ['local', 'Found on disk']].filter(([k]) => o.got[k]);
-  const files = got.reduce((n, [k]) => n + o.got[k], 0);
-  return `<div class="panel-head"><h2>Local status</h2><span class="muted">${total.toLocaleString()} posts</span></div>
-    <div class="sbar" role="img" aria-label="${shown.map(([k, l]) => `${l} ${o.status[k]}`).join(', ')}">${shown.map(([k, l, c]) => `<i class="b-${c}" style="flex-grow:${o.status[k]}" title="${l}: ${o.status[k].toLocaleString()} (${((o.status[k] / total) * 100).toFixed(1)}%)"></i>`).join('')}</div>
-    <div class="slegend">${shown.map(([k, l, c]) => `<span><i class="b-${c}"></i>${l}<b class="num">${o.status[k].toLocaleString()}</b></span>`).join('')}</div>
-    <div class="got"><span class="h">Files on disk came from</span>${got.map(([k, l]) => `<span class="via"><b class="${{ pawchive: 'vp', fanbox: 'vf' }[k] || 'va'}">${l}</b><span class="num">${o.got[k].toLocaleString()}</span><small>${o.got[k] / files < 0.001 ? '<0.1' : ((o.got[k] / files) * 100).toFixed(1)}%</small></span>`).join('')}</div>`;
-}
-
-// One row per source rather than one stacked bar: the two source hues are too close for
-// some readers to tell apart, and their row names them anyway.
-function dailyPanel(o) {
-  const days = Array.from({ length: o.days }, (_, i) => {
-    const d = new Date(o.first_day + 'T00:00:00Z');
-    d.setUTCDate(d.getUTCDate() + i);
-    return d.toISOString().slice(0, 10);
-  });
-  const get = (day, via) => o.daily.find((r) => r.day === day && r.via === via) || { files: 0, bytes: 0 };
-  const max = Math.max(1, ...o.daily.map((r) => r.files));
-  const sum = (via) => o.daily.filter((r) => r.via === via).reduce((a, r) => ({ files: a.files + r.files, bytes: a.bytes + r.bytes }), { files: 0, bytes: 0 });
-  const row = (via, label, cls) => {
-    const t = sum(via);
-    return `<div class="drow"><span class="dlabel"><b>${label}</b><small title="${t.files.toLocaleString()} files">${fmtCount(t.files)} files · ${fmtSize(t.bytes)}</small></span>
-      <span class="dbars">${days.map((day) => {
-        const r = get(day, via);
-        const h = r.files ? Math.max(2, Math.round((r.files / max) * 40)) : 0;
-        return `<span class="dcol" title="${day} · ${label}: ${r.files.toLocaleString()} files, ${fmtSize(r.bytes)}"><i class="${cls}" style="height:${h}px"></i></span>`;
-      }).join('')}</span></div>`;
-  };
-  return `<div class="panel-head"><h2>Downloaded</h2><span class="muted">last ${o.days} days</span></div>
-    ${row('pawchive', 'Pawchive', 'src-p')}${row('fanbox', 'Fanbox', 'src-f')}
-    <div class="daxis"><span></span><span class="mono">${days[0].slice(5)}</span><span class="mono">today</span></div>`;
-}
-
-const ISSUES = [
-  ['failed', 'bad', 'Failed downloads', 'posts'],
-  ['mismatch', 'bad', 'Files that failed their check', 'posts'],
-  ['stale', 'warn', 'Updated upstream since download', 'posts'],
-  ['unverified', 'mute', 'Adopted, unverified', 'posts'],
-  ['links', 'warn', 'New cloud-storage links', 'posts'],
-  ['unsynced', 'mute', 'Not synced for 30 days', 'creators'],
-];
-
-function issuesPanel(o, creators) {
-  const rows = ISSUES.filter(([k]) => o.issues[k]);
-  return `<div class="panel-head"><h2>Needs a look</h2></div>
-    ${rows.length ? `<div class="issues">${rows.map(([k, dot, label, unit]) => {
-      const it = o.issues[k];
-      const n = unit === 'posts' ? it.posts : it.n;
-      const who = it.creators.map((id) => `<a href="#/c/${encodeURIComponent(id)}">${esc(nameOf(creators, id))}</a>`).join(', ');
-      return `<div class="issue"><span class="state-dot ${dot}"></span><span class="issue-t">${label}<small>${who}${it.n > it.creators.length ? ` and ${it.n - it.creators.length} more` : ''}</small></span><b class="num" title="${n.toLocaleString()}">${fmtCount(n)}</b></div>`;
-    }).join('')}</div>` : '<div class="empty-note">Nothing needs a look.</div>'}`;
-}
-
-function failedPanel(o, creators) {
-  const n = o.issues.failed?.posts || 0;
-  return `<div class="panel-head"><h2>Failed posts</h2><span class="muted">${n ? `${n.toLocaleString()} posts${n > o.failed.length ? `, newest ${o.failed.length} shown` : ''} · retried on the next download` : ''}</span></div>
-    ${o.failed.length ? `<div class="fails">${o.failed.map((f) => `<a class="fail-row" href="#/c/${encodeURIComponent(f.creator_id)}" title="${esc(f.error)}">
-        <span class="mono muted">${esc((f.published || '').slice(0, 10))}</span>
-        <span class="fail-who">${esc(nameOf(creators, f.creator_id))}</span>
-        <span class="fail-t">${esc(f.title)} <small class="mono">${esc(f.post_id)}</small></span>
-        <span class="num" title="${f.files.toLocaleString()} files">${fmtCount(f.files)} file${f.files === 1 ? '' : 's'}</span>
-        <span class="fail-e">${esc(f.error)}</span></a>`).join('')}</div>` : '<div class="empty-note">No failed posts.</div>'}`;
-}
-
-export async function mountHome(el, creators) {
-  const total = creators.reduce((n, c) => n + c.total, 0);
-  const done = creators.reduce((n, c) => n + c.done, 0);
-  const active = creators.filter((c) => !c.ignore);
-  const fetchable = active.reduce((n, c) => n + c.fetchable, 0);
-  const waiting = active.filter((c) => c.fetchable).length;
-  const top = active.filter((c) => c.fetchable).sort((a, b) => b.fetchable - a.fetchable).slice(0, 10);
-  const fanboxes = active.filter((c) => c.service === 'fanbox');
-  const checked = fanboxes.filter((c) => c.f_checked).length;
-  let state = {};
-  let events = [];
-  try { [state, events] = await Promise.all([api('state'), api('events?limit=150')]); } catch { /* shown as unknown */ }
-  const s = state.session || {};
-  // Feed rows are about two thirds the height of ranking rows: show enough of them that the
-  // two side-by-side panels end level.
-  const groups = groupEvents(events).slice(0, Math.max(8, Math.round(top.length * 1.5)));
-  const pct = total ? (done / total) * 100 : 0;
-  const [, sessionLabel, sessionDot] = SESSION[s.state || 'none'] || SESSION.none;
-  // Every tile is label / value / one line, so the row keeps one height and one baseline.
-  const tile = (label, value, sub, cls = '', title = '') => `<div class="tile stat ${cls}" title="${esc(title)}"><span class="h">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`;
-  el.innerHTML = `<div class="view">
-    <div class="view-head"><div><h1>Overview</h1><p class="lede">${creators.length} creators · downloads go to <span class="mono">${esc(state.download_dir || '')}</span></p></div>
-      <div class="row-inline"><a class="btn" href="#/add">${I.plus}Add creator</a><button class="btn" type="button" data-subs>${I.sync}Refresh plans</button><button class="btn primary" type="button" data-dlall ${fetchable ? '' : 'disabled'}>${I.dl}Download all</button></div></div>
-    <div class="stats">
-      ${tile('Posts', total.toLocaleString(), 'Both sources')}
-      ${tile('Done', done.toLocaleString(), `<span class="meter"><i style="width:${pct.toFixed(1)}%"></i></span>${pct.toFixed(1)}%`, 'ok')}
-      ${tile('To download', fetchable.toLocaleString(), `from ${waiting} creators`, 'warn', 'Posts that a source has files for and that are not fully downloaded')}
-      ${tile('Fanbox', `<span class="state-dot ${sessionDot}"></span>${sessionLabel}`, fanboxes.length ? `${checked} of ${fanboxes.length} creators checked` : 'No Fanbox creators', '', 'Saved Fanbox creators are checked in the background, one at a time, every 7 days')}
-      ${tile('Pawchive quota', state.quota?.enabled ? `${(state.quota.remaining / 1024 ** 3).toFixed(1)} GB` : 'None', state.quota?.enabled ? `left · resets in ${esc(state.quota.resets_in)}` : 'No daily quota set')}
-    </div>
-    <div class="home-row" id="overview">
-      ${['Local status', 'Downloaded', 'Needs a look'].map((t) => `<section class="panel"><div class="panel-head"><h2>${t}</h2></div><div class="empty-note">Counting…</div></section>`).join('')}
-    </div>
-    <section class="panel home-wide" id="failed"><div class="panel-head"><h2>Failed posts</h2></div><div class="empty-note">Counting…</div></section>
-    <div class="home-grid">
-      <section class="panel">
-        <div class="panel-head"><h2>Most to download</h2><span class="muted">${waiting ? `${waiting} creators` : ''}</span></div>
-        ${top.length ? `<div class="rank">${top.map((c) => {
-          const p = c.total ? (c.done / c.total) * 100 : 0;
-          return `<a class="rank-row" href="#/c/${encodeURIComponent(c.id)}">
-            <span class="rank-name"><b>${esc(c.alias || c.name)}</b><small>${esc(c.group || 'Ungrouped')}</small></span>
-            <span class="rank-bar" title="${c.done.toLocaleString()} of ${c.total.toLocaleString()} done"><i style="width:${p.toFixed(1)}%"></i></span>
-            <span class="rank-n" title="${c.fetchable.toLocaleString()} posts"><b class="num">${fmtCount(c.fetchable)}</b><small>to get</small></span></a>`;
-        }).join('')}</div>` : '<div class="empty-note">Nothing to download.</div>'}
-      </section>
-      <section class="panel">
-        <div class="panel-head"><h2>Recent activity</h2><a class="linkbtn" href="#/jobs">All logs →</a></div>
-        ${groups.length ? `<div class="feed">${groups.map((g) => `<div class="feed-row" title="${esc(g.latest.message)}">
-            <span class="state-dot ${{ error: 'bad', warning: 'warn' }[g.latest.level] || 'mute'}"></span>
-            <span class="feed-t mono">${esc(localTime(g.latest.at))}</span>
-            <span class="feed-m">${g.latest.creator_id ? `<a href="#/c/${encodeURIComponent(g.latest.creator_id)}">${esc(nameOf(creators, g.latest.creator_id))}</a> · ` : ''}${esc(withoutName(g.text, nameOf(creators, g.latest.creator_id)))}${g.count > 1 ? `<b class="feed-n">×${g.count}</b>` : ''}</span>
-          </div>`).join('')}</div>` : '<div class="empty-note">No activity yet.</div>'}
-      </section>
-    </div>
-  </div>`;
-  // The panels that classify every post arrive after the page, as the server counts them.
-  api('overview').then((o) => {
-    const box = el.querySelector('#overview');
-    if (!box) return;
-    box.innerHTML = [statusPanel(o), dailyPanel(o), issuesPanel(o, creators)].map((h) => `<section class="panel">${h}</section>`).join('');
-    el.querySelector('#failed').innerHTML = failedPanel(o, creators);
-  }).catch(() => {
-    const box = el.querySelector('#overview');
-    if (box) box.innerHTML = '<section class="panel"><div class="empty-note">Could not load the overview.</div></section>';
-  });
-  el.onclick = async (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    if (b.dataset.dlall !== undefined) await attempt(() => api('jobs', { method: 'POST', body: { kind: 'download' } }), (o) => `Queued ${o.jobs.length} downloads`);
-    if (b.dataset.subs !== undefined) await attempt(() => api('jobs', { method: 'POST', body: { kind: 'subscriptions' } }), 'Queued');
+  return {
+    cleanup: () => { observer.disconnect(); offState(); window.removeEventListener('beforeunload', unload); if (T === mine) T = null; },
+    guard: async () => !T || T !== mine || !T.dirty || !!(await dialog({
+      title: 'Leave without saving?',
+      body: `<p>${T.dirty} change${T.dirty === 1 ? '' : 's'} on this page ${T.dirty === 1 ? 'is' : 'are'} not saved and will be lost.</p>`,
+      confirm: 'Discard and leave',
+      danger: true,
+    })),
   };
 }

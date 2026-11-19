@@ -52,10 +52,13 @@ const TASK_FILTERS = {
 const state = {
   view: "library",
   categories: {},
-  library: { page: 1, total: 0, pageSize: 48, items: [], filter: "", signature: "" },
+  library: { page: 1, total: 0, pageSize: [48, 96, 200].includes(Number(store.get("page-size", 48))) ? Number(store.get("page-size", 48)) : 48, items: [], filter: "", edition: "", signature: "" },
   layout: store.get("layout", "grid"),
   selected: new Set(),
-  catalog: { page: 1, pages: 0, items: [], loaded: false },
+  catalog: { page: 1, pages: 0, items: [], loaded: false, hideComplete: store.get("hide-complete", "false") === "true" },
+  // Folded runs of scheduled sweeps the reader opened, by the id of their newest task.
+  openGroups: new Set(),
+  recentFiles: null,
   catalogSelected: new Set(),
   taskFilter: "all",
   jobs: [],
@@ -96,7 +99,7 @@ async function api(url, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 404 && payload.detail === "Not Found" &&
-        (url.startsWith("/api/library/") || url === "/api/storage")) {
+        (url.startsWith("api/library/") || url === "api/storage")) {
       throw new Error("The running server is outdated. Restart it with stop.ps1 and start.ps1, then refresh this page.");
     }
     const detail = Array.isArray(payload.detail) ? payload.detail.map((d) => d.msg).join("; ") : payload.detail;
@@ -151,26 +154,39 @@ async function latestList(name, url, root, feedback = true) {
 let settingsBaseline = "";
 let settingsLoaded = false;
 let settingsSaving = false;
+const fieldValues = () => Object.fromEntries([...$("#settings-form").elements]
+  .filter((input) => input.name).map((input) => [input.name, input.type === "checkbox" ? input.checked : input.value]));
 function settingsSnapshot() {
-  return JSON.stringify([
-    [...$("#settings-form").elements].filter(input => input.name).map(input => [input.name, input.type === "checkbox" ? input.checked : input.value]),
-    state.order,
-  ]);
+  return JSON.stringify([Object.entries(fieldValues()), state.order]);
 }
+// The saved values, to mark each changed field and count the changes.
+let settingsBaseValues = {};
+let settingsBaseOrder = "";
 function updateSettingsFeedback() {
-  const dirty = settingsLoaded && settingsSnapshot() !== settingsBaseline;
-  $("#settings-form").dataset.dirty = dirty;
-  $("#settings-feedback").textContent = settingsSaving ? "Saving changes…" : dirty ? "Unsaved changes" : "All changes saved";
+  const form = $("#settings-form");
+  const values = fieldValues();
+  const changed = settingsLoaded ? Object.keys(values).filter((name) => values[name] !== settingsBaseValues[name]) : [];
+  const orderChanged = settingsLoaded && JSON.stringify(state.order) !== settingsBaseOrder;
+  const n = changed.length + (orderChanged ? 1 : 0);
+  const dirty = n > 0;
+  form.dataset.dirty = dirty;
+  $$(".row.dirty", form).forEach((row) => row.classList.remove("dirty"));
+  for (const name of changed) form.elements.namedItem(name)?.closest(".row")?.classList.add("dirty");
+  // A change inside a folded part keeps it unfolded, so nothing changed is out of sight.
+  $$("details.advanced", form).forEach((d) => { if (d.querySelector(".row.dirty")) d.open = true; });
+  $("#settings-feedback").textContent = settingsSaving ? "Saving changes…" : dirty ? `${plural(n, "unsaved change")}` : "All changes saved";
   $("#save-settings").disabled = !dirty || settingsSaving;
   $("#discard-settings").disabled = !dirty || settingsSaving;
-  const form = $("#settings-form");
+  let preset = "";
   $$("[data-preset]").forEach((button) => {
     const matches = Object.entries(PACING_PRESETS[button.dataset.preset]).every(([name, value]) => {
       const input = form.elements.namedItem(name);
       return input.type === "checkbox" ? input.checked === value : Number(input.value) === value;
     });
     button.setAttribute("aria-pressed", matches);
+    if (matches) preset = button.textContent;
   });
+  $("#pacing-note").textContent = preset ? `${preset} preset` : "Custom";
 }
 
 // The page CSP forbids inline style attributes, so widths are applied through the CSSOM.
@@ -207,17 +223,27 @@ function collectionName(work) {
 
 /* Library */
 
+// Where a work stands: every listed volume saved, some, or none (metadata only). Each says
+// it once: a complete work needs no bar, an unsaved one no "0 / 14".
+function completeness(w) {
+  if (!w.file_count) return { kind: "meta", text: `${plural(w.volume_count, "volume")} · not downloaded` };
+  if (w.volume_count && w.file_count >= w.volume_count) return { kind: "done", text: `✓ ${plural(w.volume_count, "volume")}` };
+  return { kind: "part", text: `${w.file_count} / ${w.volume_count} saved` };
+}
+
 function libraryCard(w) {
   const picked = state.selected.has(w.key);
   const [title, other] = titles(w.title, w.title_zh);
-  return `<article class="book${picked ? " picked" : ""}">
+  const c = completeness(w);
+  // The bar keeps its line whether shown or not, so every card is the same height.
+  return `<article class="book ${c.kind}${picked ? " picked" : ""}">
     <label class="pick"><input type="checkbox" data-key="${esc(w.key)}" aria-label="Select ${esc(title)}" ${picked ? "checked" : ""}></label>
     <button class="book-open" data-work="${esc(w.key)}">
       ${cover(w.cover, title)}
       <h3 title="${esc([title, other].filter(Boolean).join("\n"))}">${esc(title)}</h3>
       <p class="by">${esc(w.authors.join(", ") || other || w.key)}</p>
-      <span class="meter" aria-hidden="true"><span data-w="${pct(w.file_count, w.volume_count)}"></span></span>
-      <span class="count"><span>${w.file_count} / ${w.volume_count} saved</span><span class="ribbon-inline">${editionBadges(w)}</span></span>
+      <span class="meter${c.kind === "part" ? "" : " blank"}" aria-hidden="true"><span data-w="${pct(w.file_count, w.volume_count)}"></span></span>
+      <span class="count"><span class="state-${c.kind}">${c.text}</span><span class="ribbon-inline">${editionBadges(w)}</span></span>
     </button>
   </article>`;
 }
@@ -226,15 +252,41 @@ function libraryRow(w) {
   const picked = state.selected.has(w.key);
   const src = safeImage(w.cover);
   const [title, other] = titles(w.title, w.title_zh);
-  return `<tr>
+  const c = completeness(w);
+  return `<tr class="${c.kind}">
     <td><input type="checkbox" data-key="${esc(w.key)}" aria-label="Select ${esc(title)}" ${picked ? "checked" : ""}></td>
     <td><div class="row-work">${src ? `<img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="thumb"></span>'}
       <div><button data-work="${esc(w.key)}">${esc(title)}</button><small>${esc(w.authors.join(", ") || other || w.key)}</small></div></div></td>
     <td>${esc(collectionName(w))}</td>
-    <td class="num">${w.file_count} / ${w.volume_count}</td>
+    <td class="num state-${c.kind}">${c.text}</td>
     <td><span class="ribbon-inline">${editionBadges(w) || '<span class="pill">None</span>'}</span></td>
     <td class="num">${esc(day(w.checked_at))}</td>
   </tr>`;
+}
+
+// Placeholder covers the size of real ones, so the grid does not jump when the first page
+// arrives.
+function skeletonBooks(n) {
+  return `<div class="books" aria-busy="true" aria-label="Loading">${Array.from({ length: n }, () =>
+    '<article class="book sk"><div class="cover-frame"></div><span class="sk-line"></span><span class="sk-line short"></span><span class="sk-line thin"></span></article>').join("")}</div>`;
+}
+
+// A pager for a list: ‹ [page] / pages ›, drawn into every slot named for it (one above
+// the list, one below), so both always agree.
+function renderPager(name, page, pages) {
+  for (const slot of $$(`.pager-ctl[data-pager="${name}"]`)) {
+    if (!slot.firstChild) {
+      slot.innerHTML = `<button type="button" data-action="${name}-prev" aria-label="Previous page" title="Previous page ([)">‹</button>
+        <label class="page-jump"><input type="number" min="1" data-page-input="${name}" aria-label="Page"><span class="of"></span></label>
+        <button type="button" data-action="${name}-next" aria-label="Next page" title="Next page (])">›</button>`;
+    }
+    const input = $("input", slot);
+    if (document.activeElement !== input) input.value = page;
+    input.max = Math.max(1, pages);
+    $(".of", slot).textContent = `/ ${Math.max(1, pages).toLocaleString()}`;
+    $(`[data-action="${name}-prev"]`, slot).disabled = page <= 1;
+    $(`[data-action="${name}-next"]`, slot).disabled = page >= pages;
+  }
 }
 
 async function loadLibrary(force = false) {
@@ -245,9 +297,10 @@ async function loadLibrary(force = false) {
     query: $("#library-query").value.trim(),
     sort: $("#library-sort").value === "title" && state.titleLang === "zh" ? "title_zh" : $("#library-sort").value,
     state: lib.filter,
+    edition: lib.edition,
   });
   if ($("#library-category").value) params.set("category", $("#library-category").value);
-  const result = await latestList("library", "/api/works?" + params, $("#library-list"), force);
+  const result = await latestList("library", "api/works?" + params, $("#library-list"), force);
   if (!result) return;
   const signature = JSON.stringify([result, [...state.selected], state.layout, state.titleLang]);
   if (!force && signature === lib.signature) return;
@@ -259,18 +312,19 @@ async function loadLibrary(force = false) {
     lib.page = pages;
     return loadLibrary(force);
   }
-  $("#library-total").textContent = plural(result.total, "work");
-  $("#library-page").textContent = `Page ${lib.page} of ${pages}`;
-  $('[data-action="library-prev"]').disabled = lib.page <= 1;
-  $('[data-action="library-next"]').disabled = lib.page >= pages;
+  const filtered = Boolean(lib.filter || lib.edition || params.get("query") || params.get("category"));
+  $("#library-total").textContent = `${plural(result.total, "work")} · page ${lib.page.toLocaleString()} of ${pages.toLocaleString()}`;
+  $("#library-shown").textContent = filtered ? `${plural(result.total, "work")} match` : "";
+  $("#library-clear").hidden = !filtered;
+  renderPager("library", lib.page, pages);
+  $("#library-size").value = String(lib.pageSize);
   $$("[data-layout]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.layout === state.layout));
 
   const list = $("#library-list");
   if (!result.items.length) {
-    const filtered = lib.filter || params.get("query") || params.get("category");
     list.innerHTML = filtered
-      ? `<div class="empty"><h3>No works match</h3><p>Clear the search or choose another filter.</p></div>`
-      : `<div class="empty"><h3>Your shelf is empty</h3><p>Download a page of the light novel catalog, or add a work by its Novelia URL.</p><button class="primary" data-action="open-crawl">New download</button></div>`;
+      ? emptyState({ mark: "∅", title: "No works match", hint: "Nothing in your library passes the search and filters.", action: '<button data-action="clear-library-filters">Clear filters</button>' })
+      : emptyState({ mark: "📚", title: "Your shelf is empty", hint: "Download a page of the light novel catalog, or add a work by its Novelia URL.", action: '<button class="primary" data-action="open-crawl">New download</button>' });
   } else if (state.layout === "list") {
     const all = result.items.every((w) => state.selected.has(w.key));
     list.innerHTML = `<div class="table-wrap"><table><thead><tr>
@@ -283,6 +337,29 @@ async function loadLibrary(force = false) {
   applyWidths(list);
   if (force) UI.reveal(list);
   selectionBar();
+}
+
+// Nothing to show: a mark, a line, a hint and what to do, centred in the room there is.
+function emptyState({ mark, title, hint, action = "" }) {
+  return `<div class="empty"><span class="empty-mark" aria-hidden="true">${mark}</span><h3>${esc(title)}</h3><p>${hint}</p>${action}</div>`;
+}
+
+// "New volumes": works with volumes first saved in the last week, one row of small covers.
+async function loadRecent() {
+  const box = $("#new-volumes");
+  let result;
+  try { result = await api("api/recent?days=7&limit=24"); } catch { return; }
+  box.hidden = !result.items.length;
+  if (!result.items.length) return;
+  $("#new-volumes-sum").textContent = `${plural(result.volumes, "volume")} in ${plural(result.works, "work")} · last ${result.days} days`;
+  $("#new-volumes-list").innerHTML = result.items.map((w) => {
+    const [title] = titles(w.title, w.title_zh);
+    return `<button class="nv" data-work="${esc(w.key)}" title="${esc(title)}">
+      ${cover(w.cover, title).replace("</div>", `<span class="corner done" title="${plural(w.new_files, "new volume")}">+${w.new_files}</span></div>`)}
+      <span class="nv-t">${esc(title)}</span>
+      <span class="nv-d">${esc(new Date(w.last_file_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</span>
+    </button>`;
+  }).join("");
 }
 
 // The pager sits below the grid, so a new page starts from the top of the grid.
@@ -311,28 +388,35 @@ function selectionBar() {
 
 const catalogKey = (w) => `wenku/${String(w.id).toLowerCase()}`;
 
+const complete = (w) => w.local && w.local.volume_count && w.local.file_count >= w.local.volume_count;
+
 function catalogCard(w) {
   const key = catalogKey(w);
   const picked = state.catalogSelected.has(key);
-  const local = w.local
-    ? `<span class="pill ${w.local.file_count >= w.local.volume_count && w.local.volume_count ? "ok" : ""}">In library ${w.local.file_count}/${w.local.volume_count}</span>`
-    : "";
+  // What you already have sits on the cover's corner, readable while scanning the grid.
+  const corner = !w.local ? ""
+    : complete(w) ? '<span class="corner done" title="Every volume is in your library">✓</span>'
+    : `<span class="corner part" title="In your library: ${w.local.file_count} of ${w.local.volume_count} volumes">${w.local.file_count}/${w.local.volume_count}</span>`;
   const [title, other] = titles(w.title, w.titleZh);
-  return `<article class="book${picked ? " picked" : ""}">
+  return `<article class="book${picked ? " picked" : ""}${complete(w) ? " have" : ""}">
     <label class="pick"><input type="checkbox" data-catalog-key="${esc(key)}" aria-label="Select ${esc(title)}" ${picked ? "checked" : ""}></label>
     <button class="book-open" data-work="${esc(key)}" data-live="true">
-      ${cover(w.cover, title)}
+      ${cover(w.cover, title).replace("</div>", `${corner}</div>`)}
       <h3 title="${esc(title)}">${esc(title)}</h3>
       <p class="by" title="${esc(other)}">${esc(other)}</p>
     </button>
-    <span class="count">${local || "<span></span>"}<a href="${SITE}/wenku/${esc(w.id)}" target="_blank" rel="noopener">Novelia ↗</a></span>
+    <span class="count"><span></span><a href="${SITE}/wenku/${esc(w.id)}" target="_blank" rel="noopener">Novelia ↗</a></span>
   </article>`;
 }
 
 function renderCatalog() {
-  $("#catalog-list").innerHTML = state.catalog.items.length
-    ? `<div class="books">${state.catalog.items.map(catalogCard).join("")}</div>`
-    : '<div class="empty"><h3>No matching works</h3><p>Try another keyword or category.</p></div>';
+  const cat = state.catalog;
+  const shown = cat.hideComplete ? cat.items.filter((w) => !complete(w)) : cat.items;
+  $("#catalog-list").innerHTML = shown.length
+    ? `<div class="books">${shown.map(catalogCard).join("")}</div>`
+    : cat.items.length
+      ? emptyState({ mark: "✓", title: `All ${cat.items.length} works on this page are complete`, hint: "Every volume of each is already in your library.", action: cat.page < cat.pages ? '<button data-action="catalog-next">Next page</button>' : "" })
+      : emptyState({ mark: "∅", title: "No matching works", hint: "Try another keyword or category." });
 }
 
 async function loadCatalog() {
@@ -340,21 +424,18 @@ async function loadCatalog() {
   $("#catalog-caption").textContent = "Loading the live catalog…";
   const params = new URLSearchParams({ page: cat.page, category: $("#catalog-category").value, query: $("#catalog-query").value.trim() });
   try {
-    const result = await latestList("catalog", "/api/catalog?" + params, $("#catalog-list"));
+    const result = await latestList("catalog", "api/catalog?" + params, $("#catalog-list"));
     if (!result) return;
     cat.loaded = true;
     cat.pages = result.pageNumber;
     cat.items = result.items;
     const owned = result.items.filter((w) => w.local).length;
+    const done = result.items.filter(complete).length;
     $("#catalog-caption").textContent = result.items.length
-      ? `${plural(result.items.length, "work")} on this page, ${owned} already in your library. Click a cover for its volumes and editions; tick its box or Ctrl-click to select, Shift-click to select a run.`
+      ? `${plural(result.items.length, "work")} on this page; ${owned} in your library, ${done} complete. Click a cover for its volumes; tick it or Ctrl-click to select, Shift-click for a run.`
       : "";
-    $("#catalog-page").value = cat.page;
-    $("#catalog-page").max = Math.max(1, cat.pages);
-    $("#catalog-pages").textContent = `of ${Math.max(1, cat.pages).toLocaleString()}`;
+    renderPager("catalog", cat.page, cat.pages);
     $("#catalog-total").textContent = `${plural(cat.pages, "page")} at ${result.items.length || "—"} per page`;
-    $('[data-action="catalog-prev"]').disabled = cat.page <= 1;
-    $('[data-action="catalog-next"]').disabled = cat.page >= cat.pages;
     renderCatalog();
     UI.reveal($("#catalog-list"));
     selectionBar();
@@ -409,14 +490,23 @@ function taskActions(j) {
   return remove;
 }
 
+// What a task's items are, so its progress says what was done rather than "n of n done".
+const itemWord = (j) => (j.kind === "convert" ? ["volume", "converted"] : ["work", "checked"]);
+
+function taskProgress(j) {
+  const discovering = !j.listing_done && ["full", "range", "incremental"].includes(j.kind) && j.status === "running";
+  if (discovering) return `Reading catalog page ${j.cursor}${j.page_count ? ` of ${j.page_count}` : ""}`;
+  if (!j.total) return ["running", "queued"].includes(j.status) ? "Waiting to start" : "Nothing to do";
+  const [noun, verb] = itemWord(j);
+  const finished = !["running", "queued"].includes(j.status);
+  const head = finished && j.done === j.total ? `${plural(j.done, noun)} ${verb}` : `${j.done.toLocaleString()} of ${plural(j.total, noun)} ${verb}`;
+  return head + (j.failed ? `, ${j.failed.toLocaleString()} failed` : "");
+}
+
 function taskCard(j) {
   const status = jobStatus(j);
   const [, tone] = STATUSES[status] || ["", ""];
-  const discovering = !j.listing_done && ["full", "range", "incremental"].includes(j.kind) && j.status === "running";
-  const progress = discovering
-    ? `Reading catalog page ${j.cursor}${j.page_count ? ` of ${j.page_count}` : ""}`
-    : j.total ? `${j.done} of ${j.total} done${j.failed ? `, ${j.failed} failed` : ""}`
-      : ["running", "queued"].includes(j.status) ? "Waiting to start" : "No items processed";
+  const progress = taskProgress(j);
   const note = taskNote(j);
   return `<article class="task" data-job-id="${j.id}" data-tone="${tone}">
     <div>
@@ -433,31 +523,64 @@ function taskCard(j) {
   </article>`;
 }
 
+// A scheduled update sweep that finished cleanly: the routine kind, folded with its
+// neighbours so the tasks that need reading are not lost among them.
+const routine = (j) => j.kind === "incremental" && j.scheduled && j.status === "completed" && !j.failed;
+
+function sweepGroup(run) {
+  const key = String(run[0].id);
+  const ids = run.map((j) => j.id).join(",");
+  const checked = run.reduce((n, j) => n + (j.done || 0), 0);
+  const range = [run[run.length - 1], run[0]].map((j) => day(j.finished_at || j.created_at));
+  return `<details class="task-group" data-group="${key}" ${state.openGroups.has(key) ? "open" : ""}>
+    <summary class="task-group-head">
+      <span class="tg-caret" aria-hidden="true">›</span>
+      <span class="tg-t"><strong>${plural(run.length, "scheduled sweep")}</strong> <span class="pill ok">Completed</span></span>
+      <span class="tg-m">${range[0] === range[1] ? range[0] : `${range[0]} – ${range[1]}`} · ${plural(checked, "work")} checked</span>
+      <button type="button" class="ghost" data-clear-group="${ids}" title="Remove these tasks from the list">Clear</button>
+    </summary>
+    ${run.map(taskCard).join("")}
+  </details>`;
+}
+
 function renderTasks() {
   // Countdowns change without new data, so waiting tasks re-render every refresh.
   const ticking = state.jobs.some((j) => jobStatus(j) === "paused" || waiting(j));
-  const signature = JSON.stringify([state.jobs, state.taskFilter, state.cancelArmed, ticking && Date.now()]);
+  const signature = JSON.stringify([state.jobs, state.taskFilter, state.cancelArmed, [...state.openGroups], ticking && Date.now()]);
   if (state.taskSignature === signature) return;
   state.taskSignature = signature;
+  for (const button of $$("#task-chips [data-task-filter]")) {
+    $(".chip-n", button).textContent = state.jobs.filter(TASK_FILTERS[button.dataset.taskFilter]).length || "";
+  }
+  // Running and waiting tasks first: they are what the page is for while they last.
+  const active = (j) => ["queued", "running"].includes(j.status);
   const jobs = state.jobs.filter(TASK_FILTERS[state.taskFilter]);
+  const ordered = [...jobs.filter(active), ...jobs.filter((j) => !active(j))];
+  const parts = [];
+  for (let i = 0; i < ordered.length;) {
+    let k = i;
+    while (k < ordered.length && routine(ordered[k])) k++;
+    if (k - i >= 2) { parts.push(sweepGroup(ordered.slice(i, k))); i = k; }
+    else { parts.push(taskCard(ordered[i])); i++; }
+  }
   $("#task-list").innerHTML = jobs.length
-    ? jobs.map(taskCard).join("")
+    ? parts.join("")
     : state.jobs.length
-      ? '<div class="empty"><h3>Nothing here</h3><p>No tasks match this filter.</p></div>'
-      : '<div class="empty"><h3>No tasks yet</h3><p>Start a download to collect volumes or index the catalog.</p><button class="primary" data-action="open-crawl">New download</button></div>';
+      ? emptyState({ mark: "∅", title: "Nothing here", hint: "No task matches this filter." })
+      : emptyState({ mark: "⇣", title: "No tasks yet", hint: "Start a download to collect volumes or index the catalog.", action: '<button class="primary" data-action="open-crawl">New download</button>' });
   applyWidths($("#task-list"));
   $('[data-action="clear-tasks"]').disabled = !state.jobs.some((j) => j.status === "completed");
 }
 
 async function loadTasks() {
-  const jobs = await latestList("tasks", "/api/jobs", $("#task-list"));
+  const jobs = await latestList("tasks", "api/jobs", $("#task-list"));
   if (!jobs) return;
   state.jobs = jobs;
   renderTasks();
 }
 
 async function queue(request, { go = true } = {}) {
-  const job = await api("/api/jobs", { method: "POST", body: JSON.stringify(request) });
+  const job = await api("api/jobs", { method: "POST", body: JSON.stringify(request) });
   toast(`Task #${job.id} started.`);
   if (go) await switchView("tasks");
   await loadStatus();
@@ -515,7 +638,7 @@ const logArea = () => $("#log-dialog");
 const atLogBottom = () => logArea().scrollHeight - logArea().scrollTop - logArea().clientHeight < 80;
 
 function logUrl(params) {
-  return `/api/jobs/${state.log.id}?${new URLSearchParams({ ...params, problems: state.log.problems })}`;
+  return `api/jobs/${state.log.id}?${new URLSearchParams({ ...params, problems: state.log.problems })}`;
 }
 
 async function openLog(id, problems = false) {
@@ -665,68 +788,64 @@ const conversions = (f) => [["ja", "Japanese (converted)"], ["zh", "Chinese (con
 const forgettable = (f) => !f.raw_available && conversions(f).every(([v]) => !f[`${v}_available`]);
 const goneCount = (files) => files.reduce((n, f) => n + forgettable(f) + conversions(f).filter(([v]) => !f[`${v}_available`]).length, 0);
 
-// A saved file opens on click, with a copy through the browser beside it. One
-// deleted from disk stays recorded as downloaded; clicking it asks what to do.
-function fileChip(f, variant, label, present, context) {
+// A saved file opens on click, with a copy through the browser beside it. One deleted from
+// disk stays recorded as downloaded; clicking it asks what to do.
+function savedChip(f, variant, label, present, context, converted = false) {
   const keep = variant === "raw" && !forgettable(f);
   const open = `data-open="${f.id}" data-variant="${variant}" data-label="${esc(label)}" data-pinned="${f.pinned ? "true" : ""}" data-keep="${keep ? "true" : ""}" ${context}`;
-  if (!present) return `<button class="edition warn" ${open} title="Recorded as downloaded, but no longer on disk">${esc(label)} · not on disk</button>`;
-  return `<span class="edition ok"><button ${open} title="Open">${esc(label)}</button><a href="/api/files/${f.id}/${variant}" download title="Save a copy" aria-label="Save a copy of ${esc(label)}">↓</a></span>`;
+  if (!present) return `<button class="edition warn" ${open} title="${esc(label)}: recorded as downloaded, but no longer on disk">Not on disk</button>`;
+  const size = variant === "raw" && f.size ? `<small class="cell-size">${(f.size / 1048576).toFixed(1)} MB</small>` : "";
+  return `<span class="edition ok"><button ${open} title="Open ${esc(label)}">Open${converted ? " · converted" : ""}</button><a href="api/files/${f.id}/${variant}" download title="Save a copy" aria-label="Save a copy of ${esc(label)}">⤓</a></span>${size}`;
 }
 
-// Every edition Novelia offers for the volume, numbered in the strategy's order: saved ones
-// open, the others download on click.
-function volumeEditions(w, volume, files) {
-  const { strategy } = w;
+// One cell of the volume table: what this edition of this volume is. Saved (open it),
+// converted from the bilingual file, missing from disk, unavailable on Novelia, not
+// translated yet, or there to download -- every case one control in the same place.
+function editionCell(w, volume, files, edition) {
+  const context = `data-key="${esc(w.key)}" data-index="${volume.index}" data-edition="${volume.chinese_only ? "" : edition}" data-volume="${esc(volumeName(volume))}"`;
+  if (volume.chinese_only && edition !== "chinese") return '<td class="cell na"><span class="dash" title="Uploaded only in Chinese">—</span></td>';
+  const modes = volume.chinese_only ? ["zh-original"] : EDITION_MODES[edition];
+  const label = volume.chinese_only ? "Chinese upload" : EDITIONS[edition];
+  // A conversion lives in the column of its language: a Japanese edition built from the
+  // bilingual file is the Japanese edition of the volume.
+  const lang = { japanese: "ja", chinese: "zh" }[edition];
+  const chips = [
+    ...files.filter((f) => modes.includes(f.mode)).map((f) => savedChip(f, "raw", MODE_LABELS[f.mode], f.raw_available, context)),
+    ...(lang ? files.filter((f) => convertible(f) && conversions(f).some(([v]) => v === lang))
+      .map((f) => savedChip(f, lang, `${EDITIONS[edition]} (converted)`, f[`${lang}_available`], context, true)) : []),
+  ];
+  if (chips.length) return `<td class="cell saved">${chips.join("")}</td>`;
+  if (!volume.index) return '<td class="cell na"><span class="dash">—</span></td>';
+  const error = modes.map((m) => volume.unavailable?.[m]).find(Boolean);
+  if (error) {
+    return `<td class="cell"><button class="edition warn" data-get="${volume.chinese_only ? "" : edition}" data-force="true" ${context} title="${esc(error)} Click to try again.">Unavailable · retry</button></td>`;
+  }
   const t = volume.translated || {};
-  const untranslated = t.total && !strategy.translations.some((e) => t[e]);
-  const context = (edition) => `data-key="${esc(w.key)}" data-index="${volume.index}" data-edition="${edition}" data-volume="${esc(volumeName(volume))}"`;
-  const editions = volume.chinese_only
-    ? [["", ["zh-original"], "Chinese upload"]]
-    : editionOrder(strategy).map((e) => [e, EDITION_MODES[e], EDITIONS[e]]);
-  const slots = editions.map(([edition, modes, label]) => {
-    const rank = strategy.editions.indexOf(edition) + 1;
-    const records = files.filter((f) => modes.includes(f.mode));
-    let chips = records.flatMap((f) => [
-      fileChip(f, "raw", MODE_LABELS[f.mode], f.raw_available, context(edition)),
-      ...conversions(f).map(([variant, name]) => fileChip(f, variant, name, f[`${variant}_available`], context(edition))),
-    ]).join("");
-    const error = modes.map((m) => volume.unavailable?.[m]).find(Boolean);
-    if (!chips && volume.index) {
-      const note = !volume.chinese_only && edition !== "japanese" && untranslated ? " · not translated yet" : "";
-      chips = error
-        ? `<button class="edition warn" data-get="${edition}" data-force="true" ${context(edition)} title="${esc(error)} Click to try again.">${esc(label)} · unavailable</button>`
-        : `<button class="edition idle" data-get="${edition}" ${context(edition)} title="Download this edition${rank ? "" : " (not in your download strategy)"}">↓ ${esc(label)}${note}</button>`;
-    }
-    if (!chips) return "";
-    return `<span class="edition-slot${rank || volume.chinese_only ? "" : " extra"}">${rank ? `<span class="rank" title="Choice ${rank} of your download strategy">${rank}</span>` : ""}${chips}</span>`;
-  });
-  return slots.join("");
+  const untranslated = edition !== "japanese" && !volume.chinese_only && t.total && !w.strategy.translations.some((e) => t[e]);
+  const outside = !volume.chinese_only && !w.strategy.editions.includes(edition);
+  return `<td class="cell"><button class="edition idle" data-get="${volume.chinese_only ? "" : edition}" ${context} title="Download only the ${esc(label)} edition of this volume${outside ? " (not in your download strategy)" : ""}">↓ Get</button>${untranslated ? '<small class="cell-note">not translated yet</small>' : ""}</td>`;
 }
 
-function volumeRow(w, volume, files) {
-  const t = volume.translated;
-  const coverage = t.total ? ENGINES.filter((e) => t[e]).map((e) => `${e} ${t[e]}/${t.total}`).join(", ") : "";
+function volumeRow(w, volume, files, columns) {
+  const t = volume.translated || {};
+  const coverage = t.total ? ENGINES.filter((e) => t[e]).map((e) => `${e} ${t[e]}/${t.total}`).join(" · ") : "";
   const download = volume.index && !files.length
-    ? `<button data-get="" data-key="${esc(w.key)}" data-index="${volume.index}" title="Download the editions your strategy picks">Download</button>`
+    ? `<button class="small" data-get="" data-key="${esc(w.key)}" data-index="${volume.index}" title="Download the editions your strategy picks">Download</button>`
     : "";
   const actions = files
     .filter((f) => convertible(f) && f.raw_available)
-    .map((f) => `<button data-convert-file="${f.id}">${f.ja_available || f.zh_available ? "Reconvert" : "Convert"}</button>`)
+    .map((f) => `<button class="small" data-convert-file="${f.id}">${f.ja_available || f.zh_available ? "Reconvert" : "Convert"}</button>`)
     .join("") + download;
-  const sizes = files.map((f) => `${(f.size / 1048576).toFixed(1)} MB`).join(" + ");
-  return `<div class="volume">
-    <div>
-      <div class="name">${volume.index ? `<span class="muted">${volume.index}.</span> ` : ""}${esc(volumeName(volume))}</div>
-      <div class="editions">${volumeEditions(w, volume, files)}</div>
-      <div class="detail">${coverage ? `<span>${esc(coverage)}</span>` : ""}${sizes ? `<span>${sizes}</span>` : ""}${volume.index ? "" : "<span>No longer listed on Novelia</span>"}</div>
-    </div>
-    <div class="volume-actions">${actions}</div>
-  </div>`;
+  return `<tr class="${files.length ? "" : "unsaved"}">
+    <td class="v-num">${volume.index || "—"}</td>
+    <td class="v-name"><span class="name" title="${esc(volumeName(volume))}">${esc(volumeName(volume))}</span><small>${esc(coverage)}${volume.index ? "" : "No longer listed on Novelia"}</small></td>
+    ${columns.map((edition) => editionCell(w, volume, files, edition)).join("")}
+    <td class="v-act">${actions}</td>
+  </tr>`;
 }
 
 async function openWork(key, show = true, live = state.detail?.key === key && state.detail.live) {
-  const w = await latestList("detail", `/api/works/${key}${live ? "?live=true" : ""}`, $("#work-detail"));
+  const w = await latestList("detail", `api/works/${key}${live ? "?live=true" : ""}`, $("#work-detail"));
   if (!w) return;
   state.detail = { key, live, strategy: w.strategy.editions };
   const m = w.metadata;
@@ -746,30 +865,48 @@ async function openWork(key, show = true, live = state.detail?.key === key && st
   const saved = new Set(w.files.map((f) => f.volume_id));
   const gone = goneCount(w.files);
   const strategy = w.strategy.editions.map((e) => EDITIONS[e]).join(" → ");
+  const columns = editionOrder(w.strategy);
+  const missingVolumes = w.volumes.filter((v) => !saved.has(v.volume_id)).length;
   const [title, other] = titles(w.title, w.title_zh);
+  // A refresh while the sheet is open keeps the reader's place in the table.
+  const sheet = $("#work-dialog");
+  const top = sheet.scrollTop;
   $("#work-detail").innerHTML = `
-    <div class="work-summary">
-      ${cover(w.cover, title)}
-      <div class="work-info">
-        <h2>${esc(title)}</h2>
-        ${other ? `<p class="alt">${esc(other)}</p>` : ""}
-      </div>
-      <dl class="work-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
-      <div class="work-actions">
+    <div class="work-layout">
+      <aside class="work-side">
+        ${cover(w.cover, title)}
+        <div class="work-info">
+          <h2>${esc(title)}</h2>
+          ${other ? `<p class="alt">${esc(other)}</p>` : ""}
+        </div>
+        <dl class="work-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+        <div class="work-actions">
           <button class="primary" data-download-work="${esc(w.key)}">${w.local ? "Check and download" : "Add and download"}</button>
           ${w.folders.map((f) => `<button class="folder-button" data-folder="${esc(f.path)}" data-key="${esc(w.key)}" title="${esc(f.path)}">${FOLDER_ICON}${w.folders.length > 1 ? esc(f.name) : "Open folder"}</button>`).join("")}
           ${bilingual ? `<button data-convert-work="${esc(w.key)}">Convert all volumes</button>` : ""}
-          ${w.local ? `<button class="danger" data-remove-work="${esc(w.key)}">Remove from library</button>` : ""}
-          <a class="button-link" href="${esc(workUrl(w.key))}" target="_blank" rel="noopener">Novelia ↗</a>
-      </div>
-    </div>
-    ${w.local ? "" : '<p class="note-text live-note">Not in your library yet. Read live from Novelia; downloading adds it.</p>'}
-    ${intro ? `<section class="introduction"><div id="intro-wrap" class="intro-wrap"><p class="intro" id="intro">${esc(intro)}</p></div><button class="link intro-toggle" id="intro-toggle" aria-expanded="false" aria-controls="intro-wrap">Read more</button></section>` : ""}
-    <section class="volumes">
-      <h3>${[plural(w.volumes.length, "volume"), `${saved.size} saved`].join(", ")}${gone ? `, <button class="link" data-missing-work="${esc(w.key)}">${plural(gone, "file")} not on disk</button>` : ""}</h3>
-      <p class="hint volumes-hint">Editions in your download order (${esc(strategy)}, ${w.strategy.per_volume === 1 ? "first available kept" : `first ${w.strategy.per_volume} available kept`}). Click a saved one to open it, ↓ to save a copy; click any other to download just that edition.</p>
-      ${volumes.length ? volumes.map((v) => volumeRow(w, v, w.files.filter((f) => f.volume_id === v.volume_id))).join("") : '<p class="hint">Novelia lists no uploaded volumes for this work.</p>'}
-    </section>`;
+          <a class="button-link" href="${esc(workUrl(w.key))}" target="_blank" rel="noopener">Open on Novelia ↗</a>
+          ${w.local ? `<button class="danger quiet-danger" data-remove-work="${esc(w.key)}">Remove from library</button>` : ""}
+        </div>
+        ${intro ? `<section class="introduction"><div id="intro-wrap" class="intro-wrap"><p class="intro" id="intro">${esc(intro)}</p></div><button class="link intro-toggle" id="intro-toggle" aria-expanded="false" aria-controls="intro-wrap">Read more</button></section>` : ""}
+      </aside>
+      <section class="work-main volumes">
+        ${w.local ? "" : '<p class="note-text live-note">Not in your library yet. Read live from Novelia; downloading adds it.</p>'}
+        <header class="vol-head">
+          <h3>${plural(w.volumes.length, "volume")} · ${saved.size} saved${gone ? ` · <button class="link" data-missing-work="${esc(w.key)}">${plural(gone, "file")} not on disk</button>` : ""}</h3>
+          ${missingVolumes && w.local ? `<button class="small" data-download-work="${esc(w.key)}" title="Download every volume not saved yet, as your strategy says">Download ${missingVolumes} missing</button>` : ""}
+        </header>
+        <p class="hint vol-legend">Columns in your download order (${esc(strategy)}; ${w.strategy.per_volume === 1 ? "keeps the first available" : `keeps the first ${w.strategy.per_volume} available`}). <span class="lg ok">Open</span> a saved edition, <span class="lg">⤓</span> saves a copy, <span class="lg idle">↓ Get</span> fetches just that edition.</p>
+        ${volumes.length
+          ? `<div class="vol-table-wrap"><table class="vol-table">
+            <thead><tr><th class="v-num">#</th><th>Volume</th>${columns.map((e) => {
+              const rank = w.strategy.editions.indexOf(e) + 1;
+              return `<th class="cell${rank ? "" : " extra"}" title="${rank ? `Choice ${rank} of your download strategy` : "Not in your download strategy"}">${rank ? `<span class="rank">${rank}</span>` : ""}${EDITIONS[e]}</th>`;
+            }).join("")}<th class="v-act"></th></tr></thead>
+            <tbody>${volumes.map((v) => volumeRow(w, v, w.files.filter((f) => f.volume_id === v.volume_id), columns)).join("")}</tbody>
+          </table></div>`
+          : emptyState({ mark: "∅", title: "No volumes", hint: "Novelia lists no uploaded volumes for this work." })}
+      </section>
+    </div>`;
   const introElement = $("#intro");
   if (introElement) {
     state.introFull = intro;
@@ -777,18 +914,25 @@ async function openWork(key, show = true, live = state.detail?.key === key && st
     introElement.textContent = state.introShort;
     $("#intro-toggle").hidden = intro.length <= 240;
   }
-  if (show) UI.openDialog($("#work-dialog"));
+  if (show) { sheet.scrollTop = 0; UI.openDialog(sheet); }
+  else sheet.scrollTop = top;
 }
+
 
 /* Status and settings */
 
 async function loadStatus() {
-  const s = await api("/api/status");
+  const s = await api("api/status");
   state.categories = s.categories;
   $("#stat-works").textContent = s.works.toLocaleString();
   $("#stat-files").textContent = s.files.toLocaleString();
   $("#stat-ja").textContent = s.converted.toLocaleString();
   $("#stat-size").textContent = size(s.bytes);
+  // The strip of new volumes is read again only when a volume was saved or removed.
+  if (state.recentFiles !== s.files) {
+    state.recentFiles = s.files;
+    state.recentLoad = loadRecent();
+  }
   const badge = $("#active-count");
   badge.textContent = s.active_jobs;
   badge.hidden = !s.active_jobs;
@@ -859,8 +1003,8 @@ function renderOrder(name) {
 
 async function loadSettings(force = false) {
   if (settingsLoaded && !force) return;
-  const settings = await api("/api/settings");
-  const storageStatus = await api("/api/status");
+  const settings = await api("api/settings");
+  const storageStatus = await api("api/status");
   $("#download-directory").value = storageStatus.download_root;
   const form = $("#settings-form");
   for (const [key, value] of Object.entries(settings)) {
@@ -876,7 +1020,11 @@ async function loadSettings(force = false) {
   Object.keys(ORDER_LISTS).forEach(renderOrder);
   settingsLoaded = true;
   settingsBaseline = settingsSnapshot();
+  settingsBaseValues = fieldValues();
+  settingsBaseOrder = JSON.stringify(state.order);
   updateSettingsFeedback();
+  // Values matching no preset are worth seeing at once.
+  $("#pacing-custom").open = !$$("[data-preset]").some((b) => b.getAttribute("aria-pressed") === "true");
   await loadStatus();
 }
 
@@ -901,7 +1049,7 @@ async function switchView(view) {
   // dim and fade the grid again right after the view itself fades in.
   if (view === "library") await loadLibrary(!state.library.signature);
   if (view === "tasks") await loadTasks();
-  if (view === "settings") await loadSettings();
+  if (view === "settings") { await loadSettings(); state.markSettings?.(); }
   if (view === "catalog" && !state.catalog.loaded) await loadCatalog();
 }
 
@@ -925,7 +1073,7 @@ function fillCategories() {
 const CONVERSION_FIELDS = ["convert_japanese", "convert_chinese"];
 let conversion = { request: {}, go: true, after: null };
 async function openConversion(request, description, { go = true, after = null } = {}) {
-  const settings = await api("/api/settings");
+  const settings = await api("api/settings");
   conversion = { request, go, after };
   const form = $("#convert-form");
   for (const name of CONVERSION_FIELDS) form.elements[name].checked = settings[name];
@@ -966,7 +1114,7 @@ const refreshDetail = () => ($("#work-dialog").open && state.detail ? openWork(s
 let missing = { keys: [] };
 async function openMissing(only = null) {
   const query = only ? "?" + new URLSearchParams(only.map((key) => ["keys", key])) : "";
-  const { items: works } = await api("/api/library/missing" + query);
+  const { items: works } = await api("api/library/missing" + query);
   if (!works.length) return toast("Every recorded file is on disk.");
   missing = { keys: works.map((w) => w.key) };
   const files = works.flatMap((w) => w.files);
@@ -1013,7 +1161,7 @@ $("#remove-form").addEventListener("submit", async event => {
   if (button.getAttribute("aria-busy") === "true") return;
   UI.pending(button, true, "Removing…");
   try {
-    const result = await api("/api/library/remove", {
+    const result = await api("api/library/remove", {
       method: "POST", body: JSON.stringify({keys: removal.keys, delete_files: $("#delete-local-files").checked})
     });
     await UI.closeDialog($("#remove-dialog"));
@@ -1032,7 +1180,7 @@ $("#storage-form").addEventListener("submit", async event => {
   UI.pending(button, true, "Applying…");
   $("#storage-result").textContent = "Applying directory; migrating files may take a while…";
   try {
-    const result = await api("/api/storage", {method: "PUT", body: JSON.stringify({
+    const result = await api("api/storage", {method: "PUT", body: JSON.stringify({
       directory: $("#download-directory").value, migrate: $("#migrate-files").checked
     })});
     $("#download-directory").value = result.download_root;
@@ -1056,7 +1204,7 @@ const actions = {
     await UI.closeDialog($("#missing-dialog"));
   },
   "missing-forget": async () => {
-    const result = await api("/api/library/forget-missing", { method: "POST", body: JSON.stringify({ keys: missing.keys }) });
+    const result = await api("api/library/forget-missing", { method: "POST", body: JSON.stringify({ keys: missing.keys }) });
     await UI.closeDialog($("#missing-dialog"));
     toast(`Forgot ${plural(result.records, "download")}${result.editions ? ` and ${plural(result.editions, "converted edition")}` : ""}.`);
     await Promise.all([loadLibrary(true), loadStatus(), refreshDetail()]);
@@ -1067,7 +1215,7 @@ const actions = {
     await UI.closeDialog($("#gone-dialog"));
   },
   "gone-forget": async () => {
-    const result = await api(`/api/files/${gone.open}/forget`, { method: "POST" });
+    const result = await api(`api/files/${gone.open}/forget`, { method: "POST" });
     await UI.closeDialog($("#gone-dialog"));
     toast(result.records ? "Forgot the download; the next task that checks this work fetches it again." : "Forgot the converted edition.");
     await Promise.all([loadLibrary(true), loadStatus(), refreshDetail()]);
@@ -1112,12 +1260,27 @@ const actions = {
       await loadLibrary(true);
     }
   },
+  "see-recent": async () => {
+    $("#library-sort").value = "downloaded";
+    state.library.page = 1;
+    await turnPage(() => loadLibrary(true), "#library-list");
+  },
+  "clear-library-filters": async () => {
+    $("#library-query").value = "";
+    $("#library-category").value = "";
+    state.library.filter = "";
+    state.library.edition = "";
+    setChip($("#state-chips"), $('#state-chips [data-state=""]'));
+    setChip($("#edition-chips"), $('#edition-chips [data-edition=""]'));
+    state.library.page = 1;
+    await loadLibrary(true);
+  },
   "library-prev": () => turnPage(() => { state.library.page--; return loadLibrary(true); }, "#library-list"),
   "library-next": () => turnPage(() => { state.library.page++; return loadLibrary(true); }, "#library-list"),
   "catalog-prev": () => turnPage(() => { state.catalog.page--; return loadCatalog(); }, "#catalog-list"),
   "catalog-next": () => turnPage(() => { state.catalog.page++; return loadCatalog(); }, "#catalog-list"),
   "clear-tasks": async () => {
-    const { removed } = await api("/api/jobs/clear", { method: "POST" });
+    const { removed } = await api("api/jobs/clear", { method: "POST" });
     toast(`Removed ${plural(removed, "completed task")}.`);
     await loadTasks();
   },
@@ -1180,22 +1343,35 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (d.cancel) state.cancelArmed = null;
+  // A menu's item closes the menu it is in.
+  button.closest("details.menu-host")?.removeAttribute("open");
+  if (d.clearGroup) {
+    // Inside a summary: the click must not also fold the group.
+    event.preventDefault();
+    UI.pending(button, true, "Clearing…");
+    try {
+      for (const id of d.clearGroup.split(",")) await api(`api/jobs/${id}`, { method: "DELETE" });
+      await loadTasks();
+    } catch (error) { toast(error.message, true); }
+    finally { UI.pending(button, false); }
+    return;
+  }
   const mutating = d.cancel || d.resume || d.retry || d.delete || d.downloadWork || d.get !== undefined || d.open || d.folder || d.missingWork || d.convertWork || d.convertFile ||
     ["incremental", "convert-all", "download-selected", "convert-selected", "clear-tasks", "check-files", "missing-download", "missing-forget", "gone-again", "gone-forget"].includes(d.action);
   if (mutating) UI.pending(button, true);
   try {
     if (d.view) await switchView(d.view);
     else if (d.removeWork) {
-      const work = await api(`/api/works/${d.removeWork}`);
+      const work = await api(`api/works/${d.removeWork}`);
       await UI.closeDialog($("#work-dialog"));
       openRemoval([d.removeWork], [work]);
     }
     else if (d.work) await openWork(d.work, true, d.live === "true");
     else if (d.open) {
-      const result = await api(`/api/files/${d.open}/${d.variant}/open`, { method: "POST" });
+      const result = await api(`api/files/${d.open}/${d.variant}/open`, { method: "POST" });
       if (result.missing) openGone(d, result.path);
     } else if (d.folder) {
-      await api(`/api/works/${d.key}/folder`, { method: "POST", body: JSON.stringify({ folder: d.folder }) });
+      await api(`api/works/${d.key}/folder`, { method: "POST", body: JSON.stringify({ folder: d.folder }) });
     } else if (d.get !== undefined) {
       await getEdition(d);
     } else if (d.missingWork) {
@@ -1213,6 +1389,11 @@ document.addEventListener("click", async (event) => {
       state.library.filter = d.state;
       state.library.page = 1;
       await loadLibrary(true);
+    } else if (d.edition !== undefined && button.closest("#edition-chips")) {
+      setChip($("#edition-chips"), button);
+      state.library.edition = d.edition;
+      state.library.page = 1;
+      await loadLibrary(true);
     } else if (d.taskFilter) {
       setChip($("#task-chips"), button);
       state.taskFilter = d.taskFilter;
@@ -1220,10 +1401,10 @@ document.addEventListener("click", async (event) => {
       UI.reveal($("#task-list"));
     } else if (d.log) await openLog(Number(d.log));
     else if (d.cancel || d.resume) {
-      await api(`/api/jobs/${d.cancel || d.resume}/${d.cancel ? "cancel" : "resume"}`, { method: "POST" });
+      await api(`api/jobs/${d.cancel || d.resume}/${d.cancel ? "cancel" : "resume"}`, { method: "POST" });
       await Promise.all([loadTasks(), loadStatus()]);
     } else if (d.retry) {
-      const { retried } = await api(`/api/jobs/${d.retry}/retry`, {
+      const { retried } = await api(`api/jobs/${d.retry}/retry`, {
         method: "POST",
         body: JSON.stringify({ targets: d.target ? [d.target] : [], only_retryable: d.onlyRetryable === "true" }),
       });
@@ -1240,7 +1421,7 @@ document.addEventListener("click", async (event) => {
       }
       updateSettingsFeedback();
     } else if (d.delete) {
-      await api(`/api/jobs/${d.delete}`, { method: "DELETE" });
+      await api(`api/jobs/${d.delete}`, { method: "DELETE" });
       await loadTasks();
     } else if (d.downloadWork) {
       await UI.closeDialog($("#work-dialog"));
@@ -1281,11 +1462,78 @@ document.addEventListener("change", (event) => {
   } else if (input.id === "catalog-category") {
     state.catalog.page = 1;
     loadCatalog();
-  } else if (input.id === "catalog-page") {
+  } else if (input.dataset.pageInput === "catalog") {
     state.catalog.page = Math.min(Math.max(1, Number(input.value) || 1), Math.max(1, state.catalog.pages));
-    loadCatalog();
+    turnPage(loadCatalog, "#catalog-list");
+  } else if (input.dataset.pageInput === "library") {
+    const pages = Math.max(1, Math.ceil(state.library.total / state.library.pageSize));
+    state.library.page = Math.min(Math.max(1, Number(input.value) || 1), pages);
+    turnPage(() => loadLibrary(true), "#library-list").catch((e) => toast(e.message, true));
+  } else if (input.id === "library-size") {
+    // Keep the first work shown in view: its page under the new size.
+    const first = (state.library.page - 1) * state.library.pageSize;
+    state.library.pageSize = Number(input.value);
+    state.library.page = Math.floor(first / state.library.pageSize) + 1;
+    store.set("page-size", input.value);
+    loadLibrary(true).catch((e) => toast(e.message, true));
+  } else if (input.id === "hide-complete") {
+    state.catalog.hideComplete = input.checked;
+    store.set("hide-complete", String(input.checked));
+    renderCatalog();
   }
 });
+
+// Folded sweeps stay as the reader left them through the list's redraws.
+document.addEventListener("toggle", (event) => {
+  const group = event.target;
+  if (!(group instanceof HTMLDetailsElement) || !group.classList.contains("task-group")) return;
+  if (group.open) state.openGroups.add(group.dataset.group);
+  else state.openGroups.delete(group.dataset.group);
+}, true);
+
+// A menu closes when you click anywhere else.
+document.addEventListener("pointerdown", (event) => {
+  for (const menu of $$("details.menu-host[open]")) if (!menu.contains(event.target)) menu.removeAttribute("open");
+});
+
+// A field the browser rejects on submit may sit in a folded part: unfold it so the
+// browser can show what is wrong.
+$("#settings-form").addEventListener("invalid", (event) => {
+  event.target.closest("details")?.setAttribute("open", "");
+}, true);
+
+// The section in view is marked in the settings index.
+{
+  const links = new Map($$(".settings-nav a").map((a) => [a.dataset.section, a]));
+  // The last section whose top has reached the line; the first one until any has.
+  // A section picked in the index stays marked until the reader scrolls by hand: one near
+  // the end can never scroll up to the line.
+  let picked = null;
+  for (const type of ["wheel", "touchstart", "keydown"]) document.addEventListener(type, () => { picked = null; }, { passive: true });
+  const mark = () => {
+    if (state.view !== "settings") return;
+    // Just below where a section lands when jumped to (its scroll margin).
+    const line = 120;
+    let current = picked || links.keys().next().value;
+    if (!picked) {
+      for (const id of links.keys()) {
+        const top = document.getElementById(id)?.getBoundingClientRect().top;
+        if (top !== undefined && top <= line) current = id;
+      }
+    }
+    links.forEach((a, id) => a.classList.toggle("on", id === current));
+  };
+  document.addEventListener("scroll", () => requestAnimationFrame(mark), { capture: true, passive: true });
+  state.markSettings = mark;
+  $(".settings-nav").addEventListener("click", (event) => {
+    const a = event.target.closest("a");
+    if (!a) return;
+    event.preventDefault();
+    picked = a.dataset.section;
+    mark();
+    document.getElementById(a.dataset.section)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  });
+}
 
 let searchTimer;
 $("#library-query").addEventListener("input", () => {
@@ -1365,8 +1613,10 @@ $("#settings-form").addEventListener("submit", async event => {
   UI.pending(button, true, "Saving…");
   updateSettingsFeedback();
   try {
-    await api("/api/settings", { method: "PUT", body: JSON.stringify(settings) });
+    await api("api/settings", { method: "PUT", body: JSON.stringify(settings) });
     settingsBaseline = savedSnapshot;
+    settingsBaseValues = fieldValues();
+    settingsBaseOrder = JSON.stringify(state.order);
     toast("Settings saved.");
     await loadStatus();
   } catch (error) { toast(error.message, true); }
@@ -1393,6 +1643,12 @@ document.addEventListener("keydown", (event) => {
   const selection = state.view === "catalog" ? state.catalogSelected : state.selected;
   if (event.key === "Escape" && selection.size) {
     actions["clear-selection"]().catch((e) => toast(e.message, true));
+    return;
+  }
+  // [ and ] turn the page of the library or the catalog.
+  if ((event.key === "[" || event.key === "]") && ["library", "catalog"].includes(state.view) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    const button = $(`.pager-ctl[data-pager="${state.view}"] [data-action="${state.view}-${event.key === "[" ? "prev" : "next"}"]`);
+    if (button && !button.disabled) { event.preventDefault(); button.click(); }
     return;
   }
   if (event.key !== "/") return;
@@ -1448,9 +1704,14 @@ async function refresh() {
   setTheme(store.get("theme", "system"), false);
   setSidebar(store.get("sidebar-collapsed", "false") === "true", false);
   setTitleLang(state.titleLang, false);
+  $("#hide-complete").checked = state.catalog.hideComplete;
+  // Placeholder covers until the first page arrives, the size of the real ones.
+  $("#library-list").innerHTML = skeletonBooks(state.layout === "list" ? 0 : 24);
   try {
     await loadStatus();
     fillCategories();
+    // Known before the grid draws, so the strip of new volumes never pushes it down.
+    await state.recentLoad;
     await loadLibrary(true);
   } catch (e) {
     toast(`The local server is not responding: ${e.message}`, true);

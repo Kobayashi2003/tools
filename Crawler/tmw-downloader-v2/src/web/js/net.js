@@ -35,8 +35,8 @@ export async function get(path) {
 
 /* The whole index. Goes through `query` like everything else, so a reload
  * opens the channel you were last looking at rather than the default one. */
-export const getIndex = () => get("/api/feed");
+export const getIndex = () => get("api/feed");
 
 /* How far the crawl behind this channel has got. Cheap enough to poll: it
  * carries the coverage counts, not the archive. */
-export const getFetch = () => get("/api/fetch");
+export const getFetch = () => get("api/fetch");

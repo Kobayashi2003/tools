@@ -1,4 +1,4 @@
-"""v1's post filter, returning *why* a post is filtered so the UI can say so.
+"""Post filters return a reason for the UI to display.
 
 Keys (global `global_filter`, overridden key by key by a creator's `filter`):
 

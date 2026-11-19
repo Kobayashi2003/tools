@@ -23,6 +23,9 @@ export function enhanceSelect(select) {
   const list = document.createElement('ul');
   list.className = 'select-list';
   list.setAttribute('role', 'listbox');
+  list.id = `${select.id}-options`;
+  button.setAttribute('aria-controls', list.id);
+  list.setAttribute('aria-label', select.getAttribute('aria-label') || '');
   list.tabIndex = -1;
   list.hidden = true;
   wrap.append(button, list);
@@ -31,16 +34,21 @@ export function enhanceSelect(select) {
   if (select.getAttribute('aria-label')) button.setAttribute('aria-label', select.getAttribute('aria-label'));
 
   let active = 0;
+  let drawn = '';
   const options = () => [...list.children];
 
   function sync() {
     button.disabled = select.disabled;
     button.title = select.title;
     label.textContent = select.selectedOptions[0]?.textContent ?? '';
+    const signature = JSON.stringify([...select.options].map(o => [o.value, o.textContent, o.selected]));
+    if (signature === drawn) return;
+    drawn = signature;
     list.replaceChildren(...[...select.options].map((option, i) => {
       const li = document.createElement('li');
       li.setAttribute('role', 'option');
       li.dataset.value = option.value;
+      li.id = `${list.id}-${i}`;
       li.setAttribute('aria-selected', String(option.selected));
       li.innerHTML = CHECK;
       li.append(option.textContent);
@@ -54,6 +62,7 @@ export function enhanceSelect(select) {
     const items = options();
     active = (i + items.length) % items.length;
     items.forEach((li, j) => li.classList.toggle('active', j === active));
+    list.setAttribute('aria-activedescendant', items[active]?.id || '');
     items[active]?.scrollIntoView({ block: 'nearest' });
   }
 
@@ -88,6 +97,7 @@ export function enhanceSelect(select) {
   button.addEventListener('keydown', (e) => {
     if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) {
       e.preventDefault();
+      e.stopPropagation();
       open();
     }
   });

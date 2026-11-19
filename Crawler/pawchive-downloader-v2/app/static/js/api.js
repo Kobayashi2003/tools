@@ -84,16 +84,17 @@ export function localTime(utc) {
 
 // Retry lines arrive in bursts that differ only in numbers (offset, attempt, wait), and
 // interleave with other lines when several jobs run. Events (newest first) that match once
-// digits are removed fold into one row while within 15 minutes of that row's newest.
+// digits are removed fold into one row while within `windowMs` of that row's newest: the
+// log keeps bursts apart, the overview folds a whole evening of retries into one line.
 const RETRY = /^(Pawchive|Fanbox) (.+?): (\d{3}|\w+) · attempt \d+ failed/;
-const WINDOW_MS = 15 * 60 * 1000;
-export function groupEvents(events) {
+export const LOG_WINDOW = 15 * 60 * 1000;
+export function groupEvents(events, windowMs = LOG_WINDOW) {
   const out = [];
   const open = new Map();
   for (const e of events) {
     const key = `${e.level}|${e.message.replace(/\d+/g, '#')}`;
     const g = open.get(key);
-    if (g && new Date(g.latest.at + 'Z') - new Date(e.at + 'Z') <= WINDOW_MS) {
+    if (g && new Date(g.latest.at + 'Z') - new Date(e.at + 'Z') <= windowMs) {
       g.count++;
       g.first = e;
       continue;
@@ -109,6 +110,23 @@ export function groupEvents(events) {
       : g.latest.message;
   }
   return out;
+}
+
+export async function copyText(text, done = 'Copied') {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(done);
+  } catch {
+    toast('Could not copy; the browser refused the clipboard', true);
+  }
+}
+
+// Single-key shortcuts apply only when nothing else wants the key: not while typing, nor
+// with a dialog or a menu open, nor with a modifier held.
+export function shortcutAllowed(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  if (e.target.closest?.('input, textarea, select, [contenteditable]')) return false;
+  return !document.querySelector('dialog[open], .menu');
 }
 
 export function ago(utc) {

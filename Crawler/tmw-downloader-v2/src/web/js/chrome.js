@@ -1,18 +1,18 @@
-/* Everything around the feed: the bar, the month rail, and the two sheets.
+/* Everything around the grid: the bar (channel tabs, search, filters), the month
+ * rail and the bookmarks.
  *
- * All of it reads the feed and none of it is read by the feed -- the wiring
- * hands the feed a callback instead, so the dependency only points one way. */
+ * All of it reads the feed and none of it is read by the feed -- the wiring hands
+ * the feed a callback instead, so the dependency only points one way. */
 
 import { $, $$, el, fmtDay, monthOf, show, sizeBar, toast } from "./dom.js";
 import { setSaved } from "./detail.js";
 import * as feed from "./feed.js";
-import { filtering, savePrefs, state } from "./store.js";
+import { filtering, have, passes, savePrefs, state } from "./store.js";
 
-/* Filled in by the wiring: the bar offers an action this module cannot
- * perform itself. */
-export const actions = { showEverything: () => {} };
+/* Filled in by the wiring: the bar offers actions this module cannot perform. */
+export const actions = { showEverything: () => {}, getShown: () => {} };
 
-/* ---------- the channel picker ---------- */
+/* ---------- channels: tabs, and the rest under More ---------- */
 
 let channelsDrawn = "";
 let picked = () => {};
@@ -20,41 +20,43 @@ let picked = () => {};
 const pickOptions = () => $$(".pick-opt", $("#channel-list"));
 const pickerOpen = () => !$("#channel-list").hidden;
 
+/* The clubs' recommendation channels, and any already read, are tabs; the
+ * server's other channels wait under More. A channel opened from More is shown as
+ * a tab while it is open. */
+const isTab = (entry) => entry.cached || /recommendation/.test(entry.name);
+const tabLabel = (name) => name.replace(/-recommendations?$/, "").replace(/-/g, " ");
+
 function paintChannels() {
-  const box = $("#channel-list");
   const open = (state.meta.channel && state.meta.channel.channel_id) || state.channel;
   let list = state.meta.channels || [];
   if (!list.length && open) list = [{ id: open, name: state.meta.channel.name || open, cached: true }];
+  const tabs = list.filter((entry) => isTab(entry) || entry.id === open);
+  const rest = list.filter((entry) => !tabs.includes(entry));
 
-  // The head repaints on every crawl tick; rebuilding an open list under the
-  // pointer would throw away where the reader had got to in it.
-  const drawn = JSON.stringify(list.map((entry) => [entry.id, entry.name, !!entry.cached]));
+  // The head repaints on every crawl tick; rebuilding the lists under the
+  // pointer would throw away where the reader had got to in them.
+  const drawn = JSON.stringify([open, list.map((entry) => [entry.id, entry.name, !!entry.cached])]);
   if (drawn !== channelsDrawn) {
     channelsDrawn = drawn;
+    $("#tabs").replaceChildren(...tabs.map((entry) => el("button", {
+      class: "ch-tab", role: "tab", "aria-selected": entry.id === open ? "true" : "false",
+      title: "#" + entry.name + (entry.cached ? "" : " · not read yet"),
+      onclick: () => picked(entry.id),
+    }, [el("span", { text: tabLabel(entry.name) })])));
+    const box = $("#channel-list");
     box.textContent = "";
-    list.forEach((entry, i) => {
-      // Channels already read down say so; the rest are offered but start
-      // empty, which switching to will say for itself.
+    rest.forEach((entry, i) => {
       box.appendChild(el("div", {
-        class: "pick-opt" + (entry.cached ? " read" : ""),
+        class: "pick-opt",
         id: "channel-" + entry.id,
         role: "option",
         "data-id": entry.id,
         onclick: () => choose(entry.id),
         onpointermove: () => setActive(i, false),
-      }, [
-        el("span", { class: "pick-name", text: entry.name }),
-        entry.cached ? el("span", { class: "pick-tag", text: "read" }) : null,
-      ]));
+      }, [el("span", { class: "pick-name", text: "#" + entry.name })]));
     });
+    show($("#channel-more"), rest.length > 0);
   }
-  for (const option of pickOptions()) {
-    option.setAttribute("aria-selected", option.dataset.id === open ? "true" : "false");
-  }
-  const current = list.find((entry) => entry.id === open);
-  $("#channel-name").textContent = current ? current.name : "";
-  // Adopt what the server says it served: on a cold page the channel is empty
-  // and the default is whatever the command line named.
   if (open) state.channel = open;
 }
 
@@ -71,13 +73,11 @@ const activeIndex = () => pickOptions().findIndex((option) => option.classList.c
 
 function showPicker(on, refocus = false) {
   if (on === pickerOpen()) return;
-  const box = $("#channel-list");
-  show(box, on);
+  show($("#channel-list"), on);
   $("#channel-pick").setAttribute("aria-expanded", on ? "true" : "false");
   if (on) {
-    const options = pickOptions();
-    setActive(options.findIndex((option) => option.getAttribute("aria-selected") === "true"));
-    box.focus({ preventScroll: true });
+    setActive(0);
+    $("#channel-list").focus({ preventScroll: true });
   } else if (refocus) {
     $("#channel-pick").focus();
   }
@@ -88,14 +88,13 @@ function choose(id) {
   picked(id);
 }
 
-/* Type a letter to jump to the next channel that starts with it, the one
- * native-select habit worth keeping with twenty-odd names in the list. */
+/* Type a letter to jump to the next channel that starts with it. */
 function jumpTo(letter) {
   const options = pickOptions();
   const from = activeIndex();
   for (let step = 1; step <= options.length; step++) {
     const i = (from + step) % options.length;
-    if (options[i].textContent.toLowerCase().startsWith(letter)) { setActive(i); return; }
+    if (options[i].textContent.replace(/^#/, "").toLowerCase().startsWith(letter)) { setActive(i); return; }
   }
 }
 
@@ -105,13 +104,10 @@ export function bindChannels(onPick) {
   const box = $("#channel-list");
 
   button.onclick = () => showPicker(!pickerOpen());
-  // Kept from the page's own keys: Enter there means "peek", and j / k would
-  // move the feed under an open list.
+  // Kept from the page's own keys: Enter there means "look", and j / k would
+  // move the grid under an open list.
   button.addEventListener("keydown", (ev) => {
-    if (["ArrowDown", "ArrowUp"].includes(ev.key)) {
-      ev.preventDefault();
-      showPicker(true);
-    }
+    if (["ArrowDown", "ArrowUp"].includes(ev.key)) { ev.preventDefault(); showPicker(true); }
     if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(ev.key)) ev.stopPropagation();
   });
 
@@ -135,10 +131,10 @@ export function bindChannels(onPick) {
   });
 
   document.addEventListener("pointerdown", (ev) => {
-    if (pickerOpen() && !ev.target.closest(".channel")) showPicker(false);
+    if (pickerOpen() && !ev.target.closest(".channel-more")) showPicker(false);
   });
   box.addEventListener("focusout", (ev) => {
-    if (pickerOpen() && !(ev.relatedTarget && ev.relatedTarget.closest(".channel"))) showPicker(false);
+    if (pickerOpen() && !(ev.relatedTarget && ev.relatedTarget.closest(".channel-more"))) showPicker(false);
   });
 }
 
@@ -150,7 +146,6 @@ function counts() {
   const bits = [`<b>${total.toLocaleString()}</b> recommendations`];
   if (shown !== total) bits.push(`<b>${shown.toLocaleString()}</b> shown`);
   if (state.taken.size) bits.push(`${state.taken.size.toLocaleString()} fetched`);
-  if (state.saved.size) bits.push(`${state.saved.size} bookmarked`);
   const cover = state.meta.coverage || {};
   if (cover.messages) {
     const from = fmtDay(cover.oldest_at).slice(-4);
@@ -162,6 +157,12 @@ function counts() {
   }
   if (state.meta.offline) bits.push("offline");
   return bits.join("  ·  ");
+}
+
+/* What a batch Get would queue: shown, with a job, not on disk, not in the queue. */
+export function gettable() {
+  return state.index.filter((post) => passes(post) && post.job && !have(post)
+    && !["queued", "opening", "working"].includes(state.jobState.get(post.job)));
 }
 
 export function paintHead() {
@@ -182,7 +183,9 @@ export function paintHead() {
     feed.redraw();
   }
   show($("#reset"), filtering());
-  paintMarksButton();
+  paintWho();
+  paintMarksCount();
+  paintGetShown();
 
   const note = $("#note");
   if (state.meta.display.tail) {
@@ -198,11 +201,25 @@ export function paintHead() {
   sizeBar();
 }
 
-export function paintSource() {
-  for (const chip of $$("#source .chip")) {
-    chip.setAttribute("aria-pressed",
-      chip.dataset.source === state.filters.source ? "true" : "false");
+/* Only with a filter on: "Get everything in the channel" is not a button to have
+ * lying around. */
+export function paintGetShown() {
+  const button = $("#get-shown");
+  const n = filtering() ? gettable().length : 0;
+  show(button, n > 0);
+  if (n) {
+    button.textContent = `Get ${n.toLocaleString()} shown`;
+    button.title = `Queue the ${n.toLocaleString()} shown recommendations that are not on disk yet`;
   }
+}
+
+/* The segmented choices: where the files are, whether they are here, the order. */
+export function paintSegs() {
+  const f = state.filters;
+  for (const [box, key] of [["#source", "source"], ["#have", "have"], ["#sort", "sort"]]) {
+    for (const chip of $$(`${box} [data-value]`)) chip.setAttribute("aria-pressed", chip.dataset.value === f[key] ? "true" : "false");
+  }
+  $("#rail").classList.toggle("off", f.sort === "love");
 }
 
 export function paintChips() {
@@ -223,16 +240,26 @@ export function paintChips() {
   }
 }
 
+function paintWho() {
+  const box = $("#who");
+  const who = state.filters.who;
+  show(box, !!who);
+  if (who) $("#who-name").textContent = who;
+}
+
+export function setWho(name) {
+  state.filters.who = name || "";
+  feed.applyFilter();
+  paintHead();
+}
+
 export function resetFilters() {
-  Object.assign(state.filters, {
-    q: "", kind: "", source: "", savedOnly: false, missingOnly: false,
-  });
+  Object.assign(state.filters, { q: "", kind: "", source: "", savedOnly: false, have: "", who: "" });
   $("#search").value = "";
   $("#saved-only").checked = false;
-  $("#missing-only").checked = false;
   savePrefs();
   paintChips();
-  paintSource();
+  paintSegs();
   feed.applyFilter();
 }
 
@@ -248,7 +275,7 @@ export function paintRail() {
     months.set(key, (months.get(key) || 0) + 1);
   }
   const keys = [...months.keys()].sort();
-  if (state.filters.desc) keys.reverse();
+  if (state.filters.sort !== "old") keys.reverse();
   const peak = Math.max(1, ...months.values());
 
   let year = "";
@@ -279,67 +306,60 @@ export function markRail() {
 }
 
 function gotoMonth(key) {
+  if (state.filters.sort === "love") { toast("Most ♥ is not by date; switch to Newest or Oldest"); return; }
   const row = feed.rowOfMonth(key);
   if (row < 0) { toast("Nothing from that month in this filter"); return; }
-  feed.scrollToRow(row);
+  feed.scrollToRow(row, "start");
   markRail();
 }
 
 /* ---------- bookmarks ---------- */
 
-export function paintMarksButton() {
-  $("#marks-count").textContent = state.saved.size;
-  $("#marks-open").dataset.any = state.saved.size ? "1" : "0";
+export function paintMarksCount() {
+  for (const id of ["#marks-count", "#tab-marks-n"]) {
+    const node = $(id);
+    if (!node) continue;
+    node.textContent = state.saved.size || "";
+    node.dataset.any = state.saved.size ? "1" : "0";
+  }
 }
 
 export function paintMarks() {
   const box = $("#marks-list");
   box.textContent = "";
   if (!state.bookmarks.length) {
-    box.appendChild(el("div", {
-      class: "sheet-empty",
-      text: "No bookmarks yet. Press b on a recommendation, or Save on its card.",
-    }));
+    box.appendChild(el("div", { class: "empty-state" }, [
+      el("span", { class: "es-mark mark", text: "★" }),
+      el("span", { class: "es-t", text: "No bookmarks yet" }),
+      el("span", { class: "es-h", html: "Press <kbd>b</kbd> on the chosen recommendation, or the star on its card, to keep it here." }),
+    ]));
     return;
   }
   for (const mark of state.bookmarks) {
-    const bits = [mark.kind, mark.volumes].filter(Boolean);
+    const bits = [mark.kind, mark.volumes && "vol " + mark.volumes].filter(Boolean);
     if (state.taken.has(mark.job) || state.held.has(mark.job)) bits.push("fetched");
-    box.appendChild(el("button", { class: "bm", onclick: () => gotoShare(mark.id) }, [
-      el("span", { class: "when", text: mark.ts ? fmtDay(mark.ts) : "" }),
-      el("span", { class: "what" }, [
-        el("span", { class: "t", text: mark.title || "untitled" }),
-        el("span", { class: "sub", text: bits.join("  ·  ") }),
+    box.appendChild(el("div", { class: "bm" }, [
+      el("button", { class: "bm-go", onclick: () => gotoShare(mark.id) }, [
+        el("span", { class: "when", text: mark.ts ? fmtDay(mark.ts) : "" }),
+        el("span", { class: "what" }, [
+          el("span", { class: "t", text: mark.title || "untitled" }),
+          el("span", { class: "sub", text: bits.join("  ·  ") }),
+        ]),
       ]),
-      el("span", {
-        class: "drop", text: "remove", role: "button", tabindex: "0",
-        onclick: (ev) => { ev.stopPropagation(); setSaved(mark.id, false); },
-      }),
+      el("button", { class: "drop", text: "Remove", title: "Remove the bookmark", onclick: () => setSaved(mark.id, false) }),
     ]));
   }
+  box.appendChild(el("div", { class: "dock-foot", html: "<kbd>b</kbd> bookmarks the chosen recommendation" }));
 }
 
-export function showMarks(on) {
-  show($("#marks"), on);
-  if (on) paintMarks();
-}
-
-export const marksOpen = () => !$("#marks").hidden;
-
-/* Jump to a bookmarked post. If a filter is hiding it, the filter loses --
- * "take me there" that quietly does nothing is worse than one that clears a
- * chip you can see. */
+/* Jump to a post. If a filter is hiding it, the filter loses -- "take me there"
+ * that quietly does nothing is worse than one that clears a chip you can see. */
 export function gotoShare(id) {
-  showMarks(false);
-  let row = feed.rowOfPost(id);
-  if (row < 0) {
-    resetFilters();
-    row = feed.rowOfPost(id);
-  }
-  if (row < 0) { toast("That one is not in the archive"); return; }
-  feed.scrollToRow(row);
-  feed.setHere(row, false);
+  if (feed.rowOfPost(id) < 0) resetFilters();
+  if (feed.rowOfPost(id) < 0) { toast("That one is not in the archive"); return false; }
+  feed.setHere(id);
   markRail();
+  return true;
 }
 
 /* ---------- help ---------- */

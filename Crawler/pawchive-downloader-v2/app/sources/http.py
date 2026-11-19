@@ -1,9 +1,8 @@
 """One HTTP client per source: its own session, headers, failure table and throttle.
 
-Ported from v1's `API`: the retry loop consults a policy table instead of an
-if-ladder, every file transfer holds one of the throttle's global slots and is
-charged against its rate and quota, and a download is verified and moved into
-place atomically, so a short read can never pose as a complete file.
+The retry loop consults a policy table. Each file transfer holds a throttle slot
+and is charged against the rate and quota. Downloads are verified before being
+moved into place atomically.
 """
 
 import os

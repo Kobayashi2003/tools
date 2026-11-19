@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE creators(
@@ -249,11 +249,13 @@ class Database:
                         if name in BACKFILL:
                             db.execute(BACKFILL[name])
             if 0 < version < 2:
-                # v1 fetched only from Pawchive, so what it got is shown as such.
+                # The old source identifier represented files fetched from Pawchive.
                 db.execute("UPDATE files SET via='pawchive' WHERE via='v1'")
-            if 0 < version < 3:
-                # An early import wrote this note in Chinese; the UI is in English.
-                db.execute("UPDATE files SET error='failed in v1' WHERE error='v1 下载失败'")
+            if 0 < version < 4:
+                db.execute(
+                    "UPDATE files SET error='Previous download failed' "
+                    "WHERE error IN ('failed in v1', 'v1 下载失败')"
+                )
             if 0 < version < SCHEMA_VERSION:
                 db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 

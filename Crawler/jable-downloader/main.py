@@ -256,6 +256,8 @@ class ClashPool:
             node = nodes[i]
             inst_cfg = {
                 **base,
+                # Loopback only, whatever the source config says.
+                "allow-lan": False,
                 "port": port,
                 "socks-port": port + 1,
                 "external-controller": f"127.0.0.1:{port + 2}",

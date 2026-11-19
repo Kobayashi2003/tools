@@ -2,6 +2,7 @@
 
 import sqlite3
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -131,21 +132,64 @@ SELECT c.*, COUNT(p.post_id) AS total, IFNULL(SUM(p.local_done), 0) AS done,
        IFNULL(SUM(p.f_state='open'), 0) AS f_open,
        IFNULL(SUM(p.f_state='locked'), 0) AS f_locked,
        IFNULL(SUM(p.local_done=0 AND (p.p_state='full' OR p.f_state='open')), 0) AS fetchable,
-       -- Posts a source could deliver whose files failed.
-       (SELECT COUNT(DISTINCT f.post_id) FROM files f
-          JOIN posts q ON q.creator_id=f.creator_id AND q.post_id=f.post_id
-          WHERE f.creator_id=c.id AND f.role<>'cover' AND f.state='failed' AND q.local_done=0
-            AND (q.p_state='full' OR q.f_state='open'))
-         AS failed,
        (SELECT COUNT(*) FROM links l WHERE l.creator_id=c.id AND l.state='new') AS links_new
 FROM creators c LEFT JOIN posts p ON p.creator_id=c.id
 {where}
 GROUP BY c.id ORDER BY c.group_path, LOWER(COALESCE(NULLIF(c.alias,''), c.name))
 """
 
+# Posts whose missing files all 404ed on Pawchive while the own site cannot deliver them:
+# headline() calls these "blocked". No run asks for them again by itself, so they are
+# neither waiting nor failed in the counts.
+BLOCKED_POSTS = """
+SELECT p.creator_id, p.post_id, p.p_state
+FROM posts p
+JOIN files f ON f.creator_id=p.creator_id AND f.post_id=p.post_id
+LEFT JOIN deferrals d ON d.source='pawchive' AND d.key=f.p_path AND f.present_p=1
+WHERE p.local_done=0 AND p.f_state<>'open' AND f.role<>'cover' AND f.state<>'done' {where}
+GROUP BY p.creator_id, p.post_id
+HAVING SUM(d.key IS NOT NULL) >= COUNT(*)
+"""
 
-def _filtered_out(ctx: Context, c: sqlite3.Row) -> int:
-    """Fetchable posts a filter keeps out of downloads, which therefore are not waiting."""
+# Posts a source could deliver whose files failed: the next run tries them again.
+FAILED_POSTS = """
+SELECT DISTINCT f.creator_id, f.post_id
+FROM files f JOIN posts q ON q.creator_id=f.creator_id AND q.post_id=f.post_id
+WHERE f.role<>'cover' AND f.state='failed' AND q.local_done=0
+  AND (q.p_state='full' OR q.f_state='open') {where}
+"""
+
+
+@dataclass
+class PostSets:
+    """One creator's blocked and retryable-failed post ids."""
+
+    blocked: set[str] = field(default_factory=set)
+    blocked_listed: set[str] = field(default_factory=set)
+    """The blocked posts Pawchive still lists: only these are in CREATOR_ROWS' `fetchable`."""
+    failed: set[str] = field(default_factory=set)
+
+
+def _post_sets(ctx: Context, creator_id: str | None = None) -> dict[str, PostSets]:
+    """Every creator's post sets in two queries, rather than one subquery per creator."""
+    where, params = ("AND p.creator_id=?", (creator_id,)) if creator_id else ("", ())
+    out: dict[str, PostSets] = defaultdict(PostSets)
+    for r in ctx.db.all(BLOCKED_POSTS.format(where=where), params):
+        sets = out[r["creator_id"]]
+        sets.blocked.add(r["post_id"])
+        if r["p_state"] == "full":
+            sets.blocked_listed.add(r["post_id"])
+    where = "AND f.creator_id=?" if creator_id else ""
+    for r in ctx.db.all(FAILED_POSTS.format(where=where), params):
+        sets = out[r["creator_id"]]
+        if r["post_id"] not in sets.blocked:
+            sets.failed.add(r["post_id"])
+    return out
+
+
+def _filtered_out(ctx: Context, c: sqlite3.Row, blocked: set[str]) -> int:
+    """Fetchable posts a filter keeps out of downloads, which therefore are not waiting.
+    Blocked posts are already left out of the count, so they are not taken off twice."""
     if not ctx.settings.global_filter and not load(c["filter"], {}):
         return 0
     rows = ctx.db.all(
@@ -155,10 +199,14 @@ def _filtered_out(ctx: Context, c: sqlite3.Row) -> int:
            GROUP BY p.post_id""",
         (c["id"],),
     )
-    return sum(1 for p in rows if filter_reason(ctx, c, p, p["files"], p["att"]))
+    return sum(
+        1
+        for p in rows
+        if p["post_id"] not in blocked and filter_reason(ctx, c, p, p["files"], p["att"])
+    )
 
 
-def _summary(ctx: Context, c: sqlite3.Row) -> dict:
+def _summary(ctx: Context, c: sqlite3.Row, sets: PostSets) -> dict:
     if not has_site(c["service"]):
         f_dot = "na"
     elif c["f_open"]:
@@ -183,8 +231,11 @@ def _summary(ctx: Context, c: sqlite3.Row) -> dict:
         "p_dot": "full" if c["p_full"] else ("meta" if c["p_meta"] else "none"),
         "f_dot": f_dot,
         "f_checked": bool(c["fanbox_listed_at"]),
-        "fetchable": c["fetchable"] - (_filtered_out(ctx, c) if c["fetchable"] else 0),
-        "failed": c["failed"],
+        "fetchable": c["fetchable"]
+        - len(sets.blocked_listed)
+        - (_filtered_out(ctx, c, sets.blocked) if c["fetchable"] else 0),
+        "failed": len(sets.failed),
+        "blocked": len(sets.blocked),
         "links_new": c["links_new"],
         "total": c["total"],
         "done": c["done"],
@@ -192,7 +243,11 @@ def _summary(ctx: Context, c: sqlite3.Row) -> dict:
 
 
 def creators(ctx: Context) -> list[dict]:
-    return [_summary(ctx, c) for c in ctx.db.all(CREATOR_ROWS.format(where=""), {"now": now_utc()})]
+    sets = _post_sets(ctx)
+    return [
+        _summary(ctx, c, sets[c["id"]])
+        for c in ctx.db.all(CREATOR_ROWS.format(where=""), {"now": now_utc()})
+    ]
 
 
 def creator_detail(ctx: Context, creator_id: str) -> dict:
@@ -201,7 +256,7 @@ def creator_detail(ctx: Context, creator_id: str) -> dict:
         CREATOR_ROWS.format(where="WHERE c.id=:cid"), {"cid": creator_id, "now": now_utc()}
     )
     assert row is not None
-    summary = _summary(ctx, row)
+    summary = _summary(ctx, row, _post_sets(ctx, creator_id)[creator_id])
     local = ctx.db.one(
         """SELECT IFNULL(SUM(via IN ('fanbox','adopted')),0) AS fanbox,
                   IFNULL(SUM(via='pawchive'),0) AS pawchive,
@@ -307,7 +362,9 @@ def post_detail(ctx: Context, creator_id: str, post_id: str) -> dict:
 # is listed as stale.
 DAYS_SHOWN = 14
 SYNC_STALE_DAYS = 30
-FAILED_SHOWN = 12
+# The overview groups failed posts by creator, so it takes many: one creator's run of
+# failures must not hide everyone else's.
+FAILED_SHOWN = 300
 
 
 def overview(ctx: Context) -> dict:
@@ -325,6 +382,8 @@ def overview(ctx: Context) -> dict:
             if k == "failed":
                 issues["failed"][c["id"]] += 1
                 failed.append((c["id"], r))
+            elif k == "blocked":
+                issues["blocked"][c["id"]] += 1
             if r["verified_bad"]:
                 issues["mismatch"][c["id"]] += 1
             if "unverified" in why:
@@ -383,7 +442,8 @@ def overview(ctx: Context) -> dict:
         "issues": {
             k: {
                 "posts": sum(v.values()),
-                "creators": [cid for cid, _ in v.most_common(3)],
+                # Every creator with its count, most first.
+                "who": v.most_common(),
                 "n": len(v),
             }
             for k, v in issues.items()
@@ -392,3 +452,45 @@ def overview(ctx: Context) -> dict:
         "first_day": first_day,
         "days": DAYS_SHOWN,
     }
+
+
+def recent(ctx: Context, since: str | None, limit: int) -> list[dict]:
+    """Posts that finished downloading, the most recent first: what is new in the download
+    folder since `since` (naive UTC), or within the last two weeks."""
+    since = since or (datetime.now(UTC) - timedelta(days=14)).replace(tzinfo=None).isoformat()
+    out = []
+    names: dict[str, sqlite3.Row] = {}
+    for r in ctx.db.all(
+        """SELECT p.*, COUNT(f.id) AS files, SUM(f.local_size) AS bytes
+           FROM posts p
+           LEFT JOIN files f ON f.creator_id=p.creator_id AND f.post_id=p.post_id
+             AND f.role<>'cover' AND f.state='done'
+           WHERE p.local_done=1 AND p.done_at>=?
+           GROUP BY p.creator_id, p.post_id ORDER BY p.done_at DESC LIMIT ?""",
+        (since, limit),
+    ):
+        creator = names.get(r["creator_id"]) or ctx.creator(r["creator_id"])
+        if creator is None:
+            continue
+        names[r["creator_id"]] = creator
+        out.append(
+            {
+                "creator_id": r["creator_id"],
+                "creator_name": creator["alias"] or creator["name"],
+                "group": creator["group_path"],
+                "post_id": r["post_id"],
+                "title": r["title"],
+                "published": r["published"],
+                "done_at": r["done_at"],
+                "files": r["files"],
+                "bytes": r["bytes"],
+                "dir": str(post_dir(ctx, creator, r)),
+                "creator_dir": str(ctx.creator_dir(creator)),
+            }
+        )
+    return out
+
+
+def recent_count(ctx: Context, since: str) -> int:
+    row = ctx.db.one("SELECT COUNT(*) AS n FROM posts WHERE local_done=1 AND done_at>=?", (since,))
+    return row["n"] if row else 0

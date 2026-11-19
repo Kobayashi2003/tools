@@ -34,7 +34,7 @@ async () => {
   await switchView("library");
   const nativeFetch = window.fetch;
   window.fetch = async (url, options) => {
-    if (String(url).startsWith("/api/works?")) {
+    if (/^\/?api\/works\?/.test(String(url))) {
       const query = new URL(url, location.origin).searchParams.get("query");
       if (["slow", "fast"].includes(query)) {
         await delay(query === "slow" ? 350 : 40);

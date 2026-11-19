@@ -14,12 +14,12 @@ from app.engine.download import Downloader, cover_preference, post_dir, save_dir
 from app.engine.jobs import JobRunner
 from app.engine.reconcile import entries_json, reconcile_creator
 from app.engine.sync import sync_creator
-from app.engine.views import creators, post_rows
+from app.engine.views import creators, overview, post_rows, recent, recent_count
 from app.library.imagesize import image_size
 from app.library.migrate import execute_adopt, norm_title, plan_adopt, resolve
 from app.sources.fanbox import FanboxListItem
 from app.sources.http import PermanentError, TransientError
-from app.store.db import load
+from app.store.db import Database, load
 
 CID = "fanbox_1539728"
 
@@ -146,8 +146,23 @@ def test_reconcile_merges_sources_and_never_renames(ctx: Context):
     assert names["n:aZ81.png"] == "custom.png"
 
 
+def test_upgrading_an_existing_database_rewords_old_download_errors(ctx: Context):
+    add_creator(ctx)
+    entries = pawchive_entries(None, [{"name": "art.png", "path": "/a/" + "a" * 64 + ".png"}])
+    obs(ctx, "1", "pawchive", "full", "2026-01-01T00:00:00", entries)
+    reconcile(ctx)
+    ctx.db.run("UPDATE files SET state='failed', error='failed in v1'")
+    ctx.db.run("PRAGMA user_version=3")
+
+    upgraded = Database(ctx.db.path)
+
+    row = upgraded.one("SELECT state, error FROM files")
+    assert row is not None
+    assert (row["state"], row["error"]) == ("failed", "Previous download failed")
+
+
 def test_a_downloaded_file_keeps_its_row_when_its_key_changes(ctx: Context):
-    """v1 saved Pawchive's main file under its own name; later Pawchive calls it
+    """The main file was saved under its own name; later Pawchive calls it
     `cover.jpeg` (same content hash) or it turns out to be Fanbox's cover. Either way it
     is the file already on disk, not a new one to fetch."""
     add_creator(ctx)
@@ -155,7 +170,7 @@ def test_a_downloaded_file_keeps_its_row_when_its_key_changes(ctx: Context):
     main = {"name": "AsBi.jpeg", "path": f"/dd/ce/{sha}.jpg"}
     obs(ctx, "1", "pawchive", "full", "2020-01-01T00:00:00", pawchive_entries(main, []))
     reconcile(ctx)
-    # As v1's import recorded it: under the file's own name.
+    # The saved record uses the file's own name.
     ctx.db.run("UPDATE files SET key='n:AsBi.jpeg', state='done', via='pawchive'")
     ctx.db.run("UPDATE posts SET local_done=1, done_at='2020-01-02T00:00:00'")
 
@@ -385,7 +400,12 @@ def test_a_pawchive_404_is_retried_only_by_hand(ctx: Context, monkeypatch: pytes
     assert asked == ["pawchive"]
     row = ctx.db.one("SELECT state, error FROM files")
     assert row is not None and (row["state"], row["error"]) == ("failed", "Pawchive 404")
-    assert post_rows(ctx, CID)[0]["head"]["k"] == "failed"
+    assert post_rows(ctx, CID)[0]["head"]["k"] == "blocked"
+    # Not waiting and not a failure the next run retries: the counts leave it out.
+    summary = next(c for c in creators(ctx) if c["id"] == CID)
+    assert (summary["fetchable"], summary["failed"], summary["blocked"]) == (0, 0, 1)
+    assert overview(ctx)["issues"]["blocked"]["posts"] == 1
+    assert "failed" not in overview(ctx)["issues"]
     downloader.creator(CID, post_ids=["1"])
     assert asked == ["pawchive", "pawchive"]
 
@@ -399,6 +419,21 @@ def test_filtered_posts_are_not_counted_as_waiting(ctx: Context):
     assert next(c for c in creators(ctx) if c["id"] == CID)["fetchable"] == 2
     ctx.db.run("UPDATE creators SET filter=?", ('{"exclude_keywords": ["支援者様"]}',))
     assert next(c for c in creators(ctx) if c["id"] == CID)["fetchable"] == 1
+
+
+def test_recent_lists_finished_posts_newest_first(ctx: Context):
+    add_creator(ctx)
+    entries = pawchive_entries(None, [{"name": "a.png", "path": "/a/" + "a" * 64 + ".png"}])
+    for pid in ("1", "2", "3"):
+        obs(ctx, pid, "pawchive", "full", f"2020-01-0{pid}T00:00:00", entries)
+    reconcile(ctx)
+    ctx.db.run("UPDATE posts SET local_done=1, done_at='2026-11-01T00:00:00' WHERE post_id='1'")
+    ctx.db.run("UPDATE posts SET local_done=1, done_at='2026-11-03T00:00:00' WHERE post_id='2'")
+    rows = recent(ctx, "2026-10-01T00:00:00", 10)
+    assert [r["post_id"] for r in rows] == ["2", "1"]
+    assert rows[0]["creator_id"] == CID and rows[0]["dir"]
+    assert [r["post_id"] for r in recent(ctx, "2026-11-02T00:00:00", 10)] == ["2"]
+    assert recent_count(ctx, "2026-11-02T00:00:00") == 1
 
 
 def test_pawchive_html_becomes_fanbox_plain_text():

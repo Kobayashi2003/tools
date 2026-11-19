@@ -1,0 +1,144 @@
+/* The frame: sidebar (navigation, creator tree, job status), main area, page transitions. */
+
+.app { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); height: 100%; }
+.side { border-right: 1px solid var(--line); background: var(--surface-2); display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+/* Drag the sidebar's edge to widen it; the width is kept per browser. */
+.side-resize { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 10; touch-action: none; }
+.side-resize:hover, .side-resize.on { background: color-mix(in srgb, var(--focus) 35%, transparent); }
+.side-head { padding: var(--sp-3); display: grid; gap: 10px; }
+.brand { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); min-height: 28px; }
+.brand-mark { display: flex; align-items: center; gap: 9px; font-weight: 700; text-decoration: none; color: var(--fg); min-width: 0; white-space: nowrap; }
+.brand-mark img { flex: none; border-radius: 5px; }
+.icon-btn { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: var(--r-s); background: transparent; color: var(--fg-3); cursor: pointer; }
+.icon-btn:hover { background: var(--surface-3); color: var(--fg); }
+.side nav { display: grid; gap: 1px; }
+.side nav a { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; text-decoration: none; border-radius: var(--r-s); font-size: 13px; color: var(--fg-2); white-space: nowrap; overflow: hidden; }
+.side nav a svg { flex: none; color: var(--fg-3); }
+.side nav a:hover { background: var(--surface-3); color: var(--fg); }
+.side nav a[aria-current="page"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line); font-weight: 500; }
+.side nav a[aria-current="page"] svg { color: var(--fg); }
+.nav-n { margin-left: auto; min-width: 20px; height: 18px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 500; color: var(--fg-2); background: var(--surface-3); border-radius: 9px; padding: 0 6px; line-height: 1; font-variant-numeric: tabular-nums; }
+.nav-n.live { color: var(--ink-fg); background: var(--ink); }
+.side-sec { display: flex; align-items: baseline; gap: 6px; padding: 10px 12px 6px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; letter-spacing: .06em; color: var(--fg-3); text-transform: uppercase; }
+.side-sec .num { font-weight: 500; letter-spacing: 0; }
+.side-actions { display: flex; gap: 6px; padding: 0 var(--sp-3) var(--sp-2); }
+.side-actions .field { flex: 1; }
+
+/* ---------------- creator tree ---------------- */
+.tree { overflow-y: auto; overflow-x: hidden; padding: 2px 6px 16px; flex: 1; font-size: 13px; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; border-top: 1px solid var(--line); }
+.tree-empty { padding: 24px 12px; color: var(--fg-3); font-size: 13px; text-align: center; }
+.grp { margin-top: 2px; }
+.grp .grp { margin-left: 12px; margin-top: 1px; }
+.grp > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 12px minmax(56px, 1fr) auto auto 20px; gap: 6px; align-items: center; min-height: 28px; padding: 0 6px 0 8px; color: var(--fg-2); font-size: 12px; font-weight: 500; border-radius: var(--r-s); user-select: none; }
+.grp > summary::-webkit-details-marker { display: none; }
+.grp > summary::before { content: ""; width: 0; height: 0; border-left: 4px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform .15s; justify-self: center; color: var(--fg-3); }
+.grp[open] > summary::before { transform: rotate(90deg); }
+.grp > summary:hover { background: var(--surface-3); }
+.grp > summary .gname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grp > summary .num { color: var(--fg-3); font-weight: 400; font-size: 12px; }
+.grp-edit { width: 20px; height: 20px; display: grid; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--fg-3); cursor: pointer; padding: 0; visibility: hidden; }
+.grp-edit svg { width: 12px; height: 12px; }
+.grp-edit:hover { background: var(--surface); color: var(--fg); }
+.grp > summary:hover > .grp-edit, .grp-edit:focus-visible { visibility: visible; }
+.tree.dragging .grp-edit { visibility: hidden; }
+.grp > summary.drop { background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--ink); color: var(--fg); }
+/* One badge at most per row: what to download, else what failed, else new links. */
+.tb { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--warn); }
+.tb svg { width: 11px; height: 11px; flex: none; }
+.tb.bad { color: var(--bad); }
+.tb.bad svg { width: 8px; height: 8px; margin-right: 1px; }
+.tb.ln { color: var(--fg-2); }
+.tb.off { color: var(--fg-3); font-weight: 400; }
+.cr { display: grid; grid-template-columns: 22px minmax(64px, 1fr) auto; gap: var(--sp-2); align-items: center; width: 100%; padding: 0 8px 0 18px; border-radius: var(--r-s); text-decoration: none; color: inherit; min-height: 28px; }
+.cr:hover { background: var(--surface-3); }
+.cr[aria-current="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.cr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cr .dots { display: flex; gap: 3px; }
+.cr .dots i { width: 7px; height: 7px; border-radius: 2px; display: block; }
+.cr.ignored .nm { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--line-strong); }
+.cr.moving { opacity: .6; cursor: progress; }
+.dp-full { background: var(--src-p); }
+.dp-meta { background: repeating-linear-gradient(135deg, var(--src-p) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--src-p); }
+.dp-none { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.df-open { background: var(--src-f); }
+.df-locked { box-shadow: inset 0 0 0 1.5px var(--src-f); }
+.df-unknown { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.df-na { visibility: hidden; }
+.df-none { box-shadow: inset 0 0 0 1px var(--line-strong); background: linear-gradient(135deg, transparent 45%, var(--line-strong) 45% 55%, transparent 55%); }
+
+/* ---------------- job status at the foot ---------------- */
+.side-foot { border-top: 1px solid var(--line); padding: var(--sp-2) var(--sp-3); font-size: 12px; color: var(--fg-2); display: grid; gap: 6px; }
+.side-foot .job { display: grid; grid-template-columns: 12px minmax(0, 1fr); column-gap: 8px; align-items: center; min-width: 0; text-decoration: none; color: inherit; border-radius: var(--r-s); }
+.side-foot a.job:hover .job-n { text-decoration: underline; }
+.side-foot .job-n { font-weight: 500; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-foot .job-p { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); }
+.side-foot .job-q { color: var(--fg-3); padding-left: 20px; }
+.spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--fg-2); animation: spin 1s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.idle-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; margin: 0 1px; }
+
+/* ---------------- main ---------------- */
+.main-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.main { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; position: relative; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; container-type: inline-size; container-name: main; }
+/* A page with panes that scroll on their own: the main area itself stays put. */
+.main.panes { overflow: hidden; }
+.banner { padding: 8px 22px; font-size: 13px; display: flex; gap: 10px; align-items: center; background: var(--bad-soft); color: var(--bad); border-bottom: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); }
+.banner a { font-weight: 500; }
+
+/* ---------------- collapsed sidebar ---------------- */
+/* A 56px rail of icons; everything that needs width is hidden, nothing reflows. */
+.side-collapsed .app { grid-template-columns: 56px minmax(0, 1fr); }
+.side-collapsed .side-head { padding: 12px 10px; }
+.side-collapsed .brand { flex-direction: column; gap: 8px; }
+.side-collapsed .brand-mark span,
+.side-collapsed .side nav a span,
+.side-collapsed .side-sec,
+.side-collapsed .side-actions,
+.side-collapsed .tree,
+.side-collapsed .side-resize,
+.side-collapsed .side-foot .job-n,
+.side-collapsed .side-foot .job-p,
+.side-collapsed .side-foot .job-q,
+.side-collapsed .side-foot .job-t { display: none; }
+.side-collapsed .side nav a { justify-content: center; padding: 0; }
+.side-collapsed .side-foot { margin-top: auto; padding: 12px 0; justify-items: center; }
+.side-collapsed .side-foot .job { grid-template-columns: 12px; }
+
+/* ---------------- transitions ---------------- */
+.progress { position: absolute; top: 0; left: 0; right: 0; height: 2px; z-index: 50; overflow: hidden; pointer-events: none; }
+.progress::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 30%; background: var(--focus); animation: progress 1s ease-in-out infinite; }
+@keyframes progress { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+/* The page being left stays readable but inert until the next one is ready. */
+.main.busy > * { opacity: .5; transition: opacity .15s ease; pointer-events: none; }
+.main.enter > * { animation: enter .16s ease-out; }
+@keyframes enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.skeleton { padding: 22px 24px; display: grid; gap: 14px; }
+.sk { display: block; background: var(--surface-2); border-radius: var(--r-m); position: relative; overflow: hidden; }
+.sk::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface-3) 80%, transparent), transparent); animation: shimmer 1.2s infinite; }
+@keyframes shimmer { to { transform: translateX(100%); } }
+.sk-head { display: flex; gap: 14px; align-items: center; }
+.sk-avatar { width: 44px; height: 44px; border-radius: 50%; flex: none; }
+.w15 { width: 15%; } .w40 { width: 40%; } .w60 { width: 60%; }
+.sk-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.sk-tile { height: 74px; }
+.sk-bar { height: 10px; border-radius: 5px; }
+.sk-row { display: flex; gap: 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.sk-thumb { width: 112px; height: 59px; flex: none; border-radius: 4px; }
+
+@media (max-width: 860px) {
+  /* Narrow screens scroll the whole page: a fixed split would leave the list a sliver. */
+  html, body { height: auto; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; height: auto; min-height: 100%; }
+  .side { border-right: 0; border-bottom: 1px solid var(--line); }
+  .side-resize { display: none; }
+  .tree { max-height: 40vh; }
+  .main, .main.panes { overflow: visible; }
+  /* Here the sidebar sits on top: nav goes across, and collapsing only hides the tree. */
+  .side nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .side nav a { justify-content: center; }
+  .side-collapsed .app { grid-template-columns: minmax(0, 1fr); }
+  .side-collapsed .brand { flex-direction: row; }
+  .side-collapsed .brand-mark span, .side-collapsed .side nav a span { display: inline; }
+  .side-collapsed .side-actions { display: flex; }
+  .side-collapsed .side-foot { display: none; }
+}

@@ -40,7 +40,15 @@ from .engine.login import (
     apply_sessid,
     find_browser,
 )
-from .engine.views import creator_detail, creators, overview, post_detail, post_rows
+from .engine.views import (
+    creator_detail,
+    creators,
+    overview,
+    post_detail,
+    post_rows,
+    recent,
+    recent_count,
+)
 from .library.layout import clean_group, preview, regrouped
 from .library.thumbs import Thumbs
 from .sources.fanbox import SessionRejected
@@ -347,6 +355,15 @@ def create_app(data_dir: Path, start_engine: bool = True) -> FastAPI:
         if cached["value"] is None or time.monotonic() - cached["at"] > OVERVIEW_SECONDS:
             cached["value"], cached["at"] = overview(ctx), time.monotonic()
         return cached["value"]
+
+    # Read only: the Inbox lists what arrived; looking through and moving folders stays by hand.
+    @app.get("/api/recent")
+    def get_recent(since: str | None = None, limit: int = 500):
+        return recent(ctx, since or None, max(1, min(limit, 2000)))
+
+    @app.get("/api/recent/count")
+    def get_recent_count(since: str):
+        return {"n": recent_count(ctx, since)}
 
     @app.post("/api/creators")
     def add_creator(body: AddCreator):

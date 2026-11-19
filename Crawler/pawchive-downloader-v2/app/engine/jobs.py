@@ -341,7 +341,7 @@ class JobRunner:
         return base if base > after else base + timedelta(days=1)
 
     def _timers(self):
-        """Timers are in local wall time, as v1's were. Each creator remembers when its
+        """Timers are in local wall time. Each creator remembers when its
         timer last fired, so a restart does not re-run a day's download."""
         while not self._stop.wait(30):
             try:
