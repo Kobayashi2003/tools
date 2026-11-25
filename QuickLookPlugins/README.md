@@ -51,9 +51,12 @@ Change both together.
 
 ## EpubViewer
 
-- The reader is an unchanged copy of `components/data-display/epub-reader` in
-  `web/src/epub-reader`; change the original and copy it again. It is bundled by Vite and runs
-  in WebView2, which shares QuickLook HtmlViewer's browser data folder.
+- `QuickLook.Plugin.EpubViewer/web/src/epub-reader/` contains the plugin's copy
+  of EPUB Reader. Use the reader's public API in the plugin integration for
+  QuickLook-specific behavior. Keep the shared files unchanged. EPUB Reader
+  owns fixes to shared reader code and syncs them to all consumers.
+- Vite bundles the reader for WebView2, which shares QuickLook HtmlViewer's
+  browser data folder.
 - The plugin serves the bundle and the book itself from `https://epubviewer.quicklook/`, so the
   page needs no file access. The fixed origin lets the reader remember each book's position.
 - Links in a book open in the default browser. The reader's fullscreen button maximizes the
