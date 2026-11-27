@@ -20,7 +20,7 @@ public sealed record ResolvedDisplaySession(
 /// Priority:
 /// 1. Explicit manual pin selected by the user.
 /// 2. Live Win32 Antigravity window title match (conversation title or workspace folder).
-/// 3. Most recently active transcript / CLI statusLine session.
+/// 3. Most recently active transcript.
 /// </summary>
 public static class SessionResolver
 {
@@ -32,10 +32,6 @@ public static class SessionResolver
         "visual studio code",
         "vscode",
         "code",
-        "powershell",
-        "windows terminal",
-        "terminal",
-        "cmd",
     };
 
     private static readonly HashSet<string> GenericDirNames = new(StringComparer.OrdinalIgnoreCase)
@@ -133,7 +129,7 @@ public static class SessionResolver
             return new ResolvedDisplaySession(null, SessionBindSource.UnmatchedWindow, "Unmatched");
         }
 
-        // 3. Fallback: most recently active transcript / live CLI statusLine
+        // 3. Fallback: most recently active transcript
         var latest = trackedSurface is not null && snapshot.ActiveSession?.Surface != trackedSurface
             ? snapshot.Sessions.FirstOrDefault(s => s.Surface == trackedSurface && !s.IsSubagent)
             : snapshot.ActiveSession;

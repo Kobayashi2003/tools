@@ -10,7 +10,7 @@ internal sealed class DesktopQuotaMonitor : IDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly CancellationToken _cancellationToken;
     private readonly Action _onUpdated;
-    private volatile StatusLineStateFile? _state;
+    private volatile DesktopQuotaSnapshot? _snapshot;
     private DateTimeOffset _nextRead;
     private int _serverPid;
     private int _refreshing;
@@ -21,7 +21,7 @@ internal sealed class DesktopQuotaMonitor : IDisposable
         _cancellationToken = _shutdown.Token;
     }
 
-    public StatusLineStateFile? State => _state;
+    public DesktopQuotaSnapshot? Snapshot => _snapshot;
 
     public void Refresh(bool force = false)
     {
@@ -36,27 +36,21 @@ internal sealed class DesktopQuotaMonitor : IDisposable
                 {
                     _serverPid = pid;
                     _nextRead = default;
-                    if (_state is not null)
+                    if (_snapshot is not null)
                     {
-                        _state = null;
+                        _snapshot = null;
                         _onUpdated();
                     }
                 }
 
                 if (server is null || (!force && DateTimeOffset.UtcNow < _nextRead)) return;
                 _nextRead = DateTimeOffset.UtcNow.AddSeconds(30);
-                var payload = await DesktopQuotaClient.ReadAsync(server, _cancellationToken).ConfigureAwait(false);
-                if (payload is null || _cancellationToken.IsCancellationRequested) return;
+                var readings = await DesktopQuotaClient.ReadAsync(server, _cancellationToken).ConfigureAwait(false);
+                if (readings is null || _cancellationToken.IsCancellationRequested) return;
 
-                var capture = new CapturedStatusLine { CapturedAt = DateTimeOffset.UtcNow, Payload = payload };
-                var state = new StatusLineStateFile
-                {
-                    LatestQuota = capture,
-                    QuotaHistory = _state?.QuotaHistory.ToList() ?? [],
-                };
-                TelemetryStore.AddQuotaHistory(state, capture);
-                _state = state;
-                _nextRead = capture.CapturedAt.AddMinutes(1);
+                var capturedAt = DateTimeOffset.UtcNow;
+                _snapshot = DesktopQuotaSnapshot.Capture(capturedAt, readings, _snapshot);
+                _nextRead = capturedAt.AddMinutes(1);
                 _onUpdated();
             }
             catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException or JsonException or UnauthorizedAccessException)

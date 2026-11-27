@@ -81,7 +81,7 @@ public sealed class TrayIconManager : IDisposable
             Icon = _currentIcon,
             Text = "Antigravity UsageOrb",
             ContextMenuStrip = menu,
-            Visible = true,
+            Visible = false,
         };
 
         _notifyIcon.MouseClick += (_, e) =>
@@ -92,6 +92,8 @@ public sealed class TrayIconManager : IDisposable
             }
         };
     }
+
+    internal void SetVisible(bool visible) => _notifyIcon.Visible = visible;
 
     public void UpdateState(AppSettings settings, DashboardSnapshot? snapshot, ResolvedDisplaySession? resolved = null)
     {

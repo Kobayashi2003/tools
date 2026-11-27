@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Threading;
 using UsageOrb.Core;
 using UsageOrb.Platform;
 using UsageOrb.Services;
@@ -21,19 +23,24 @@ public partial class App : System.Windows.Application
     private CancellationTokenSource? _wakeCts;
     private string? _pinnedConversationId;
     private TrackedWindowState? _lastTrackedWindow;
+    private DispatcherTimer? _lifecycleTimer;
+    private bool _runtimeActive;
     private readonly bool _openConsoleOnStartup;
+    private readonly bool _backgroundStartup;
 
-    public App(bool openConsoleOnStartup = false)
+    public App(bool openConsoleOnStartup = false, bool backgroundStartup = false)
     {
         _openConsoleOnStartup = openConsoleOnStartup;
+        _backgroundStartup = backgroundStartup;
     }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        _settings = TelemetryStore.LoadSettings();
+        _settings = SettingsStore.LoadSettings();
         _settings.StartWithWindows = StartupManager.IsEnabled();
+        if (_settings.RegisterStartMenuShortcut) StartMenuShortcut.TrySetRegistration(enabled: true);
 
         _themeService = new ThemeService();
         _themeService.ThemeChanged += isDark =>
@@ -50,6 +57,12 @@ public partial class App : System.Windows.Application
         _popoverWindow = new PopoverWindow();
         _managementWindow = new ManagementWindow(_settings);
         _managementWindow.UpdateTheme(_themeService.IsDark);
+        _orbWindow.IsVisibleChanged += (_, _) =>
+        {
+            if (_orbWindow.IsVisible) return;
+            if (_hoverWindow.IsVisible) _hoverWindow.Hide();
+            if (_popoverWindow.IsVisible) _popoverWindow.Hide();
+        };
 
         // Wire orb interactions
         _orbWindow.HoverStarted += () =>
@@ -98,7 +111,7 @@ public partial class App : System.Windows.Application
             next.DockMode = mode;
             ApplyAndSaveSettings(next);
         };
-        _orbWindow.RefreshRequested += () => _telemetryService?.RefreshNow(forceModels: false);
+        _orbWindow.RefreshRequested += () => _telemetryService?.RefreshNow();
         _orbWindow.ResetPositionRequested += ResetOrbPosition;
         _orbWindow.HideOrbRequested += () =>
         {
@@ -110,13 +123,13 @@ public partial class App : System.Windows.Application
 
         // Wire popover actions
         _popoverWindow.ManageUsageRequested += OpenManagementConsole;
-        _popoverWindow.RefreshRequested += () => _telemetryService?.RefreshNow(forceModels: false);
+        _popoverWindow.RefreshRequested += () => _telemetryService?.RefreshNow();
         _popoverWindow.SessionSelectionChanged += SetPinnedSession;
 
         // Wire management console actions
-        _managementWindow.SettingsSaved += ApplyAndSaveSettings;
+        _managementWindow.SettingsSaved += ApplyConsoleSettings;
         _managementWindow.ResetPositionRequested += ResetOrbPosition;
-        _managementWindow.RefreshRequested += forceModels => _telemetryService?.RefreshNow(forceModels);
+        _managementWindow.RefreshRequested += () => _telemetryService?.RefreshNow();
         _managementWindow.SessionPinRequested += SetPinnedSession;
 
         // Wire system tray
@@ -151,15 +164,12 @@ public partial class App : System.Windows.Application
         _trayManager.UpdateState(_settings, null, null);
 
         // Track Antigravity desktop/IDE windows (position + live window title for smart session matching)
-        _windowTracker = new AntigravityWindowTracker();
+        _windowTracker = new AntigravityWindowTracker(IsOverlayInteraction, _orbWindow.GetDockedBounds);
         _lastTrackedWindow = _windowTracker.CurrentState;
         _windowTracker.StateChanged += tracked => Dispatcher.BeginInvoke(() =>
         {
+            if (tracked != _windowTracker?.CurrentState) return;
             _orbWindow?.UpdateTrackedWindow(tracked);
-            if (_popoverWindow?.IsVisible == true && _orbWindow is not null && !_orbWindow.IsVisible)
-            {
-                _popoverWindow.Hide();
-            }
 
             var previous = _lastTrackedWindow;
             _lastTrackedWindow = tracked;
@@ -169,17 +179,61 @@ public partial class App : System.Windows.Application
                 BroadcastSnapshot();
             }
         });
+        _lifecycleTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(750) };
+        _lifecycleTimer.Tick += (_, _) => UpdateLifecycle(closeConsole: true);
+        UpdateLifecycle(closeConsole: false);
         _orbWindow.UpdateTrackedWindow(_windowTracker.CurrentState);
-
-        // Start real-time file-watcher telemetry
-        _telemetryService = new TelemetryMonitorService(_settings);
-        _telemetryService.SnapshotUpdated += _ => Dispatcher.BeginInvoke(BroadcastSnapshot);
 
         StartSingleInstanceWakeListener();
 
-        if (_openConsoleOnStartup)
+        if (_openConsoleOnStartup || (!_backgroundStartup && (!_settings.ShowTrayIcon || !_runtimeActive)))
         {
             OpenManagementConsole();
+        }
+    }
+
+    private bool IsOverlayInteraction(IntPtr foreground)
+    {
+        if (foreground == IntPtr.Zero) return false;
+        NativeMethods.GetWindowThreadProcessId(foreground, out uint pid);
+        if (pid != (uint)Environment.ProcessId) return false;
+        if (_managementWindow is { } console && foreground == new WindowInteropHelper(console).Handle) return false;
+        return _popoverWindow?.IsVisible == true || _orbWindow?.IsContextMenuOpen == true;
+    }
+
+    private void UpdateLifecycle(bool closeConsole)
+    {
+        _lifecycleTimer!.IsEnabled = _settings.FollowAntigravityLifecycle;
+        bool active = !_settings.FollowAntigravityLifecycle || AntigravityDesktop.IsRunning();
+        _windowTracker?.SetSuspended(!active);
+        _orbWindow?.SetLifecycleActive(active);
+        _trayManager?.SetVisible(active && _settings.ShowTrayIcon);
+        if (active == _runtimeActive) return;
+        _runtimeActive = active;
+
+        if (active)
+        {
+            _telemetryService = new TelemetryMonitorService(_settings);
+            _telemetryService.SnapshotUpdated += _ => Dispatcher.BeginInvoke(BroadcastSnapshot);
+        }
+        else
+        {
+            var lastSnapshot = _telemetryService?.LatestSnapshot;
+            _telemetryService?.Dispose();
+            _telemetryService = null;
+            if (closeConsole) _managementWindow?.Hide();
+            if (lastSnapshot?.DesktopQuotaLastSeenAt is not null)
+            {
+                var pausedSnapshot = lastSnapshot with
+                {
+                    DesktopQuotaLastSeenAt = null,
+                    QuotaBuckets = [],
+                    QuotaHistory = [],
+                };
+                var resolved = SessionResolver.Resolve(pausedSnapshot, _pinnedConversationId, trackedWindowTitle: null);
+                _managementWindow?.UpdateSnapshot(AnalyticsEngine.ForDisplaySession(pausedSnapshot, resolved.Session, _settings),
+                    resolved, _pinnedConversationId);
+            }
         }
     }
 
@@ -234,14 +288,38 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private void ApplyConsoleSettings(AppSettings next)
+    {
+        bool wasRegistered = _settings.RegisterStartMenuShortcut;
+        if ((wasRegistered || next.RegisterStartMenuShortcut) &&
+            StartMenuShortcut.TrySetRegistration(next.RegisterStartMenuShortcut) is { } shortcutError)
+        {
+            _managementWindow?.ShowToast(shortcutError);
+            return;
+        }
+
+        try
+        {
+            ApplyAndSaveSettings(next);
+            _managementWindow?.ShowToast("Preferences saved.");
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+        {
+            if (wasRegistered != next.RegisterStartMenuShortcut) StartMenuShortcut.TrySetRegistration(wasRegistered);
+            _managementWindow?.ShowToast("Preferences could not be saved.");
+        }
+    }
+
     private void ApplyAndSaveSettings(AppSettings next)
     {
-        _settings = TelemetryStore.SaveSettings(next);
-        StartupManager.SetEnabled(_settings.StartWithWindows);
+        _settings = SettingsStore.SaveSettings(next);
+        StartupManager.SetEnabled(_settings.StartWithWindows, _settings.FollowAntigravityLifecycle);
         _themeService?.Apply(_settings.Theme);
         _telemetryService?.UpdateSettings(_settings);
         _orbWindow?.UpdateSettings(_settings);
         _managementWindow?.UpdateSettings(_settings);
+        _windowTracker?.EvaluateNow();
+        UpdateLifecycle(closeConsole: false);
         BroadcastSnapshot();
     }
 
@@ -282,6 +360,7 @@ public partial class App : System.Windows.Application
     private void ShutdownApp()
     {
         _wakeCts?.Cancel();
+        _lifecycleTimer?.Stop();
         _wakeEvent?.Dispose();
         _telemetryService?.Dispose();
         _windowTracker?.Dispose();

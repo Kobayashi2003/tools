@@ -73,7 +73,7 @@ internal static class DesktopQuotaClient
         }
     }
 
-    public static async Task<RawStatusLinePayload?> ReadAsync(Registration server, CancellationToken cancellationToken)
+    public static async Task<IReadOnlyDictionary<string, DesktopQuotaReading>?> ReadAsync(Registration server, CancellationToken cancellationToken)
     {
         using var handler = new SocketsHttpHandler
         {
@@ -97,14 +97,14 @@ internal static class DesktopQuotaClient
         return ParseSummary(json.RootElement);
     }
 
-    internal static RawStatusLinePayload? ParseSummary(JsonElement root)
+    internal static IReadOnlyDictionary<string, DesktopQuotaReading>? ParseSummary(JsonElement root)
     {
         var summary = Property(root, "response");
         if (summary.ValueKind == JsonValueKind.Undefined) summary = root;
         var groups = Property(summary, "groups");
         if (groups.ValueKind != JsonValueKind.Array) return null;
 
-        var quotas = new Dictionary<string, RawStatusLineQuotaBucket>(StringComparer.OrdinalIgnoreCase);
+        var quotas = new Dictionary<string, DesktopQuotaReading>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in groups.EnumerateArray())
         {
             var buckets = Property(group, "buckets");
@@ -118,26 +118,27 @@ internal static class DesktopQuotaClient
                 var fraction = ReadNumber(bucket, "remainingFraction") ?? ReadNumber(remaining, "remainingFraction");
                 var amount = ReadNumber(bucket, "remainingAmount") ?? ReadNumber(remaining, "remainingAmount");
                 var label = ReadText(bucket, "displayName") ?? ModelCatalog.FormatQuotaBucketLabel(id);
-                quotas.TryAdd(id, new RawStatusLineQuotaBucket
+                var resetText = ReadText(bucket, "resetTime") ?? ReadText(remaining, "resetTime");
+                DateTimeOffset? resetTime = DateTimeOffset.TryParse(resetText, out var parsedReset) ? parsedReset : null;
+                WindowKey? window = ReadText(bucket, "window")?.ToLowerInvariant() switch
                 {
-                    RemainingFraction = fraction is >= 0 and <= 1 ? fraction : null,
-                    RemainingAmount = amount is >= 0 ? amount : null,
-                    ResetTime = ReadText(bucket, "resetTime") ?? ReadText(remaining, "resetTime"),
-                    ResetInSeconds = ReadNumber(bucket, "resetInSeconds") ?? ReadNumber(remaining, "resetInSeconds"),
-                    Disabled = Property(bucket, "disabled").ValueKind == JsonValueKind.True,
-                    PoolName = poolName,
-                    DisplayLabel = string.IsNullOrEmpty(poolName) ? label : $"{poolName} · {label}",
-                    Window = ReadText(bucket, "window")?.ToLowerInvariant() switch
-                    {
-                        "5h" or "5-hour" => WindowKey.FiveHours,
-                        "weekly" or "7d" => WindowKey.SevenDays,
-                        _ => null,
-                    },
-                });
+                    "5h" or "5-hour" => WindowKey.FiveHours,
+                    "weekly" or "7d" => WindowKey.SevenDays,
+                    _ => null,
+                };
+                quotas.TryAdd(id, new DesktopQuotaReading(
+                    string.IsNullOrEmpty(poolName) ? label : $"{poolName} · {label}",
+                    poolName,
+                    fraction is >= 0 and <= 1 ? fraction : null,
+                    amount is >= 0 ? amount : null,
+                    resetTime,
+                    ReadNumber(bucket, "resetInSeconds") ?? ReadNumber(remaining, "resetInSeconds"),
+                    Property(bucket, "disabled").ValueKind == JsonValueKind.True,
+                    window));
             }
         }
 
-        return quotas.Count > 0 ? new RawStatusLinePayload { Quota = quotas } : null;
+        return quotas.Count > 0 ? quotas : null;
     }
 
     private static JsonElement Property(JsonElement node, string name) =>

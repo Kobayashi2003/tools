@@ -73,7 +73,7 @@ public partial class PopoverWindow : Window
                 RenderQuotaRows(_snapshot, _settings);
             }
         };
-        _tickTimer.Start();
+        IsVisibleChanged += (_, _) => _tickTimer.IsEnabled = IsVisible;
     }
 
     public void UpdateData(
@@ -91,14 +91,8 @@ public partial class PopoverWindow : Window
 
     public void ShowNear(Window orb)
     {
-        RenderAll();
-        if (!IsVisible)
-        {
-            Show();
-        }
-
-        UpdateLayout();
         ScreenPlacementHelper.PlaceNearOrb(this, orb, gapDip: 10);
+        if (!IsVisible) Show();
         Activate();
     }
 
@@ -118,17 +112,6 @@ public partial class PopoverWindow : Window
     private void RenderAll()
     {
         if (_snapshot is null) return;
-
-        // Plan pill
-        if (!string.IsNullOrWhiteSpace(_snapshot.PlanTier))
-        {
-            PlanPill.Visibility = Visibility.Visible;
-            PlanPillText.Text = _snapshot.PlanTier;
-        }
-        else
-        {
-            PlanPill.Visibility = Visibility.Collapsed;
-        }
 
         PopulateSessionCombo(_snapshot);
 

@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Forms;
+using System.Windows.Interop;
 using System.Windows.Media;
+using UsageOrb.Platform;
 
 namespace UsageOrb.UI;
 
@@ -17,8 +19,12 @@ internal static class ScreenPlacementHelper
         double scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
         double scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
 
-        int centerPxX = (int)Math.Round((orb.Left + orb.Width / 2.0) * scaleX);
-        int centerPxY = (int)Math.Round((orb.Top + orb.Height / 2.0) * scaleY);
+        var orbHwnd = new WindowInteropHelper(orb).Handle;
+        var orbBounds = NativeMethods.GetWindowRect(orbHwnd, out var rect)
+            ? new Rect(rect.Left / scaleX, rect.Top / scaleY, rect.Width / scaleX, rect.Height / scaleY)
+            : new Rect(orb.Left, orb.Top, orb.Width, orb.Height);
+        int centerPxX = (int)Math.Round((orbBounds.Left + orbBounds.Width / 2.0) * scaleX);
+        int centerPxY = (int)Math.Round((orbBounds.Top + orbBounds.Height / 2.0) * scaleY);
         var screen = Screen.FromPoint(new System.Drawing.Point(centerPxX, centerPxY));
         var wa = screen.WorkingArea;
 
@@ -27,37 +33,42 @@ internal static class ScreenPlacementHelper
         double waRight = wa.Right / scaleX;
         double waBottom = wa.Bottom / scaleY;
 
-        double popW = popup.ActualWidth > 10 ? popup.ActualWidth : (double.IsNaN(popup.Width) ? 300 : popup.Width);
-        double popH = popup.ActualHeight > 10 ? popup.ActualHeight : (double.IsNaN(popup.Height) ? 200 : popup.Height);
+        var desired = new System.Windows.Size(300, 200);
+        if (popup.Content is FrameworkElement content)
+        {
+            content.Measure(new System.Windows.Size(
+                double.IsNaN(popup.Width) ? double.PositiveInfinity : popup.Width,
+                double.IsNaN(popup.Height) ? double.PositiveInfinity : popup.Height));
+            desired = content.DesiredSize;
+        }
+        double popW = double.IsNaN(popup.Width) ? desired.Width : popup.Width;
+        double popH = double.IsNaN(popup.Height) ? desired.Height : popup.Height;
 
-        double top = orb.Top - popH - gapDip;
+        double top = orbBounds.Top - popH - gapDip;
         if (top < waTop + 8)
         {
-            top = orb.Top + orb.Height + gapDip;
+            top = orbBounds.Bottom + gapDip;
         }
 
-        bool onRightHalf = (orb.Left + orb.Width / 2.0) > (waLeft + waRight) / 2.0;
+        bool onRightHalf = (orbBounds.Left + orbBounds.Width / 2.0) > (waLeft + waRight) / 2.0;
         double left = onRightHalf
-            ? (orb.Left + orb.Width) - popW
-            : orb.Left;
+            ? orbBounds.Right - popW
+            : orbBounds.Left;
 
         left = Math.Clamp(left, waLeft + 8, Math.Max(waLeft + 8, waRight - popW - 8));
         top = Math.Clamp(top, waTop + 8, Math.Max(waTop + 8, waBottom - popH - 8));
 
         popup.Left = left;
         popup.Top = top;
+        // A reused popup may still have the DPI from the last monitor where it opened.
+        var popupHwnd = new WindowInteropHelper(popup).EnsureHandle();
+        NativeMethods.MoveOverlayWindow(popupHwnd, (int)Math.Round(left * scaleX), (int)Math.Round(top * scaleY));
     }
 
     public static System.Windows.Media.Brush BrushForContext(double pct, double warn, double critical, FrameworkElement scope)
     {
         string key = pct >= critical ? "DangerBrush" : (pct >= warn ? "WarnBrush" : "CyanBrush");
         return scope.TryFindResource(key) as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.DeepSkyBlue;
-    }
-
-    public static System.Windows.Media.Brush BrushForUsage(double pct, double warn, double critical, FrameworkElement scope)
-    {
-        string key = pct >= critical ? "DangerBrush" : (pct >= warn ? "WarnBrush" : "OkBrush");
-        return scope.TryFindResource(key) as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.MediumSeaGreen;
     }
 
     public static System.Windows.Media.Brush BrushForRemaining(double? remPct, double low, FrameworkElement scope)

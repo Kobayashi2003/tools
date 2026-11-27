@@ -1,0 +1,7 @@
+/bin/
+/obj/
+/work/
+/output/
+
+# Versioned record of available replays and thumbnail keys.
+!/SceneCatalog.tsv

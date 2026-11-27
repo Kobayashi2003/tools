@@ -12,6 +12,8 @@ namespace UsageOrb.UI;
 
 public partial class ManagementWindow : Window
 {
+    private enum ConsoleTab { Quotas, Context, Usage, Sessions, Settings }
+
     private sealed record SessionPickerItem(string? ConversationId, string Label)
     {
         public override string ToString() => Label;
@@ -41,7 +43,8 @@ public partial class ManagementWindow : Window
     private WindowKey _selectedWindow = WindowKey.SevenDays;
     private string? _inspectedConversationId;
     private string _selectedStepKindFilter = "ALL";
-    private int _selectedTabIndex;
+    private ConsoleTab _selectedTab = ConsoleTab.Quotas;
+    private readonly (ConsoleTab Tab, FrameworkElement View, System.Windows.Controls.Button Button)[] _tabs;
     private bool _isDark = true;
     private bool _suppressUiEvents;
 
@@ -53,12 +56,13 @@ public partial class ManagementWindow : Window
 
     public event Action<AppSettings>? SettingsSaved;
     public event Action? ResetPositionRequested;
-    public event Action<bool>? RefreshRequested;
+    public event Action? RefreshRequested;
     public event Action<string?>? SessionPinRequested;
 
     public ManagementWindow(AppSettings initialSettings)
     {
         InitializeComponent();
+        ShowInTaskbar = initialSettings.ShowTaskbarButton;
         _settings = initialSettings.Clone();
         _draftShape = _settings.WidgetShape;
         _draftAnchor = _settings.AnchorCorner;
@@ -90,47 +94,58 @@ public partial class ManagementWindow : Window
         MaximizeWinBtn.Click += (_, _) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
         CloseWinBtn.Click += (_, _) => Hide();
 
-        HeroCtxCard.MouseLeftButtonUp += (_, _) =>
-        {
-            _inspectedConversationId = null;
-            if (_snapshot is not null) RenderContextTab(_snapshot);
-            SelectTab(1);
-        };
         PinSessionBtn.Click += OnPinSessionClicked;
-        InlineCliLinkBtn.Click += (_, _) => SelectTab(3);
-        RefreshBtn.Click += (_, _) => RefreshRequested?.Invoke(false);
-        RefreshModelsBtn.Click += (_, _) => RefreshRequested?.Invoke(true);
+        QuotaSettingsBtn.Click += (_, _) =>
+        {
+            SelectTab(ConsoleTab.Settings);
+            QuotaSourcesCard.BringIntoView();
+        };
+        RefreshBtn.Click += (_, _) => RefreshRequested?.Invoke();
         InspectorSessionCombo.SelectionChanged += OnInspectorSessionChanged;
         StepFilterBox.TextChanged += (_, _) => RenderStepTable();
         SessionSearchBox.TextChanged += (_, _) => RenderSessionsTable();
         ShowSubagentsCheck.Checked += (_, _) => RenderSessionsTable();
         ShowSubagentsCheck.Unchecked += (_, _) => RenderSessionsTable();
-        SessionsGrid.MouseDoubleClick += OnSessionsGridDoubleClick;
+        SessionsGrid.MouseDoubleClick += (_, e) =>
+        {
+            if (ItemsControl.ContainerFromElement(SessionsGrid, e.OriginalSource as DependencyObject) is DataGridRow)
+                OpenSelectedSession();
+        };
+        SessionsGrid.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter && OpenSelectedSession()) e.Handled = true;
+        };
         OpacitySlider.ValueChanged += (_, _) => OpacityLabel.Text = $"{(int)Math.Round(OpacitySlider.Value * 100)}%";
         SaveSettingsBtn.Click += OnSaveSettingsClicked;
+        LaunchAntigravityBtn.Click += OnLaunchAntigravityClicked;
         ResetPosBtn.Click += (_, _) => ResetPositionRequested?.Invoke();
-        AutoConfigCliBtn.Click += OnAutoConfigureCliClicked;
-        CopyStatusLineCmdBtn.Click += OnCopyStatusLineCommand;
 
-        BuildNavTabs();
+        _tabs =
+        [
+            AddNavTab(ConsoleTab.Quotas, "Quotas", TabQuotasView),
+            AddNavTab(ConsoleTab.Context, "Context", TabContextView),
+            AddNavTab(ConsoleTab.Usage, "Usage", TabUsageView),
+            AddNavTab(ConsoleTab.Sessions, "Sessions", TabSessionsView),
+            AddNavTab(ConsoleTab.Settings, "Settings", TabSettingsView),
+        ];
+        UpdateNavTabs();
         BuildWindowPills();
         BuildStepKindPills();
         PopulateSettingsControls();
-        UpdateCliCommandText();
 
         _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _countdownTimer.Tick += (_, _) =>
         {
-            if (IsVisible && _selectedTabIndex == 0 && _snapshot is not null)
+            if (IsVisible && _selectedTab == ConsoleTab.Quotas && _snapshot is not null)
             {
-                RenderHeroCards(_snapshot);
+                RenderQuotaCards(_snapshot);
                 if (_snapshot.QuotaBuckets.Count > 0)
                 {
                     RenderLiveQuotaBuckets(_snapshot);
                 }
             }
         };
-        _countdownTimer.Start();
+        IsVisibleChanged += (_, _) => _countdownTimer.IsEnabled = IsVisible;
     }
 
     public void UpdateTheme(bool isDark)
@@ -142,7 +157,7 @@ public partial class ManagementWindow : Window
             NativeMethods.ApplyWindowDwmPolish(hwnd, isDark);
         }
 
-        BuildNavTabs();
+        UpdateNavTabs();
         BuildWindowPills();
         BuildStepKindPills();
         RebuildSettingsSegments();
@@ -152,6 +167,7 @@ public partial class ManagementWindow : Window
     public void UpdateSettings(AppSettings settings)
     {
         _settings = settings.Clone();
+        ShowInTaskbar = _settings.ShowTaskbarButton;
         PopulateSettingsControls();
         if (_snapshot is not null) RenderAll();
     }
@@ -167,52 +183,48 @@ public partial class ManagementWindow : Window
         RenderAll();
     }
 
-    private void SelectTab(int index)
+    private void SelectTab(ConsoleTab tab)
     {
-        _selectedTabIndex = Math.Clamp(index, 0, 3);
-        TabOverviewView.Visibility = _selectedTabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TabContextView.Visibility = _selectedTabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
-        TabModelsView.Visibility = _selectedTabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
-        TabSessionsView.Visibility = _selectedTabIndex == 3 ? Visibility.Visible : Visibility.Collapsed;
-        BuildNavTabs();
+        _selectedTab = tab;
+        UpdateNavTabs();
+        RenderSelectedTab();
     }
 
-    private void BuildNavTabs()
+    private (ConsoleTab Tab, FrameworkElement View, System.Windows.Controls.Button Button) AddNavTab(
+        ConsoleTab tab, string label, FrameworkElement view)
     {
-        NavTabBar.Children.Clear();
-        string[] labels = ["Overview & Quotas", "Context Inspector", "Models & Tools", "Sessions & Settings"];
-        for (int i = 0; i < labels.Length; i++)
+        var button = CreateSegmentButton(label, false, padding: new Thickness(15, 6, 15, 6), fontSize: 12.5);
+        button.Click += (_, _) => SelectTab(tab);
+        NavTabBar.Children.Add(button);
+        return (tab, view, button);
+    }
+
+    private void UpdateNavTabs()
+    {
+        foreach (var (tab, view, button) in _tabs)
         {
-            bool active = i == _selectedTabIndex;
-            int idx = i;
-            var btn = CreateSegmentButton(labels[i], active, padding: new Thickness(15, 6, 15, 6), fontSize: 12.5);
-            btn.Click += (_, _) => SelectTab(idx);
-            NavTabBar.Children.Add(btn);
+            bool active = tab == _selectedTab;
+            view.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+            button.Background = active ? (System.Windows.Media.Brush)FindResource("BgTertiaryBrush") : System.Windows.Media.Brushes.Transparent;
+            button.Foreground = (System.Windows.Media.Brush)FindResource(active ? "FgPrimaryBrush" : "FgSecondaryBrush");
+            button.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
         }
     }
 
     private void BuildWindowPills()
     {
-        void BuildInto(System.Windows.Controls.Panel panel)
+        WindowPillsPanel.Children.Clear();
+        foreach (var key in new[] { WindowKey.FiveHours, WindowKey.TwentyFourHours, WindowKey.SevenDays, WindowKey.ThirtyDays, WindowKey.All })
         {
-            panel.Children.Clear();
-            foreach (WindowKey key in new[] { WindowKey.FiveHours, WindowKey.TwentyFourHours, WindowKey.SevenDays, WindowKey.ThirtyDays, WindowKey.All })
+            var button = CreateSegmentButton(FormatUtil.WindowShort(key), key == _selectedWindow, padding: new Thickness(10, 4, 10, 4), fontSize: 11);
+            button.Click += (_, _) =>
             {
-                bool active = key == _selectedWindow;
-                var captured = key;
-                var btn = CreateSegmentButton(FormatUtil.WindowShort(key), active, padding: new Thickness(10, 4, 10, 4), fontSize: 11);
-                btn.Click += (_, _) =>
-                {
-                    _selectedWindow = captured;
-                    BuildWindowPills();
-                    if (_snapshot is not null) RenderAll();
-                };
-                panel.Children.Add(btn);
-            }
+                _selectedWindow = key;
+                BuildWindowPills();
+                RenderSelectedTab();
+            };
+            WindowPillsPanel.Children.Add(button);
         }
-
-        BuildInto(WindowPillsPanel);
-        BuildInto(ModelsWindowPills);
     }
 
     private void BuildStepKindPills()
@@ -244,15 +256,12 @@ public partial class ManagementWindow : Window
         string text,
         bool active,
         Thickness padding,
-        double fontSize = 11.5,
-        bool accentActive = false)
+        double fontSize = 11.5)
     {
         var bg = active
-            ? TryFindResource(accentActive ? "AccentBrush" : "BgTertiaryBrush") as System.Windows.Media.Brush
+            ? TryFindResource("BgTertiaryBrush") as System.Windows.Media.Brush
             : System.Windows.Media.Brushes.Transparent;
-        var fg = active
-            ? (accentActive ? System.Windows.Media.Brushes.White : TryFindResource("FgPrimaryBrush") as System.Windows.Media.Brush)
-            : TryFindResource("FgSecondaryBrush") as System.Windows.Media.Brush;
+        var fg = TryFindResource(active ? "FgPrimaryBrush" : "FgSecondaryBrush") as System.Windows.Media.Brush;
 
         var btn = new System.Windows.Controls.Button
         {
@@ -281,7 +290,7 @@ public partial class ManagementWindow : Window
         return btn;
     }
 
-    private void ShowToast(string message)
+    internal void ShowToast(string message)
     {
         StatusToast.Text = message;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.0) };
@@ -297,67 +306,82 @@ public partial class ManagementWindow : Window
     {
         if (_snapshot is null) return;
 
-        // Title bar metadata
-        if (!string.IsNullOrWhiteSpace(_snapshot.PlanTier))
+        HeaderSubtitle.Text = $"{_snapshot.Sessions.Count} sessions · Updated {_snapshot.GeneratedAt.ToLocalTime():HH:mm:ss}";
+
+        RenderSelectedTab();
+    }
+
+    private void RenderSelectedTab()
+    {
+        if (_snapshot is not { } snap) return;
+        switch (_selectedTab)
         {
-            PlanChip.Visibility = Visibility.Visible;
-            PlanChipText.Text = _snapshot.PlanTier;
+            case ConsoleTab.Quotas:
+                RenderQuotaTab(snap);
+                break;
+            case ConsoleTab.Context:
+                RenderContextTab(snap);
+                break;
+            case ConsoleTab.Usage:
+                RenderUsageTab(snap);
+                break;
+            case ConsoleTab.Sessions:
+                RenderSessionsTable();
+                break;
+            case ConsoleTab.Settings:
+                RenderSettingsTab(snap);
+                break;
+        }
+    }
+
+    private void RenderQuotaTab(DashboardSnapshot snap)
+    {
+        RenderQuotaCards(snap);
+        RenderLiveQuotaBuckets(snap);
+        QuotaEmptyText.Visibility = snap.QuotaBuckets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        QuotaSourceText.Text = snap.DesktopQuotaLastSeenAt is { } desktopRead
+            ? $"Desktop read {FormatUtil.RelativeTime(desktopRead)}"
+            : "";
+
+        if (snap.QuotaHistory.Count >= 2)
+        {
+            QuotaHistoryCard.Visibility = Visibility.Visible;
+            QuotaHistoryCanvas.Update(snap.QuotaHistory);
         }
         else
         {
-            PlanChip.Visibility = Visibility.Collapsed;
+            QuotaHistoryCard.Visibility = Visibility.Collapsed;
         }
 
-        var parts = new List<string>
-        {
-            $"{_snapshot.Sessions.Count} sessions",
-            $"Updated {_snapshot.GeneratedAt.ToLocalTime():HH:mm:ss}",
-        };
-        if (!string.IsNullOrWhiteSpace(_snapshot.AccountEmail)) parts.Insert(0, _snapshot.AccountEmail);
-        HeaderSubtitle.Text = string.Join(" · ", parts);
-
-        RenderOverviewTab(_snapshot);
-        RenderContextTab(_snapshot);
-        RenderModelsTab(_snapshot);
-        RenderSessionsTable();
-        RenderCliSyncStatus(_snapshot);
+        RenderAlerts(QuotaAlertsCard, QuotaAlertsHost, snap.Insights.Where(ins => ins.Code == "QUOTA_LOW"));
     }
 
-    // =========================================================================
-    // TAB 1: OVERVIEW & QUOTAS
-    // =========================================================================
-    private void RenderOverviewTab(DashboardSnapshot snap)
+    private void RenderUsageTab(DashboardSnapshot snap)
     {
         var win = snap.Windows[_selectedWindow];
         var w5 = snap.Windows[WindowKey.FiveHours];
         var w7 = snap.Windows[WindowKey.SevenDays];
 
-        RenderHeroCards(snap);
+        StripTokensVal.Text = FormatUtil.TokensCompact(win.TotalTokens);
+        StripTokensVal.ToolTip = $"{FormatUtil.Tokens(win.TotalTokens)} tokens · {FormatUtil.Tokens(win.BurnRateTokensPerHour)}/h average";
+        StripCacheVal.Text = win.Invocations == 0
+            ? "—"
+            : $"{win.CacheHitRate * 100:F1}%";
+        StripCacheVal.ToolTip = win.Invocations > 0 ? $"Estimated cache savings {FormatUtil.Usd(win.CacheSavedUsd)}" : null;
+        StripCallsVal.Text = win.Invocations.ToString("N0");
+        StripSpendVal.Text = FormatUtil.Usd(win.EstimatedCostUsd);
+        UsageChartTitle.Text = _selectedWindow == WindowKey.All
+            ? $"Token usage over the last {win.Timeline.Count} days"
+            : "Token usage over time";
+        BurnRateChart.Update(win.Timeline);
 
-        // Row 2: Slim Secondary Metric Strip
-        StripCacheVal.Text = $"{win.CacheHitRate * 100:F1}% (Saved ~{FormatUtil.Usd(win.CacheSavedUsd)})";
-        StripPaceVal.Text = snap.SprintVsWeeklyPaceRatio is > 0
-            ? $"{snap.SprintVsWeeklyPaceRatio:F1}× weekly avg"
-            : "Baseline collecting";
-        StripSpendVal.Text = $"{FormatUtil.Usd(w5.EstimatedCostUsd)} (5h) · {FormatUtil.Usd(w7.EstimatedCostUsd)} (7d)";
-
-        if (snap.DesktopQuotaLastSeenAt is { } desktopRead)
-        {
-            InlineCliLinkText.Text = $"Desktop quota · {FormatUtil.RelativeTime(desktopRead)}";
-            InlineCliLinkText.Foreground = TryFindResource("OkBrush") as System.Windows.Media.Brush;
-        }
-        else if (snap.StatusLineConnected && snap.StatusLineLastSeenAt.HasValue && snap.QuotaBuckets.Count > 0)
-        {
-            InlineCliLinkText.Text = $"CLI Live synced {FormatUtil.RelativeTime(snap.StatusLineLastSeenAt.Value)}";
-            InlineCliLinkText.Foreground = TryFindResource("OkBrush") as System.Windows.Media.Brush;
-        }
-        else
-        {
-            InlineCliLinkText.Text = "Waiting for Antigravity App quota";
-            InlineCliLinkText.Foreground = TryFindResource("AccentBrush") as System.Windows.Media.Brush;
-        }
-
-        RenderLiveQuotaBuckets(snap);
+        RenderModelUsage(win);
+        RenderToolUsage(win);
+        RenderAlerts(UsageAlertsCard, UsageAlertsHost, snap.Insights.Where(ins => ins.Code is "BUDGET_5H" or "BUDGET_7D"));
+        UsagePaceText.Text = snap.SprintVsWeeklyPaceRatio is > 0
+            ? $"5h rate is {snap.SprintVsWeeklyPaceRatio:F1}× the 7d average"
+            : "";
 
         var groupIds = w5.ByQuotaGroup.Select(g => g.GroupId)
             .Concat(w7.ByQuotaGroup.Select(g => g.GroupId))
@@ -366,7 +390,7 @@ public partial class ManagementWindow : Window
         var map5 = w5.ByQuotaGroup.ToDictionary(g => g.GroupId);
         var map7 = w7.ByQuotaGroup.ToDictionary(g => g.GroupId);
 
-        QuotaMatrixGrid.ItemsSource = groupIds.Select(gid =>
+        UsageComparisonGrid.ItemsSource = groupIds.Select(gid =>
         {
             map5.TryGetValue(gid, out var g5);
             map7.TryGetValue(gid, out var g7);
@@ -380,31 +404,17 @@ public partial class ManagementWindow : Window
                 RefCost = FormatUtil.Usd(g7?.EstimatedCostUsd ?? 0),
             };
         }).ToList();
+    }
 
-        // Row 4: Burn-Rate Timeline
-        TimelineTitle.Text = "Token Burn-Rate Timeline";
-        TimelineSubtitle.Text = $"{win.Label} · {FormatUtil.Tokens(win.TotalTokens)} total · {FormatUtil.Tokens(win.BurnRateTokensPerHour)}/h avg · {win.Invocations} calls";
-        BurnRateChart.Update(win.Timeline);
-
-        // Below-Fold: Quota History
-        if (snap.QuotaHistory.Count >= 2)
-        {
-            QuotaHistoryCard.Visibility = Visibility.Visible;
-            QuotaHistoryCanvas.Update(snap.QuotaHistory);
-        }
-        else
-        {
-            QuotaHistoryCard.Visibility = Visibility.Collapsed;
-        }
-
-        // Below-Fold: Diagnostics
-        InsightsHost.Children.Clear();
+    private void RenderAlerts(Border target, StackPanel host, IEnumerable<UsageInsight> alerts)
+    {
+        host.Children.Clear();
         var fgPrimary = TryFindResource("FgPrimaryBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.White;
         var fgSec = TryFindResource("FgSecondaryBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.LightGray;
         var accent = TryFindResource("AccentBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.CornflowerBlue;
 
-        var insightsToShow = snap.Insights.Take(5).ToList();
-        InsightsCard.Visibility = insightsToShow.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var insightsToShow = alerts.ToList();
+        target.Visibility = insightsToShow.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (var ins in insightsToShow)
         {
@@ -427,42 +437,18 @@ public partial class ManagementWindow : Window
             }
 
             card.Child = stack;
-            InsightsHost.Children.Add(card);
+            host.Children.Add(card);
         }
     }
 
-    private void RenderHeroCards(DashboardSnapshot snap)
+    private void RenderQuotaCards(DashboardSnapshot snap)
     {
         var now = DateTimeOffset.UtcNow;
         var active = _displaySession?.Session ?? snap.ActiveSession;
         var (q5, q7) = QuotaResolver.Resolve(snap, _settings, now, active);
 
-        // Card 1: Active Context
-        if (active is not null)
-        {
-            string bindTag = _displaySession?.Source == SessionBindSource.ManualPin
-                ? "Pinned"
-                : FormatUtil.SurfaceTag(active.Surface);
-            HeroCtxModelPill.Text = $"{active.PrimaryModelDisplayName} · {bindTag}";
-            HeroCtxCard.ToolTip = active.Title;
-            HeroCtxPct.Text = $"{active.ContextUsedPercent:F1}%";
-            HeroCtxPct.Foreground = active.ContextUsedPercent >= _settings.ContextWarnPercent
-                ? ScreenPlacementHelper.BrushForContext(active.ContextUsedPercent, _settings.ContextWarnPercent, _settings.ContextCriticalPercent, this)
-                : (TryFindResource("FgPrimaryBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.White);
-            RenderStackedBarInto(HeroCtxBar, active);
-            HeroCtxSub.Text = $"{FormatUtil.TokensCompact(active.CurrentContextTokens)} / {FormatUtil.TokensCompact(active.ContextWindowSize)} tokens · {FormatUtil.TokensCompact(active.ContextRemainingTokens)} free";
-        }
-        else
-        {
-            HeroCtxModelPill.Text = "No active chat";
-            HeroCtxCard.ToolTip = null;
-            HeroCtxPct.Text = "—";
-            HeroCtxPct.Foreground = TryFindResource("FgMutedBrush") as System.Windows.Media.Brush;
-            HeroCtxBar.Children.Clear();
-            HeroCtxSub.Text = "Start a conversation in Antigravity";
-        }
+        QuotaScopeText.Text = active is null ? "Account quota" : $"Quota for {active.PrimaryModelDisplayName}";
 
-        // Card 2: 5-Hour Quota Remaining
         var (bg5, bd5) = ScreenPlacementHelper.HeroTintForRemaining(q5.RemainingPercent, _settings.QuotaLowPercent, this);
         var fg5 = ScreenPlacementHelper.BrushForRemaining(q5.RemainingPercent, _settings.QuotaLowPercent, this);
         Hero5hCard.Background = bg5;
@@ -474,12 +460,8 @@ public partial class ManagementWindow : Window
         Hero5hPct.Text = q5.FormatPercent("F1");
         Hero5hPct.Foreground = fg5;
         FillProgressBar(Hero5hBar, q5.RemainingPercent ?? 0, fg5, cornerRadius: 3.5);
-        Hero5hSub.Text = q5.IsLive
-            ? $"{(q5.ResetInSeconds.HasValue ? $"↻ Resets in {FormatUtil.Duration(q5.ResetInSeconds)}" : "Live quota")} · {FormatUtil.TokensCompact(q5.WindowTokens)} tok · {FormatUtil.TokensCompact(q5.TokensPerHour)}/h"
-            : q5.RemainingPercent is null ? $"{FormatUtil.TokensCompact(q5.WindowTokens)} local tok"
-            : $"Est. vs {FormatUtil.TokensCompact(q5.EstimatedBaselineTokens)} · {FormatUtil.TokensCompact(q5.WindowTokens)} tok · {FormatUtil.TokensCompact(q5.TokensPerHour)}/h";
+        Hero5hSub.Text = FormatQuotaDetail(q5);
 
-        // Card 3: Weekly Quota Remaining
         var (bg7, bd7) = ScreenPlacementHelper.HeroTintForRemaining(q7.RemainingPercent, _settings.QuotaLowPercent, this);
         var fg7 = ScreenPlacementHelper.BrushForRemaining(q7.RemainingPercent, _settings.QuotaLowPercent, this);
         HeroWkCard.Background = bg7;
@@ -495,10 +477,17 @@ public partial class ManagementWindow : Window
         HeroWkPct.Text = q7.FormatPercent("F1");
         HeroWkPct.Foreground = fg7;
         FillProgressBar(HeroWkBar, q7.RemainingPercent ?? 0, fg7, cornerRadius: 3.5);
-        HeroWkSub.Text = q7.IsLive
-            ? $"{(q7.ResetInSeconds.HasValue ? $"↻ Resets in {FormatUtil.Duration(q7.ResetInSeconds)}" : "Live quota")} · {FormatUtil.TokensCompact(q7.WindowTokens)} tok · {q7.SessionsCount} chats"
-            : q7.RemainingPercent is null ? $"{FormatUtil.TokensCompact(q7.WindowTokens)} local tok"
-            : $"Est. vs {FormatUtil.TokensCompact(q7.EstimatedBaselineTokens)} · {FormatUtil.TokensCompact(q7.WindowTokens)} tok · {q7.SessionsCount} chats";
+        HeroWkSub.Text = FormatQuotaDetail(q7);
+    }
+
+    private static string FormatQuotaDetail(QuotaWindowSummary quota)
+    {
+        if (quota.RemainingPercent is null) return "No quota reading";
+        if (!quota.IsLive)
+            return $"{FormatUtil.TokensCompact(quota.WindowTokens)} / {FormatUtil.TokensCompact(quota.EstimatedBaselineTokens)} local tokens";
+        if (quota.ResetInSeconds.HasValue)
+            return $"Resets in {FormatUtil.Duration(quota.ResetInSeconds)}";
+        return quota.BucketLabel ?? "Reported quota";
     }
 
     private void RenderLiveQuotaBuckets(DashboardSnapshot snap)
@@ -602,9 +591,6 @@ public partial class ManagementWindow : Window
         }
     }
 
-    // =========================================================================
-    // TAB 2: CONTEXT INSPECTOR (Panel 3)
-    // =========================================================================
     private void RenderContextTab(DashboardSnapshot snap)
     {
         var session = GetInspectedSession(snap);
@@ -647,6 +633,12 @@ public partial class ManagementWindow : Window
         InspectorSummary.Visibility = session is null ? Visibility.Collapsed : Visibility.Visible;
         if (session is null) return;
 
+        var inspectedInsights = session == active
+            ? snap.Insights
+            : AnalyticsEngine.ForDisplaySession(snap, session, _settings).Insights;
+        RenderAlerts(ContextAlertsCard, ContextAlertsHost, inspectedInsights.Where(ins =>
+            ins.Code is "CONTEXT_CRITICAL" or "CONTEXT_HIGH" or "EXCEEDS_200K" or "LOW_CACHE_HIT" or "TOP_TOOL_BLOAT"));
+
         UpdatePinButtonState(session.ConversationId);
 
         InspectorBadgesPanel.Children.Add(MakeBadge(session.PrimaryModelDisplayName, "PurpleBgBrush", "PurpleBrush", marginLeft: 0));
@@ -670,7 +662,7 @@ public partial class ManagementWindow : Window
         InspCumulativeSub.Text = $"In {FormatUtil.TokensCompact(session.TotalInputTokens)} · Cache {FormatUtil.TokensCompact(session.TotalCacheReadTokens)} · Out {FormatUtil.TokensCompact(session.TotalOutputTokens)}";
         InspPeakCache.Text = $"{FormatUtil.TokensCompact(session.PeakContextTokens)} · {session.OverallCacheHitRate * 100:F1}%";
         InspCounts.Text = $"{session.UserTurns} turns · {session.ModelInvocations} calls · {session.ToolCallCount} tools";
-        InspCost.Text = FormatUtil.Usd(session.LiveCostUsd ?? session.RolledUpTotals.EstimatedCostUsd);
+        InspCost.Text = FormatUtil.Usd(session.RolledUpTotals.EstimatedCostUsd);
         InspCostSub.Text = session.Subagents.Count > 0 ? $"incl. {session.Subagents.Count} subagent(s)" : $"Primary {FormatUtil.Usd(session.EstimatedCostUsd)}";
 
         // 100-Cell Context Window Grid
@@ -686,7 +678,6 @@ public partial class ManagementWindow : Window
             CheckpointBufferText.Visibility = Visibility.Collapsed;
         }
 
-        // Active Category Breakdown (Panel 3 clean color-dot rows)
         RenderCategoryBreakdown(session);
 
         // Full-Width Growth Chart + Inline Compactions
@@ -718,7 +709,7 @@ public partial class ManagementWindow : Window
         if (session.Subagents.Count > 0)
         {
             SubagentsCard.Visibility = Visibility.Visible;
-            SubagentsHeader.Text = $"Subagent Rollup ({session.Subagents.Count})";
+            SubagentsHeader.Text = $"Subagent rollup ({session.Subagents.Count})";
             SubagentsSubtitle.Text = $"Combined: {FormatUtil.Tokens(session.RolledUpTotals.TotalTokens)} tok · {session.RolledUpTotals.Invocations} calls · {FormatUtil.Usd(session.RolledUpTotals.EstimatedCostUsd)}";
             SubagentsGrid.ItemsSource = session.Subagents.Select(sub => new
             {
@@ -780,8 +771,8 @@ public partial class ManagementWindow : Window
             AddRow(brush, c.Label, FormatUtil.TokensCompact(c.Tokens), $"{c.PercentageOfContext:F1}%");
         }
 
-        double freePct = (double)session.FreeSpaceTokens / Math.Max(1, session.ContextWindowSize) * 100.0;
-        AddRow(track, "Free Space", FormatUtil.TokensCompact(session.FreeSpaceTokens), $"{freePct:F1}% free");
+        double freePct = (double)session.ContextRemainingTokens / Math.Max(1, session.ContextWindowSize) * 100.0;
+        AddRow(track, "Free Space", FormatUtil.TokensCompact(session.ContextRemainingTokens), $"{freePct:F1}% free");
     }
 
     private void RenderSessionToolBars(SessionDetail session)
@@ -920,7 +911,7 @@ public partial class ManagementWindow : Window
                 st.ToolNames.Any(t => t.Contains(query, StringComparison.OrdinalIgnoreCase)));
         }
 
-        StepsHeader.Text = $"Per-Step Context Telemetry ({session.Steps.Count} steps)";
+        StepsHeader.Text = $"Step telemetry ({session.Steps.Count})";
         StepsGrid.ItemsSource = steps.Reverse().Take(80).Select(st => new
         {
             Step = $"#{st.StepIndex}",
@@ -937,15 +928,8 @@ public partial class ManagementWindow : Window
         }).ToList();
     }
 
-    // =========================================================================
-    // TAB 3: MODELS & TOOLS (Panel 4)
-    // =========================================================================
-    private void RenderModelsTab(DashboardSnapshot snap)
+    private void RenderModelUsage(WindowAnalytics win)
     {
-        var win = snap.Windows[_selectedWindow];
-        ModelsHeader.Text = $"Model Efficiency Breakdown · {win.Label}";
-
-        // Rich Model Efficiency rows matching Panel 4 (inline cache pills + share bars!)
         ModelsTableHost.Children.Clear();
         var fgPrimary = TryFindResource("FgPrimaryBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.White;
         var fgSec = TryFindResource("FgSecondaryBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.LightGray;
@@ -1072,8 +1056,14 @@ public partial class ManagementWindow : Window
                 ModelsTableHost.Children.Add(rowHost);
             }
         }
+    }
 
-        // Global Tool Context Bloat Ranking (clean proportional bars with non-overlapping labels)
+    private void RenderToolUsage(WindowAnalytics win)
+    {
+        var fgPrimary = TryFindResource("FgPrimaryBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.White;
+        var fgMuted = TryFindResource("FgMutedBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Gray;
+        var track = TryFindResource("TrackBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.DimGray;
+
         GlobalToolsBarsHost.Children.Clear();
         var topTools = win.TopTools.Take(8).ToList();
         if (topTools.Count == 0)
@@ -1141,73 +1131,8 @@ public partial class ManagementWindow : Window
                 GlobalToolsBarsHost.Children.Add(box);
             }
         }
-
-        // Account Available Models (Panel 4 clean status-dot list)
-        AccountModelsHeader.Text = $"Account Available Models ({snap.AvailableModels.Count})";
-        AccountModelsListHost.Children.Clear();
-        var usedIds = new HashSet<string>(win.ByModel.Select(m => m.ModelId), StringComparer.OrdinalIgnoreCase);
-
-        if (snap.AvailableModels.Count == 0)
-        {
-            AccountModelsListHost.Children.Add(new TextBlock { Text = "Click Refresh Models to query `agy models`.", Foreground = fgMuted, FontSize = 12 });
-        }
-        else
-        {
-            foreach (var m in snap.AvailableModels.Take(12))
-            {
-                bool activeInWindow = usedIds.Contains(m.Id);
-                var dotBrush = activeInWindow
-                    ? TryFindResource("OkBrush") as System.Windows.Media.Brush
-                    : (m.QuotaGroup == QuotaGroupId.PartnerClaudeGpt
-                        ? TryFindResource("WarnBrush") as System.Windows.Media.Brush
-                        : TryFindResource("FgMutedBrush") as System.Windows.Media.Brush);
-
-                var row = new Grid { Margin = new Thickness(0, 0, 0, 10) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
-
-                row.Children.Add(new Ellipse { Width = 7, Height = 7, Fill = dotBrush, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center });
-
-                var nameTb = new TextBlock { Text = m.DisplayName, FontSize = 12.5, Foreground = fgPrimary, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = m.Id };
-                Grid.SetColumn(nameTb, 1);
-                row.Children.Add(nameTb);
-
-                var grpPill = new Border
-                {
-                    Background = TryFindResource("BgPrimaryBrush") as System.Windows.Media.Brush,
-                    BorderBrush = TryFindResource("BorderPrimaryBrush") as System.Windows.Media.Brush,
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(6),
-                    Padding = new Thickness(8, 2, 8, 2),
-                    Margin = new Thickness(8, 0, 8, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Child = new TextBlock { Text = m.QuotaGroupLabel, FontSize = 10.5, Foreground = fgSec },
-                };
-                Grid.SetColumn(grpPill, 2);
-                row.Children.Add(grpPill);
-
-                var winPill = new Border
-                {
-                    Background = TryFindResource("BgTertiaryBrush") as System.Windows.Media.Brush,
-                    CornerRadius = new CornerRadius(6),
-                    Padding = new Thickness(7, 2, 7, 2),
-                    HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Child = new TextBlock { Text = FormatUtil.TokensCompact(m.ContextWindow), FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = fgPrimary },
-                };
-                Grid.SetColumn(winPill, 3);
-                row.Children.Add(winPill);
-
-                AccountModelsListHost.Children.Add(row);
-            }
-        }
     }
 
-    // =========================================================================
-    // TAB 4: SESSIONS & SETTINGS (Panel 5)
-    // =========================================================================
     private void RenderSessionsTable()
     {
         if (_snapshot is null) return;
@@ -1223,10 +1148,12 @@ public partial class ManagementWindow : Window
                    s.PrimaryModelDisplayName.Contains(q, StringComparison.OrdinalIgnoreCase);
         }).ToList();
 
-        SessionsCountText.Text = $"· {filtered.Count} of {_snapshot.Sessions.Count} sessions";
+        SessionsCountText.Text = $"{filtered.Count} of {_snapshot.Sessions.Count}";
 
+        var selectedId = (SessionsGrid.SelectedItem as SessionGridRow)?.ConversationId;
+        var focusedColumn = SessionsGrid.IsKeyboardFocusWithin ? SessionsGrid.CurrentColumn : null;
         int rank = 1;
-        SessionsGrid.ItemsSource = filtered.Select(s =>
+        var rows = filtered.Select(s =>
         {
             string bgKey = s.ContextUsedPercent >= _settings.ContextCriticalPercent
                 ? "DangerBgBrush"
@@ -1248,52 +1175,29 @@ public partial class ManagementWindow : Window
                 FormatUtil.TokensCompact(s.TotalBilledTokens),
                 $"{s.OverallCacheHitRate * 100:0}%",
                 $"{s.CompactionCount} CP",
-                FormatUtil.Usd(s.LiveCostUsd ?? s.EstimatedCostUsd),
-                FormatUtil.RelativeTime(s.LastActiveAt));
+                FormatUtil.Usd(s.EstimatedCostUsd),
+                s.LastActiveAt == default ? "—" : FormatUtil.RelativeTime(s.LastActiveAt));
         }).ToList();
+        SessionsGrid.ItemsSource = rows;
+        if (selectedId is not null && rows.Find(row => row.ConversationId == selectedId) is { } selected)
+        {
+            SessionsGrid.SelectedItem = selected;
+            if (focusedColumn is not null)
+            {
+                SessionsGrid.CurrentCell = new DataGridCellInfo(selected, focusedColumn);
+                SessionsGrid.Focus();
+            }
+        }
     }
 
-    private void RenderCliSyncStatus(DashboardSnapshot snap)
+    private void RenderSettingsTab(DashboardSnapshot snap)
     {
-        var exe = Environment.ProcessPath ?? "UsageOrb.exe";
-        bool configured = TelemetryStore.IsCliStatusLineConfigured(exe);
-
-        if (snap.StatusLineConnected && snap.StatusLineLastSeenAt.HasValue)
-        {
-            CliSyncBadge.Background = TryFindResource("OkBgBrush") as System.Windows.Media.Brush;
-            CliSyncBadgeText.Foreground = TryFindResource("OkBrush") as System.Windows.Media.Brush;
-            CliSyncBadgeText.Text = $"Synced {FormatUtil.RelativeTime(snap.StatusLineLastSeenAt.Value)}";
-        }
-        else if (configured)
-        {
-            CliSyncBadge.Background = TryFindResource("CyanBgBrush") as System.Windows.Media.Brush;
-            CliSyncBadgeText.Foreground = TryFindResource("CyanBrush") as System.Windows.Media.Brush;
-            CliSyncBadgeText.Text = "Configured · Run agy";
-        }
-        else
-        {
-            CliSyncBadge.Background = TryFindResource("BgTertiaryBrush") as System.Windows.Media.Brush;
-            CliSyncBadgeText.Foreground = TryFindResource("FgSecondaryBrush") as System.Windows.Media.Brush;
-            CliSyncBadgeText.Text = "Not linked";
-        }
-
-        var lines = new List<string>
-        {
-            $"CLI Settings:  {AntigravityPaths.GetCliSettingsFilePath()}",
-            $"Quota Cache:   {AntigravityPaths.GetStatusLineStateFilePath()}",
-        };
-        foreach (var root in snap.ScannedRoots)
-        {
-            lines.Add($"Brain Root:    {root}");
-        }
-
-        DataPathsText.Text = string.Join(Environment.NewLine, lines);
-    }
-
-    private void UpdateCliCommandText()
-    {
-        var exe = Environment.ProcessPath ?? "UsageOrb.exe";
-        StatusLineCommandBox.Text = $"/statusline {TelemetryStore.BuildCliStatusLineCommand(exe)}";
+        DesktopQuotaStatusText.Text = snap.DesktopQuotaLastSeenAt is { } desktopRead
+            ? $"Read {FormatUtil.RelativeTime(desktopRead)}"
+            : "Waiting for quota";
+        DataPathsText.Text = snap.ScannedRoots.Count > 0
+            ? string.Join(Environment.NewLine, snap.ScannedRoots)
+            : "No transcript folders found.";
     }
 
     private void PopulateSettingsControls()
@@ -1313,6 +1217,10 @@ public partial class ManagementWindow : Window
         long weeklyBudget = _settings.WeeklyTokenBudget ?? _settings.WeeklyEstBaselineTokens;
         EstBase7dBox.Text = weeklyBudget > 0 ? FormatUtil.TokensCompact(weeklyBudget) : "";
         StartWithWindowsCheck.IsChecked = _settings.StartWithWindows;
+        FollowLifecycleCheck.IsChecked = _settings.FollowAntigravityLifecycle;
+        ShowTrayIconCheck.IsChecked = _settings.ShowTrayIcon;
+        ShowTaskbarButtonCheck.IsChecked = _settings.ShowTaskbarButton;
+        RegisterStartMenuCheck.IsChecked = _settings.RegisterStartMenuShortcut;
 
         RebuildSettingsSegments();
     }
@@ -1321,39 +1229,29 @@ public partial class ManagementWindow : Window
     {
         // 1. Widget Shape segmented toggle (Circular Orb | 3-Metric Pill)
         ShapeSegmentHost.Children.Clear();
-        ShapeSegmentHost.ColumnDefinitions.Clear();
-        ShapeSegmentHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        ShapeSegmentHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var orbBtn = CreateSegmentButton("Circular Orb", _draftShape == FloatingWidgetShape.CircularOrb, new Thickness(8, 5, 8, 5), 11.5);
         orbBtn.Click += (_, _) => { _draftShape = FloatingWidgetShape.CircularOrb; RebuildSettingsSegments(); };
-        Grid.SetColumn(orbBtn, 0);
         ShapeSegmentHost.Children.Add(orbBtn);
 
         var pillBtn = CreateSegmentButton("3-Metric Pill", _draftShape == FloatingWidgetShape.CompactPill, new Thickness(8, 5, 8, 5), 11.5);
         pillBtn.Click += (_, _) => { _draftShape = FloatingWidgetShape.CompactPill; RebuildSettingsSegments(); };
-        Grid.SetColumn(pillBtn, 1);
         ShapeSegmentHost.Children.Add(pillBtn);
 
-        // 2. Visual 4-Corner Anchor Grid (TL, TR, BL, BR)
+        // 2. Settings anchor positions follow the screen's 2×2 arrangement.
         AnchorGridHost.Children.Clear();
-        (OrbAnchorCorner Corner, string Code)[] corners =
+        (OrbAnchorCorner Corner, string Label)[] corners =
         [
-            (OrbAnchorCorner.TopLeft, "TL"),
-            (OrbAnchorCorner.TopRight, "TR"),
-            (OrbAnchorCorner.BottomLeft, "BL"),
-            (OrbAnchorCorner.BottomRight, "BR"),
+            (OrbAnchorCorner.TopLeft, "Top left"),
+            (OrbAnchorCorner.TopRight, "Top right"),
+            (OrbAnchorCorner.BottomLeft, "Bottom left"),
+            (OrbAnchorCorner.BottomRight, "Bottom right"),
         ];
-        foreach (var (corner, code) in corners)
+        foreach (var (corner, label) in corners)
         {
             bool active = _draftAnchor == corner;
             var captured = corner;
-            var cBtn = CreateSegmentButton(code, active, new Thickness(2), 10.5, accentActive: true);
-            cBtn.Margin = new Thickness(1.5);
-            if (!active)
-            {
-                cBtn.Background = TryFindResource("BgPrimaryBrush") as System.Windows.Media.Brush;
-            }
+            var cBtn = CreateSegmentButton(label, active, new Thickness(8, 4, 8, 4), 11.5);
 
             cBtn.Click += (_, _) => { _draftAnchor = captured; RebuildSettingsSegments(); };
             AnchorGridHost.Children.Add(cBtn);
@@ -1422,30 +1320,28 @@ public partial class ManagementWindow : Window
         }
 
         next.StartWithWindows = StartWithWindowsCheck.IsChecked == true;
+        next.FollowAntigravityLifecycle = FollowLifecycleCheck.IsChecked == true;
+        next.ShowTrayIcon = ShowTrayIconCheck.IsChecked == true;
+        next.ShowTaskbarButton = ShowTaskbarButtonCheck.IsChecked == true;
+        next.RegisterStartMenuShortcut = RegisterStartMenuCheck.IsChecked == true;
 
-        _settings = next;
         SettingsSaved?.Invoke(next);
-        ShowToast("Preferences saved.");
     }
 
-    private void OnAutoConfigureCliClicked(object sender, RoutedEventArgs e)
+    private async void OnLaunchAntigravityClicked(object sender, RoutedEventArgs e)
     {
-        var exe = Environment.ProcessPath ?? "UsageOrb.exe";
-        var result = TelemetryStore.ConfigureCliStatusLine(exe);
-        ShowToast(result.Success ? "CLI statusLine configured! Run agy to sync." : result.Message);
-        if (_snapshot is not null) RenderCliSyncStatus(_snapshot);
-    }
-
-    private void OnCopyStatusLineCommand(object sender, RoutedEventArgs e)
-    {
+        LaunchAntigravityBtn.IsEnabled = false;
         try
         {
-            System.Windows.Clipboard.SetText(StatusLineCommandBox.Text);
-            ShowToast("Copied /statusline command.");
+            ShowToast(await Task.Run(AntigravityDesktop.Launch));
         }
-        catch
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException or System.IO.IOException)
         {
-            // Ignore transient clipboard lock
+            ShowToast("Antigravity could not be started. Check the executable and proxy settings.");
+        }
+        finally
+        {
+            LaunchAntigravityBtn.IsEnabled = true;
         }
     }
 
@@ -1453,7 +1349,7 @@ public partial class ManagementWindow : Window
     {
         bool isPinned = !string.IsNullOrWhiteSpace(_pinnedConversationId) &&
                         string.Equals(_pinnedConversationId, conversationId, StringComparison.OrdinalIgnoreCase);
-        PinSessionBtn.Content = isPinned ? "Pinned ✓ (Unpin)" : "Pin to Widget";
+        PinSessionBtn.Content = isPinned ? "Unpin widget" : "Pin to widget";
         PinSessionBtn.Foreground = TryFindResource(isPinned ? "CyanBrush" : "FgPrimaryBrush") as System.Windows.Media.Brush;
         PinSessionBtn.BorderBrush = TryFindResource(isPinned ? "CyanBrush" : "BorderPrimaryBrush") as System.Windows.Media.Brush;
     }
@@ -1483,14 +1379,13 @@ public partial class ManagementWindow : Window
         }
     }
 
-    private void OnSessionsGridDoubleClick(object sender, MouseButtonEventArgs e)
+    private bool OpenSelectedSession()
     {
-        if (SessionsGrid.SelectedItem is SessionGridRow row && _snapshot is not null)
-        {
-            _inspectedConversationId = row.ConversationId;
-            RenderContextTab(_snapshot);
-            SelectTab(1);
-        }
+        if (SessionsGrid.SelectedItem is not SessionGridRow row || _snapshot is null) return false;
+        _inspectedConversationId = row.ConversationId;
+        SelectTab(ConsoleTab.Context);
+        InspectorSessionCombo.Focus();
+        return true;
     }
 
     private static void RenderStackedBarInto(Grid host, SessionDetail session)

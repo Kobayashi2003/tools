@@ -11,25 +11,15 @@ public static class AnalyticsEngine
         (WindowKey.All, "All Recorded Sessions", null),
     ];
 
-    public static DashboardSnapshot Collect(
+    internal static DashboardSnapshot Collect(
         AppSettings settings,
         DateTimeOffset? now = null,
-        StatusLineStateFile? desktopQuota = null)
+        DesktopQuotaSnapshot? desktopQuota = null)
     {
         var current = now ?? DateTimeOffset.UtcNow;
         var (roots, discovered) = AntigravityPaths.DiscoverTranscripts();
-        var statusLineState = TelemetryStore.LoadStatusLineState();
         var summaries = ConversationSummaries.Read();
-        var statusById = new Dictionary<string, CapturedStatusLine>(StringComparer.OrdinalIgnoreCase);
         var byId = discovered.ToDictionary(t => t.ConversationId, StringComparer.OrdinalIgnoreCase);
-        if (statusLineState is not null)
-        {
-            foreach (var (id, status) in statusLineState.ByConversation)
-            {
-                statusById[id] = status;
-                byId.TryAdd(id, new(id, AntigravitySurface.Cli, string.Empty, status.CapturedAt.UtcTicks, 0));
-            }
-        }
 
         foreach (var (id, summary) in summaries)
         {
@@ -52,37 +42,18 @@ public static class AnalyticsEngine
             if (summary.ParentId is not null) parentByChildId[id] = summary.ParentId;
         }
 
-        // Determine active session: most recently modified primary (non-subagent) transcript,
-        // or the live CLI statusLine conversation if fresher
         var latestPrimary = parsedList.FirstOrDefault(p => !parentByChildId.ContainsKey(p.ConversationId))
                             ?? parsedList.FirstOrDefault();
-
-        string? activeConvId = latestPrimary?.ConversationId;
-        if (statusLineState?.Latest is { } slLatest)
-        {
-            var slConvId = !string.IsNullOrWhiteSpace(slLatest.Payload.ConversationId)
-                ? slLatest.Payload.ConversationId
-                : slLatest.Payload.SessionId;
-            if (!string.IsNullOrWhiteSpace(slConvId) &&
-                parsedById.ContainsKey(slConvId) &&
-                !parentByChildId.ContainsKey(slConvId) &&
-                (latestPrimary is null || slLatest.CapturedAt >= new DateTimeOffset(latestPrimary.LastWriteUtcTicks, TimeSpan.Zero)))
-            {
-                activeConvId = slConvId;
-            }
-        }
+        var activeConvId = latestPrimary?.ConversationId;
 
         var sessions = new List<SessionDetail>(parsedList.Count);
         foreach (var rec in parsedList)
         {
             parentByChildId.TryGetValue(rec.ConversationId, out var parentId);
-            statusById.TryGetValue(rec.ConversationId, out var convStatusLine);
             summaries.TryGetValue(rec.ConversationId, out var summary);
             sessions.Add(TranscriptParser.BuildSessionDetail(
                 rec,
-                activeConvId,
                 parentId,
-                convStatusLine,
                 parsedById,
                 current,
                 summary));
@@ -99,9 +70,7 @@ public static class AnalyticsEngine
             windows[def.Key] = BuildWindowAnalytics(def.Key, def.Label, def.Hours, parsedList, current);
         }
 
-        var quotaState = desktopQuota ?? statusLineState;
-        var quotaBuckets = TelemetryStore.BuildQuotaBucketStatuses(quotaState, current);
-        var availableModels = ModelCatalog.GetCachedAccountModels();
+        var quotaBuckets = desktopQuota?.BuildBucketStatuses(current) ?? [];
 
         var w5Rate = windows[WindowKey.FiveHours].BurnRateTokensPerHour;
         var w7Rate = windows[WindowKey.SevenDays].BurnRateTokensPerHour;
@@ -119,14 +88,8 @@ public static class AnalyticsEngine
         return new DashboardSnapshot(
             current,
             activeConvId,
-            statusLineState?.Latest?.Payload.PlanTier,
-            statusLineState?.Latest?.Payload.Email,
-            statusLineState?.Latest?.Payload.Version,
-            statusLineState?.Latest is not null,
-            statusLineState?.Latest?.CapturedAt,
             quotaBuckets,
-            (quotaState?.QuotaHistory ?? []).TakeLast(120).ToList(),
-            availableModels,
+            desktopQuota?.History.TakeLast(120).ToList() ?? [],
             windows,
             paceRatio,
             sessions,
@@ -134,7 +97,7 @@ public static class AnalyticsEngine
             insights,
             roots)
         {
-            DesktopQuotaLastSeenAt = desktopQuota?.LatestQuota?.CapturedAt,
+            DesktopQuotaLastSeenAt = desktopQuota?.CapturedAt,
         };
     }
 

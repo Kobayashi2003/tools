@@ -6,7 +6,7 @@ using UsageOrb.Core;
 namespace UsageOrb.UI.Controls;
 
 /// <summary>
-/// Renders an exact 100-cell (20x5) proportional context window grid inspired by Antigravity CLI /context.
+/// Renders an exact 100-cell (20x5) proportional context window grid.
 /// Each rounded cell represents 1% of the active model's context ceiling.
 /// </summary>
 public sealed class ContextGridControl : Grid

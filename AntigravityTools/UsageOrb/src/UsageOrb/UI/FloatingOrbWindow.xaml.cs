@@ -24,6 +24,8 @@ public partial class FloatingOrbWindow : Window
     private bool _isDark = true;
     private bool _isMouseDown;
     private bool _isDragging;
+    private bool _lifecycleActive = true;
+    private ContextMenu? _openContextMenu;
     private System.Windows.Point _mouseDownScreenDip;
     private double _dragStartLeft;
     private double _dragStartTop;
@@ -41,6 +43,8 @@ public partial class FloatingOrbWindow : Window
     public event Action? HideOrbRequested;
     public event Action? RefreshRequested;
     public event Action? ExitRequested;
+
+    public bool IsContextMenuOpen => _openContextMenu?.IsOpen == true;
 
     public FloatingOrbWindow(AppSettings initialSettings)
     {
@@ -100,10 +104,17 @@ public partial class FloatingOrbWindow : Window
     public void UpdateTrackedWindow(TrackedWindowState tracked)
     {
         _trackedWindow = tracked;
-        if (!_isDragging)
+        if (!_isDragging || (_settings.DockMode == OrbDockMode.FollowAntigravity && !tracked.IsVisibleAndUnoccluded))
         {
             UpdatePlacementAndVisibility();
         }
+    }
+
+    internal void SetLifecycleActive(bool active)
+    {
+        if (active == _lifecycleActive) return;
+        _lifecycleActive = active;
+        UpdatePlacementAndVisibility();
     }
 
     private void ApplyShapeSizeAndOpacity(bool hovered)
@@ -161,36 +172,52 @@ public partial class FloatingOrbWindow : Window
 
     public void UpdatePlacementAndVisibility()
     {
-        if (!_settings.OrbVisible)
+        bool followsWindow = _settings.DockMode == OrbDockMode.FollowAntigravity;
+        if (!_lifecycleActive || !_settings.OrbVisible ||
+            (followsWindow && (!_trackedWindow.IsFound || !_trackedWindow.IsVisibleAndUnoccluded)))
         {
+            _hoverDelayTimer.Stop();
+            _isMouseDown = false;
+            _isDragging = false;
+            if (IsMouseCaptured) ReleaseMouseCapture();
+            if (_openContextMenu is { } menu) menu.IsOpen = false;
             if (IsVisible) Hide();
             HoverEnded?.Invoke();
             return;
         }
 
-        if (_settings.DockMode == OrbDockMode.FollowAntigravity)
+        if (followsWindow)
         {
-            if (!_trackedWindow.IsFound || !_trackedWindow.IsVisibleAndUnoccluded)
-            {
-                if (IsVisible) Hide();
-                HoverEnded?.Invoke();
-                return;
-            }
-
-            if (!IsVisible) Show();
-            PositionRelativeToTrackedWindow();
+            var position = GetDockedPosition(_trackedWindow);
+            Left = position.X;
+            Top = position.Y;
         }
         else
         {
-            if (!IsVisible) Show();
             PositionFreeFloat();
         }
+        if (!IsVisible) Show();
     }
 
-    private void PositionRelativeToTrackedWindow()
+    internal NativeMethods.RECT? GetDockedBounds(TrackedWindowState tracked)
     {
-        double scale = _trackedWindow.DpiScale > 0 ? _trackedWindow.DpiScale : 1.0;
-        var r = _trackedWindow.PhysicalBounds;
+        if (_settings.DockMode != OrbDockMode.FollowAntigravity) return null;
+        if (_isDragging && NativeMethods.GetWindowRect(new WindowInteropHelper(this).Handle, out var actual)) return actual;
+        var position = GetDockedPosition(tracked);
+        double scale = tracked.DpiScale;
+        return new NativeMethods.RECT
+        {
+            Left = (int)Math.Round(position.X * scale),
+            Top = (int)Math.Round(position.Y * scale),
+            Right = (int)Math.Round((position.X + Width) * scale),
+            Bottom = (int)Math.Round((position.Y + Height) * scale),
+        };
+    }
+
+    private System.Windows.Point GetDockedPosition(TrackedWindowState tracked)
+    {
+        double scale = tracked.DpiScale;
+        var r = tracked.PhysicalBounds;
 
         double winLeft = r.Left / scale;
         double winTop = r.Top / scale;
@@ -210,8 +237,7 @@ public partial class FloatingOrbWindow : Window
         };
 
         ClampToMonitor(ref left, ref top, (r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2, scale);
-        Left = left;
-        Top = top;
+        return new System.Windows.Point(left, top);
     }
 
     private void PositionFreeFloat()
@@ -444,6 +470,8 @@ public partial class FloatingOrbWindow : Window
         menu.Items.Add(exitItem);
 
         menu.PlacementTarget = this;
+        _openContextMenu = menu;
+        menu.Closed += (_, _) => { if (_openContextMenu == menu) _openContextMenu = null; };
         menu.IsOpen = true;
         e.Handled = true;
     }

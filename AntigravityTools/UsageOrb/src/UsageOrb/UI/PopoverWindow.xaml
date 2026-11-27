@@ -40,20 +40,6 @@
                                FontSize="13.5"
                                FontWeight="Bold"
                                VerticalAlignment="Center" />
-                    <Border x:Name="PlanPill"
-                            Visibility="Collapsed"
-                            Margin="7,0,0,0"
-                            Padding="6,1.5"
-                            CornerRadius="5"
-                            Background="{DynamicResource BgTertiaryBrush}"
-                            BorderBrush="{DynamicResource BorderPrimaryBrush}"
-                            BorderThickness="1"
-                            VerticalAlignment="Center">
-                        <TextBlock x:Name="PlanPillText"
-                                   Foreground="{DynamicResource FgSecondaryBrush}"
-                                   FontSize="10"
-                                   FontWeight="SemiBold" />
-                    </Border>
                 </StackPanel>
 
                 <!-- Refresh Icon Button -->

@@ -58,4 +58,13 @@ The soundvoice revision skipped 2,186 additional channel-0 stops. The final 100 
 
 ## Development checks
 
-Run the [shared development checks](../README.md#development-checks) from the parent `Galgame` directory.
+Run these commands from the tool directory.
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm format:check
+pnpm test
+```
+
+Run `pnpm format` to apply formatting.

@@ -1,4 +1,4 @@
-using UsageOrb.Core;
+using UsageOrb.Platform;
 
 namespace UsageOrb;
 
@@ -10,17 +10,28 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // Fast headless CLI bridge mode for Antigravity CLI `/statusline`
-        if (args.Any(a => string.Equals(a, "--statusline", StringComparison.OrdinalIgnoreCase)))
+        bool openConsole = false;
+        bool background = false;
+        foreach (var arg in args)
         {
-            return StatusLineRunner.RunFromStdio();
+            switch (arg.ToLowerInvariant())
+            {
+                case "--console":
+                    openConsole = true;
+                    break;
+                case StartupManager.WatchArgument:
+                case StartupManager.BackgroundArgument:
+                    background = true;
+                    break;
+                default:
+                    return 2;
+            }
         }
-
-        bool openConsole = args.Any(a => string.Equals(a, "--console", StringComparison.OrdinalIgnoreCase));
 
         using var mutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out bool createdNew);
         if (!createdNew)
         {
+            if (background && !openConsole) return 0;
             // Signal the running instance to open its management console
             try
             {
@@ -35,7 +46,7 @@ public static class Program
             return 0;
         }
 
-        var app = new App(openConsoleOnStartup: openConsole);
+        var app = new App(openConsoleOnStartup: openConsole, backgroundStartup: background);
         app.InitializeComponent();
         return app.Run();
     }

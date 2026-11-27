@@ -392,11 +392,12 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <ContentPresenter Margin="0,0,9,0" VerticalAlignment="Center" />
+                    <DockPanel Background="Transparent" Margin="{TemplateBinding Padding}">
                         <Border x:Name="Track"
+                                DockPanel.Dock="Right"
                                 Width="34"
                                 Height="19"
+                                VerticalAlignment="Center"
                                 CornerRadius="9.5"
                                 Background="{DynamicResource TrackBrush}"
                                 BorderBrush="{DynamicResource BorderPrimaryBrush}"
@@ -408,7 +409,8 @@
                                      Fill="{DynamicResource FgPrimaryBrush}"
                                      HorizontalAlignment="Left" />
                         </Border>
-                    </StackPanel>
+                        <ContentPresenter Margin="0,0,9,0" VerticalAlignment="Center" />
+                    </DockPanel>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="Track" Property="Background" Value="{DynamicResource AccentBrush}" />

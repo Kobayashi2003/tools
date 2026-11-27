@@ -148,12 +148,7 @@ public partial class HoverTooltipWindow : Window
 
     public void ShowNear(Window orb)
     {
-        if (!IsVisible)
-        {
-            Show();
-        }
-
-        UpdateLayout();
         ScreenPlacementHelper.PlaceNearOrb(this, orb, gapDip: 8);
+        if (!IsVisible) Show();
     }
 }

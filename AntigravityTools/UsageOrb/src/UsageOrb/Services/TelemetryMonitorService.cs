@@ -4,7 +4,7 @@ using UsageOrb.Core;
 namespace UsageOrb.Services;
 
 /// <summary>
-/// Watches Antigravity brain directories and CLI statusline telemetry with debounced
+/// Watches Antigravity transcripts and conversation metadata with debounced
 /// background refresh so UI components receive real-time snapshots without blocking the UI thread.
 /// </summary>
 public sealed class TelemetryMonitorService : IDisposable
@@ -49,18 +49,8 @@ public sealed class TelemetryMonitorService : IDisposable
         RefreshAsync();
     }
 
-    public void RefreshNow(bool forceModels = false)
+    public void RefreshNow()
     {
-        if (forceModels)
-        {
-            _ = Task.Run(async () =>
-            {
-                await ModelCatalog.RefreshAccountModelsAsync(force: true).ConfigureAwait(false);
-                RefreshAsync();
-            });
-            return;
-        }
-
         _desktopQuota.Refresh(force: true);
         RefreshAsync();
     }
@@ -75,20 +65,6 @@ public sealed class TelemetryMonitorService : IDisposable
         foreach (var root in AntigravityPaths.GetBrainRoots())
         {
             TryAddWatcher(Path.GetDirectoryName(root.BrainDir)!, ConversationSummaries.DatabaseName + "*", includeSubdirectories: false);
-        }
-
-        var statusLineDir = Path.GetDirectoryName(AntigravityPaths.GetStatusLineStateFilePath());
-        if (!string.IsNullOrEmpty(statusLineDir))
-        {
-            try
-            {
-                Directory.CreateDirectory(statusLineDir);
-                TryAddWatcher(statusLineDir, "*.json", includeSubdirectories: false);
-            }
-            catch
-            {
-                // Non-critical if directory cannot be pre-created
-            }
         }
     }
 
@@ -149,7 +125,7 @@ public sealed class TelemetryMonitorService : IDisposable
                     settingsCopy = _settings.Clone();
                 }
 
-                var snapshot = AnalyticsEngine.Collect(settingsCopy, desktopQuota: _desktopQuota.State);
+                var snapshot = AnalyticsEngine.Collect(settingsCopy, desktopQuota: _desktopQuota.Snapshot);
                 _latestSnapshot = snapshot;
                 SnapshotUpdated?.Invoke(snapshot);
             }

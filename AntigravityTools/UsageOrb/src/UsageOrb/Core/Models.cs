@@ -1,11 +1,8 @@
-using System.Text.Json.Serialization;
-
 namespace UsageOrb.Core;
 
 public enum AntigravitySurface
 {
     App,
-    Cli,
     Ide,
     Unknown,
 }
@@ -62,248 +59,21 @@ public sealed record ModelPricing(
 public sealed record ModelSpec(
     string Id,
     string DisplayName,
-    string Family,
     QuotaGroupId QuotaGroup,
     string QuotaGroupLabel,
     string? Effort,
     long ContextWindow,
-    string ContextWindowSource,
     ModelPricing Pricing);
 
-public sealed record AvailableAccountModel(
-    string Id,
-    string DisplayName,
-    QuotaGroupId QuotaGroup,
-    string QuotaGroupLabel,
-    long ContextWindow,
-    string? Effort);
-
-public sealed class RawStatusLineQuotaBucket
-{
-    [JsonPropertyName("remaining_fraction")]
-    public double? RemainingFraction { get; set; }
-
-    [JsonPropertyName("remaining_amount")]
-    public double? RemainingAmount { get; set; }
-
-    [JsonPropertyName("reset_time")]
-    public string? ResetTime { get; set; }
-
-    [JsonPropertyName("reset_in_seconds")]
-    public double? ResetInSeconds { get; set; }
-
-    [JsonPropertyName("disabled")]
-    public bool? Disabled { get; set; }
-
-    [JsonIgnore]
-    internal string? PoolName { get; init; }
-
-    [JsonIgnore]
-    internal string? DisplayLabel { get; init; }
-
-    [JsonIgnore]
-    internal WindowKey? Window { get; init; }
-}
-
-public sealed class RawStatusLineModel
-{
-    [JsonPropertyName("id")]
-    public string? Id { get; set; }
-
-    [JsonPropertyName("display_name")]
-    public string? DisplayName { get; set; }
-
-    [JsonPropertyName("effort")]
-    public string? Effort { get; set; }
-}
-
-public sealed class RawStatusLineWorkspace
-{
-    [JsonPropertyName("current_dir")]
-    public string? CurrentDir { get; set; }
-
-    [JsonPropertyName("project_dir")]
-    public string? ProjectDir { get; set; }
-}
-
-public sealed class RawStatusLineCurrentUsage
-{
-    [JsonPropertyName("input_tokens")]
-    public long? InputTokens { get; set; }
-
-    [JsonPropertyName("output_tokens")]
-    public long? OutputTokens { get; set; }
-
-    [JsonPropertyName("cache_creation_input_tokens")]
-    public long? CacheCreationInputTokens { get; set; }
-
-    [JsonPropertyName("cache_read_input_tokens")]
-    public long? CacheReadInputTokens { get; set; }
-}
-
-public sealed class RawStatusLineContextWindow
-{
-    [JsonPropertyName("total_input_tokens")]
-    public long? TotalInputTokens { get; set; }
-
-    [JsonPropertyName("total_output_tokens")]
-    public long? TotalOutputTokens { get; set; }
-
-    [JsonPropertyName("context_window_size")]
-    public long? ContextWindowSize { get; set; }
-
-    [JsonPropertyName("used_percentage")]
-    public double? UsedPercentage { get; set; }
-
-    [JsonPropertyName("remaining_percentage")]
-    public double? RemainingPercentage { get; set; }
-
-    [JsonPropertyName("current_usage")]
-    public RawStatusLineCurrentUsage? CurrentUsage { get; set; }
-
-    public double? GetUsedPercentage()
-    {
-        var reported = UsedPercentage ?? (RemainingPercentage is { } remaining ? 100 - remaining : (double?)null);
-        if (reported is double percent && double.IsFinite(percent)) return Math.Clamp(percent, 0, 100);
-        if (ContextWindowSize is > 0 && CurrentUsage is { } usage)
-        {
-            long input = (usage.InputTokens ?? 0) + (usage.CacheReadInputTokens ?? 0) + (usage.CacheCreationInputTokens ?? 0);
-            return Math.Clamp((double)input / ContextWindowSize.Value * 100, 0, 100);
-        }
-        return null;
-    }
-}
-
-public sealed class RawStatusLineCost
-{
-    [JsonPropertyName("total_usd")]
-    public double? TotalUsd { get; set; }
-
-    [JsonPropertyName("subagent_usd")]
-    public double? SubagentUsd { get; set; }
-
-    [JsonPropertyName("estimated")]
-    public bool? Estimated { get; set; }
-}
-
-public sealed class RawStatusLineSandbox
-{
-    [JsonPropertyName("enabled")]
-    public bool? Enabled { get; set; }
-}
-
-public sealed class RawStatusLineSubagent
-{
-    [JsonPropertyName("name")]
-    public string? Name { get; set; }
-
-    [JsonPropertyName("role")]
-    public string? Role { get; set; }
-
-    [JsonPropertyName("status")]
-    public string? Status { get; set; }
-}
-
-public sealed class RawStatusLinePayload
-{
-    [JsonPropertyName("cwd")]
-    public string? Cwd { get; set; }
-
-    [JsonPropertyName("session_id")]
-    public string? SessionId { get; set; }
-
-    [JsonPropertyName("conversation_id")]
-    public string? ConversationId { get; set; }
-
-    [JsonPropertyName("conversation_title")]
-    public string? ConversationTitle { get; set; }
-
-    [JsonPropertyName("transcript_path")]
-    public string? TranscriptPath { get; set; }
-
-    [JsonPropertyName("model")]
-    public RawStatusLineModel? Model { get; set; }
-
-    [JsonPropertyName("workspace")]
-    public RawStatusLineWorkspace? Workspace { get; set; }
-
-    [JsonPropertyName("version")]
-    public string? Version { get; set; }
-
-    [JsonPropertyName("context_window")]
-    public RawStatusLineContextWindow? ContextWindow { get; set; }
-
-    [JsonPropertyName("exceeds_200k_tokens")]
-    public bool? Exceeds200kTokens { get; set; }
-
-    [JsonPropertyName("quota")]
-    public Dictionary<string, RawStatusLineQuotaBucket>? Quota { get; set; }
-
-    [JsonPropertyName("agent_state")]
-    public string? AgentState { get; set; }
-
-    [JsonPropertyName("cycle_mode")]
-    public string? CycleMode { get; set; }
-
-    [JsonPropertyName("sandbox")]
-    public RawStatusLineSandbox? Sandbox { get; set; }
-
-    [JsonPropertyName("subagents")]
-    public List<RawStatusLineSubagent>? Subagents { get; set; }
-
-    [JsonPropertyName("artifact_count")]
-    public int? ArtifactCount { get; set; }
-
-    [JsonPropertyName("plan_tier")]
-    public string? PlanTier { get; set; }
-
-    [JsonPropertyName("email")]
-    public string? Email { get; set; }
-
-    [JsonPropertyName("task_count")]
-    public int? TaskCount { get; set; }
-
-    [JsonPropertyName("terminal_width")]
-    public int? TerminalWidth { get; set; }
-
-    [JsonPropertyName("cost")]
-    public RawStatusLineCost? Cost { get; set; }
-}
-
-public sealed class CapturedStatusLine
-{
-    public DateTimeOffset CapturedAt { get; set; }
-    public RawStatusLinePayload Payload { get; set; } = new();
-}
-
-public sealed class QuotaHistoryBucketSample
-{
-    public double? RemainingFraction { get; set; }
-    public double? RemainingAmount { get; set; }
-}
-
-public sealed class QuotaHistoryPoint
-{
-    public DateTimeOffset CapturedAt { get; set; }
-    public Dictionary<string, QuotaHistoryBucketSample> Buckets { get; set; } = new();
-}
-
-public sealed class StatusLineStateFile
-{
-    public int Version { get; set; } = 1;
-    public DateTimeOffset UpdatedAt { get; set; }
-    public CapturedStatusLine? Latest { get; set; }
-    public CapturedStatusLine? LatestQuota { get; set; }
-    public Dictionary<string, CapturedStatusLine> ByConversation { get; set; } = new();
-    public List<QuotaHistoryPoint> QuotaHistory { get; set; } = [];
-}
+public sealed record QuotaHistoryPoint(
+    DateTimeOffset CapturedAt,
+    IReadOnlyDictionary<string, double> RemainingFractions);
 
 public sealed record QuotaBucketStatus(
     string Id,
     string Label,
     QuotaGroupId QuotaGroup,
     double? RemainingFraction,
-    double? UsedFraction,
     double? RemainingAmount,
     DateTimeOffset? ResetTime,
     double? InitialResetInSeconds,
@@ -348,7 +118,11 @@ public sealed class AppSettings
     public double IdleOpacity { get; set; } = 0.88;
     public ThemePreference Theme { get; set; } = ThemePreference.System;
     public bool OrbVisible { get; set; } = true;
-    public bool StartWithWindows { get; set; } = false;
+    public bool ShowTrayIcon { get; set; } = true;
+    public bool ShowTaskbarButton { get; set; } = true;
+    public bool RegisterStartMenuShortcut { get; set; }
+    public bool StartWithWindows { get; set; }
+    public bool FollowAntigravityLifecycle { get; set; }
     public double ContextWarnPercent { get; set; } = 70;
     public double ContextCriticalPercent { get; set; } = 88;
     public double QuotaLowPercent { get; set; } = 20;
@@ -366,24 +140,16 @@ public sealed record QuotaWindowSummary(
     bool IsLive,
     string StatusBadge,
     long? ResetInSeconds,
-    DateTimeOffset? ResetTime,
     long WindowTokens,
     double TokensPerHour,
-    int Invocations,
     int SessionsCount,
     long EstimatedBaselineTokens,
     bool? WillExhaustBeforeReset,
-    DateTimeOffset? ProjectedExhaustionTime,
     string? BucketLabel)
 {
     public string FormatPercent(string format = "0") =>
         RemainingPercent is double percent ? $"{percent.ToString(format)}%" : "—";
 }
-
-public sealed record CliConfigResult(
-    bool Success,
-    string SettingsPath,
-    string Message);
 
 public sealed record ContextCategoryItem(
     string Key,
@@ -391,7 +157,6 @@ public sealed record ContextCategoryItem(
     long Tokens,
     double PercentageOfContext,
     double PercentageOfWindow,
-    int ItemCount,
     string ColorHex);
 
 public sealed record ToolContextStat(
@@ -410,8 +175,7 @@ public sealed record CompactionEvent(
     long BeforeTokens,
     long SummaryTokens,
     long FreedTokens,
-    double CompressionRatio,
-    string Preview);
+    double CompressionRatio);
 
 public sealed record StepTelemetry(
     int StepIndex,
@@ -427,8 +191,6 @@ public sealed record StepTelemetry(
     double CacheHitRate,
     IReadOnlyList<string> ToolNames,
     int ToolCallCount,
-    int ThinkingChars,
-    int ResponseChars,
     bool HasError,
     double EstimatedCostUsd);
 
@@ -468,20 +230,12 @@ public sealed record SessionDetail(
     AntigravitySurface Surface,
     string Title,
     string? Workspace,
-    string TranscriptPath,
-    long FileSizeBytes,
-    DateTimeOffset StartedAt,
     DateTimeOffset LastActiveAt,
-    bool IsActiveSession,
     bool IsRecentlyWriting,
     bool IsSubagent,
-    string? ParentConversationId,
     string PrimaryModelId,
     string PrimaryModelDisplayName,
-    IReadOnlyList<string> ModelsUsed,
-    IReadOnlyList<QuotaGroupId> QuotaGroupsUsed,
     long ContextWindowSize,
-    string ContextWindowSource,
     long CurrentContextTokens,
     long ProjectedNextContextTokens,
     double ContextUsedPercent,
@@ -500,13 +254,9 @@ public sealed record SessionDetail(
     int UserTurns,
     int ModelInvocations,
     int ToolCallCount,
-    int ErrorCount,
-    int MediaCount,
     int CompactionCount,
     double EstimatedCostUsd,
-    double? LiveCostUsd,
     IReadOnlyList<ContextCategoryItem> Categories,
-    long FreeSpaceTokens,
     long CheckpointBufferTokens,
     IReadOnlyList<CompactionEvent> Compactions,
     IReadOnlyList<StepTelemetry> Steps,
@@ -598,14 +348,8 @@ public sealed record UsageInsight(
 public sealed record DashboardSnapshot(
     DateTimeOffset GeneratedAt,
     string? ActiveConversationId,
-    string? PlanTier,
-    string? AccountEmail,
-    string? CliVersion,
-    bool StatusLineConnected,
-    DateTimeOffset? StatusLineLastSeenAt,
     IReadOnlyList<QuotaBucketStatus> QuotaBuckets,
     IReadOnlyList<QuotaHistoryPoint> QuotaHistory,
-    IReadOnlyList<AvailableAccountModel> AvailableModels,
     IReadOnlyDictionary<WindowKey, WindowAnalytics> Windows,
     double? SprintVsWeeklyPaceRatio,
     IReadOnlyList<SessionDetail> Sessions,

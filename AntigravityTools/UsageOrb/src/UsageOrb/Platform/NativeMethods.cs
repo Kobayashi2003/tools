@@ -8,12 +8,14 @@ public static class NativeMethods
     public const int GWL_EXSTYLE = -20;
     public const long WS_EX_TOOLWINDOW = 0x00000080L;
     public const long WS_EX_NOACTIVATE = 0x08000000L;
+    private const long WS_EX_TRANSPARENT = 0x00000020L;
 
     public const uint DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     public const uint DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     public const uint DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     public const int DWMWCP_ROUND = 2;
-    public const uint GA_ROOT = 2;
+    private const uint GW_HWNDPREV = 3;
+    private const uint DWMWA_CLOAKED = 14;
 
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
     public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
@@ -46,13 +48,6 @@ public static class NativeMethods
 
         public readonly int Width => Right - Left;
         public readonly int Height => Bottom - Top;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT
-    {
-        public int X;
-        public int Y;
     }
 
     [DllImport("user32.dll")]
@@ -92,6 +87,17 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
 
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    internal static void MoveOverlayWindow(IntPtr hwnd, int x, int y)
+    {
+        const uint noSize = 0x0001;
+        const uint noZOrder = 0x0004;
+        const uint noActivate = 0x0010;
+        SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, noSize | noZOrder | noActivate);
+    }
+
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(
         IntPtr hwnd,
@@ -116,10 +122,10 @@ public static class NativeMethods
     public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint lpdwProcessId);
 
     [DllImport("user32.dll")]
-    public static extern IntPtr WindowFromPoint(POINT point);
+    private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
 
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+    private static extern int DwmGetWindowAttributeInt(IntPtr hwnd, uint attribute, out int value, int size);
 
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr hwnd);
@@ -160,6 +166,21 @@ public static class NativeMethods
         }
 
         return GetWindowRect(hwnd, out rect) && rect.Width > 0 && rect.Height > 0;
+    }
+
+    internal static bool IsRectObscured(IntPtr target, RECT bounds, uint ignoredPid)
+    {
+        for (var other = GetWindow(target, GW_HWNDPREV); other != IntPtr.Zero; other = GetWindow(other, GW_HWNDPREV))
+        {
+            if (!IsWindowVisible(other) || IsIconic(other)) continue;
+            GetWindowThreadProcessId(other, out uint pid);
+            if (pid == ignoredPid || (GetWindowLongPtr(other, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0) continue;
+            if (DwmGetWindowAttributeInt(other, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0) continue;
+            if (TryGetExtendedWindowBounds(other, out var covering) &&
+                covering.Left < bounds.Right && covering.Right > bounds.Left &&
+                covering.Top < bounds.Bottom && covering.Bottom > bounds.Top) return true;
+        }
+        return false;
     }
 
     public static string GetWindowTitle(IntPtr hwnd)

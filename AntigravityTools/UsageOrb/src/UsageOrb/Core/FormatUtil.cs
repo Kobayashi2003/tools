@@ -61,14 +61,6 @@ public static class FormatUtil
 
     public static string Exact(long value) => value.ToString("N0", CultureInfo.InvariantCulture);
 
-    public static string Percent(double value, bool isRatio = false, int decimals = 1)
-    {
-        var pct = isRatio ? value * 100.0 : value;
-        if (!double.IsFinite(pct)) return "0.0%";
-        var fmt = decimals == 0 ? "0" : "0." + new string('0', decimals);
-        return pct.ToString(fmt, CultureInfo.InvariantCulture) + "%";
-    }
-
     public static string Usd(double value)
     {
         if (!double.IsFinite(value) || value <= 0) return "$0.00";
@@ -100,19 +92,11 @@ public static class FormatUtil
         return $"{sec / 86400}d ago";
     }
 
-    public static string ProgressBar(double percent, int width = 12)
-    {
-        var clamped = Math.Clamp(percent, 0, 100);
-        var filled = (int)Math.Round((clamped / 100.0) * width);
-        return new string('█', filled) + new string('░', Math.Max(0, width - filled));
-    }
-
     public static string SurfaceTag(AntigravitySurface surface) => surface switch
     {
         AntigravitySurface.App => "APP",
-        AntigravitySurface.Cli => "CLI",
         AntigravitySurface.Ide => "IDE",
-        _ => "AGY",
+        _ => "—",
     };
 
     public static string WindowShort(WindowKey key) => key switch

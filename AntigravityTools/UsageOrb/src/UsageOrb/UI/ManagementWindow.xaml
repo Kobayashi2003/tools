@@ -10,6 +10,7 @@
         WindowStyle="None"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True"
         Background="{DynamicResource BgPrimaryBrush}"
         Foreground="{DynamicResource FgPrimaryBrush}">
 
@@ -22,6 +23,54 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <Style x:Key="PageToolbar" TargetType="DockPanel">
+            <Setter Property="LastChildFill" Value="True" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Margin" Value="0,0,6,12" />
+        </Style>
+
+        <Style x:Key="PageTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <Style x:Key="PageScroll" TargetType="ScrollViewer">
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="Padding" Value="0,0,6,0" />
+        </Style>
+
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style x:Key="SettingLabel" TargetType="Label">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource FgSecondaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SettingToggle" TargetType="CheckBox" BasedOn="{StaticResource PillSwitch}">
+            <Setter Property="Padding" Value="0,7" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
+
+        <Style x:Key="CompactTextBox" TargetType="TextBox" BasedOn="{StaticResource ObsidianTextBox}">
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="10,3" />
+        </Style>
+
+        <Style x:Key="SegmentTrack" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource BgPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderPrimaryBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="3" />
+        </Style>
+
         <Style x:Key="CardStyle" TargetType="Border">
             <Setter Property="Background" Value="{DynamicResource BgSecondaryBrush}" />
             <Setter Property="BorderBrush" Value="{DynamicResource BorderPrimaryBrush}" />
@@ -55,6 +104,11 @@
         <Style x:Key="MonoCell" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Consolas" />
             <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="TruncatedCell" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
         </Style>
 
         <Style x:Key="RightHeaderStyle" TargetType="DataGridColumnHeader">
@@ -169,17 +223,6 @@
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource FgPrimaryBrush}"
                                    VerticalAlignment="Center" />
-                        <Border x:Name="PlanChip"
-                                Visibility="Collapsed"
-                                Margin="8,0,0,0"
-                                Padding="6,1.5"
-                                CornerRadius="5"
-                                Background="{DynamicResource BgTertiaryBrush}"
-                                BorderBrush="{DynamicResource BorderPrimaryBrush}"
-                                BorderThickness="1"
-                                VerticalAlignment="Center">
-                            <TextBlock x:Name="PlanChipText" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
-                        </Border>
                         <TextBlock x:Name="HeaderSubtitle"
                                    Text="Loading telemetry..."
                                    FontSize="11"
@@ -203,7 +246,7 @@
                         <Button x:Name="MaximizeWinBtn" Style="{StaticResource TitleBarBtn}" ToolTip="Maximize / Restore">
                             <Rectangle Width="9.5" Height="9.5" RadiusX="1.2" RadiusY="1.2" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.25" />
                         </Button>
-                        <Button x:Name="CloseWinBtn" Style="{StaticResource TitleBarCloseBtn}" ToolTip="Hide to System Tray">
+                        <Button x:Name="CloseWinBtn" Style="{StaticResource TitleBarCloseBtn}" ToolTip="Hide console">
                             <Path Data="M 0,0 L 9,9 M 9,0 L 0,9" Width="9" Height="9" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.35" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
                         </Button>
                     </StackPanel>
@@ -246,747 +289,662 @@
             </Grid>
 
             <!-- ================================================================ -->
-            <!-- Main Content Area (4 Tab Panels)                                 -->
+            <!-- Console content -->
             <!-- ================================================================ -->
             <Grid Grid.Row="2" Margin="18,0,14,14">
 
-                <!-- ============================================================ -->
-                <!-- TAB 1: OVERVIEW & QUOTAS (Panel 2)                           -->
-                <!-- ============================================================ -->
-                <ScrollViewer x:Name="TabOverviewView" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
-                    <StackPanel>
-                        <!-- Row 1: 3-Pillar Hero Stage -->
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
+                <DockPanel x:Name="TabQuotasView">
+                    <DockPanel DockPanel.Dock="Top" Style="{StaticResource PageToolbar}">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="QuotaSourceText" FontSize="12" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <Button x:Name="QuotaSettingsBtn" Content="Quota settings" Style="{StaticResource GhostBtn}" />
+                        </StackPanel>
+                        <TextBlock x:Name="QuotaScopeText" Text="Account quota" Style="{StaticResource PageTitle}" Margin="0,0,12,0" />
+                    </DockPanel>
 
-                            <!-- Hero Card 1: ACTIVE CONTEXT -->
-                            <Border x:Name="HeroCtxCard" Grid.Column="0" Style="{StaticResource CardStyle}" Cursor="Hand" ToolTip="Click to open Context Inspector">
-                                <StackPanel>
-                                    <Grid Margin="0,0,0,6">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="ACTIVE CONTEXT" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" VerticalAlignment="Center" />
-                                        <Border Grid.Column="1" Padding="7,2" CornerRadius="6" Background="{DynamicResource BgTertiaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1">
-                                            <TextBlock x:Name="HeroCtxModelPill" Text="—" FontSize="10" FontWeight="Medium" Foreground="{DynamicResource FgSecondaryBrush}" />
-                                        </Border>
-                                    </Grid>
-                                    <TextBlock x:Name="HeroCtxPct" Text="—" FontSize="34" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,10" Foreground="{DynamicResource FgPrimaryBrush}" />
-                                    <Border Height="7" CornerRadius="3.5" Background="{DynamicResource TrackBrush}" ClipToBounds="True" Margin="0,0,0,10">
-                                        <Grid x:Name="HeroCtxBar" />
-                                    </Border>
-                                    <TextBlock x:Name="HeroCtxSub" Text="No active conversation" FontFamily="Consolas" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </Border>
+                    <ScrollViewer Style="{StaticResource PageScroll}">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
 
-                            <!-- Hero Card 2: 5-HOUR QUOTA REMAINING -->
-                            <Border x:Name="Hero5hCard" Grid.Column="2" Style="{StaticResource CardStyle}">
-                                <StackPanel>
-                                    <Grid Margin="0,0,0,6">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="5-HOUR QUOTA REMAINING" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" VerticalAlignment="Center" />
-                                        <Border x:Name="Hero5hBadge" Grid.Column="1" Padding="7,2" CornerRadius="6" Background="{DynamicResource BgTertiaryBrush}">
-                                            <TextBlock x:Name="Hero5hBadgeText" Text="Est." FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
-                                        </Border>
-                                    </Grid>
-                                    <TextBlock x:Name="Hero5hPct" Text="—" FontSize="34" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,10" Foreground="{DynamicResource OkBrush}" />
-                                    <Border Height="7" CornerRadius="3.5" Background="{DynamicResource TrackBrush}" ClipToBounds="True" Margin="0,0,0,10">
-                                        <Grid x:Name="Hero5hBar" />
-                                    </Border>
-                                    <TextBlock x:Name="Hero5hSub" Text="—" FontFamily="Consolas" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </Border>
-
-                            <!-- Hero Card 3: WEEKLY QUOTA REMAINING -->
-                            <Border x:Name="HeroWkCard" Grid.Column="4" Style="{StaticResource CardStyle}">
-                                <StackPanel>
-                                    <Grid Margin="0,0,0,6">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="WEEKLY QUOTA REMAINING" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" VerticalAlignment="Center" />
-                                        <Border x:Name="HeroWkBadge" Grid.Column="1" Padding="7,2" CornerRadius="6" Background="{DynamicResource BgTertiaryBrush}">
-                                            <TextBlock x:Name="HeroWkBadgeText" Text="Est." FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
-                                        </Border>
-                                    </Grid>
-                                    <TextBlock x:Name="HeroWkPct" Text="—" FontSize="34" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,10" Foreground="{DynamicResource WarnBrush}" />
-                                    <Border Height="7" CornerRadius="3.5" Background="{DynamicResource TrackBrush}" ClipToBounds="True" Margin="0,0,0,10">
-                                        <Grid x:Name="HeroWkBar" />
-                                    </Border>
-                                    <TextBlock x:Name="HeroWkSub" Text="—" FontFamily="Consolas" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </Border>
-                        </Grid>
-
-                        <!-- Row 2: Slim Secondary Metric Strip -->
-                        <Grid Margin="0,0,0,12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <Border Grid.Column="0" Style="{StaticResource PillStripCard}">
-                                <TextBlock HorizontalAlignment="Center" FontSize="12">
-                                    <Run Text="Cache Efficiency: " Foreground="{DynamicResource FgMutedBrush}" />
-                                    <Run x:Name="StripCacheVal" Text="—" FontWeight="SemiBold" Foreground="{DynamicResource FgPrimaryBrush}" />
-                                </TextBlock>
-                            </Border>
-                            <Border Grid.Column="2" Style="{StaticResource PillStripCard}">
-                                <TextBlock HorizontalAlignment="Center" FontSize="12">
-                                    <Run Text="Sprint Pace: " Foreground="{DynamicResource FgMutedBrush}" />
-                                    <Run x:Name="StripPaceVal" Text="—" FontWeight="SemiBold" Foreground="{DynamicResource FgPrimaryBrush}" />
-                                </TextBlock>
-                            </Border>
-                            <Border Grid.Column="4" Style="{StaticResource PillStripCard}">
-                                <TextBlock HorizontalAlignment="Center" FontSize="12">
-                                    <Run Text="Est. Ref Spend: " Foreground="{DynamicResource FgMutedBrush}" />
-                                    <Run x:Name="StripSpendVal" Text="—" FontWeight="SemiBold" Foreground="{DynamicResource FgPrimaryBrush}" />
-                                </TextBlock>
-                            </Border>
-                        </Grid>
-
-                        <!-- Row 3: 5h Sprint vs 7d Weekly by Quota Group (+ Inline Live Buckets if synced) -->
-                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="5h Sprint vs 7d Weekly by Quota Group" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource FgPrimaryBrush}" VerticalAlignment="Center" />
-                                    <Button x:Name="InlineCliLinkBtn"
-                                            Grid.Column="1"
-                                            Background="Transparent"
-                                            BorderThickness="0"
-                                            Cursor="Hand"
-                                            Padding="6,2"
-                                            VerticalAlignment="Center">
-                                        <TextBlock x:Name="InlineCliLinkText"
-                                                   Text="Waiting for Antigravity App quota"
-                                                   FontSize="11.5"
-                                                   Foreground="{DynamicResource AccentBrush}" />
-                                    </Button>
-                                </Grid>
-
-                                <!-- Inline Live CLI Quota Buckets (only visible when synced) -->
-                                <StackPanel x:Name="LiveQuotaBucketsHost" Visibility="Collapsed" Margin="0,0,0,10" />
-
-                                <DataGrid x:Name="QuotaMatrixGrid" Style="{StaticResource CleanGrid}" MaxHeight="220">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Quota Group" Binding="{Binding GroupLabel}" Width="1.6*" />
-                                        <DataGridTextColumn Header="5h Usage" Binding="{Binding FiveHourVolume}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Rate &amp; Calls" Binding="{Binding FiveHourRate}" Width="1.2*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="7d Usage" Binding="{Binding SevenDayVolume}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Cache" Binding="{Binding CacheHit}" Width="0.7*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Ref Spend (7d)" Binding="{Binding RefCost}" Width="0.9*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Row 4: Token Burn-Rate Timeline -->
-                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
+                                <Border x:Name="Hero5hCard" Grid.Column="0" Style="{StaticResource CardStyle}">
                                     <StackPanel>
-                                        <TextBlock x:Name="TimelineTitle" Text="Token Burn-Rate Timeline" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource FgPrimaryBrush}" />
-                                        <TextBlock x:Name="TimelineSubtitle" Text="" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,0" />
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="5-hour remaining" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                                            <Border x:Name="Hero5hBadge" Grid.Column="1" Padding="7,2" CornerRadius="6" Background="{DynamicResource BgTertiaryBrush}">
+                                                <TextBlock x:Name="Hero5hBadgeText" Text="Unavailable" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock x:Name="Hero5hPct" Text="—" FontFamily="Consolas" FontSize="32" FontWeight="Bold" Margin="0,3,0,12" Foreground="{DynamicResource OkBrush}" />
+                                        <Border Height="7" CornerRadius="3.5" Background="{DynamicResource TrackBrush}" ClipToBounds="True" Margin="0,0,0,10">
+                                            <Grid x:Name="Hero5hBar" />
+                                        </Border>
+                                        <TextBlock x:Name="Hero5hSub" Text="—" FontFamily="Consolas" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                    <Border Grid.Column="1" Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="8" Padding="3" VerticalAlignment="Center">
-                                        <StackPanel x:Name="WindowPillsPanel" Orientation="Horizontal" />
-                                    </Border>
-                                </Grid>
-
-                                <controls:BurnRateBarChart x:Name="BurnRateChart" Height="190" />
-
-                                <!-- Centered unclipped legend strip -->
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,4">
-                                    <Ellipse Width="8" Height="8" Fill="#22C58A" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                    <TextBlock Text="Cache Read" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                                    <Ellipse Width="8" Height="8" Fill="#60A5FA" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                    <TextBlock Text="Uncached Input" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,0,18,0" VerticalAlignment="Center" />
-                                    <Ellipse Width="8" Height="8" Fill="#F5B333" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                    <TextBlock Text="Output" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Below-Fold: Live Quota History (auto-shown when >= 2 CLI samples) -->
-                        <Border x:Name="QuotaHistoryCard" Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="Collapsed">
-                            <StackPanel>
-                                <TextBlock Text="Live Quota Remaining History" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource FgPrimaryBrush}" Margin="0,0,0,8" />
-                                <controls:QuotaHistoryChart x:Name="QuotaHistoryCanvas" Height="130" />
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Below-Fold: Diagnostics & Recommendations -->
-                        <Border x:Name="InsightsCard" Style="{StaticResource CardStyle}" Margin="0,0,0,8">
-                            <StackPanel>
-                                <TextBlock Text="Diagnostics &amp; Recommendations" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource FgPrimaryBrush}" Margin="0,0,0,8" />
-                                <StackPanel x:Name="InsightsHost" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-
-                <!-- ============================================================ -->
-                <!-- TAB 2: CONTEXT INSPECTOR (Panel 3)                           -->
-                <!-- ============================================================ -->
-                <ScrollViewer x:Name="TabContextView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
-                    <StackPanel x:Name="InspectorPanels">
-                        <!-- Row 1: Session Hero Card -->
-                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <ComboBox x:Name="InspectorSessionCombo" Grid.Column="0" MaxWidth="460" MinWidth="320" HorizontalAlignment="Left" />
-                                    <Button x:Name="PinSessionBtn"
-                                            Grid.Column="1"
-                                            Content="Pin to Widget"
-                                            Style="{StaticResource GhostBtn}"
-                                            Padding="10,5"
-                                            FontSize="11.5"
-                                            Margin="8,0,0,0"
-                                            VerticalAlignment="Center"
-                                            ToolTip="Pin this conversation to the Floating Orb, 3-Metric Pill, and Hover Card" />
-                                    <WrapPanel x:Name="InspectorBadgesPanel" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="10,0,0,0" />
-                                </Grid>
-
-                                <TextBlock x:Name="InspectorEmptyText" Text="No matching conversation" Foreground="{DynamicResource FgMutedBrush}" Visibility="Collapsed" />
-                                <StackPanel x:Name="InspectorSummary">
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="InspectorCtxNumbers" FontFamily="Consolas" FontSize="15.5" FontWeight="Bold" Foreground="{DynamicResource FgPrimaryBrush}" />
-                                    <TextBlock x:Name="InspectorCtxPct" Grid.Column="1" FontFamily="Consolas" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" />
-                                </Grid>
-
-                                <Border Height="9" CornerRadius="4.5" Background="{DynamicResource TrackBrush}" ClipToBounds="True" Margin="0,0,0,12">
-                                    <Grid x:Name="InspectorStackedBar" />
                                 </Border>
 
-                                <!-- 4 Pulse Tiles -->
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="10" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="10" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="10" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-
-                                    <Border Grid.Column="0" Style="{StaticResource InnerTile}">
-                                        <StackPanel>
-                                            <TextBlock Text="Latest Turn" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
-                                            <TextBlock x:Name="InspLatestTurn" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
-                                            <TextBlock x:Name="InspProjected" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="2" Style="{StaticResource InnerTile}">
-                                        <StackPanel>
-                                            <TextBlock Text="Cumulative" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
-                                            <TextBlock x:Name="InspCumulative" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
-                                            <TextBlock x:Name="InspCumulativeSub" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="4" Style="{StaticResource InnerTile}">
-                                        <StackPanel>
-                                            <TextBlock Text="Peak &amp; Cache" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
-                                            <TextBlock x:Name="InspPeakCache" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
-                                            <TextBlock x:Name="InspCounts" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="6" Style="{StaticResource InnerTile}">
-                                        <StackPanel>
-                                            <TextBlock Text="Ref Cost" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
-                                            <TextBlock x:Name="InspCost" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
-                                            <TextBlock x:Name="InspCostSub" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                    </Border>
-                                </Grid>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Row 2: 100-Cell Context Grid + Active Category Breakdown -->
-                        <Grid Margin="0,0,0,12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.05*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <Border Grid.Column="0" Style="{StaticResource CardStyle}">
-                                <StackPanel>
-                                    <TextBlock Text="100-Cell Context Window Grid" FontSize="13.5" FontWeight="SemiBold" />
-                                    <TextBlock x:Name="CellGridSubtitle" Text="Each cell = 1% of model limit" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,12" />
-                                    <controls:ContextGridControl x:Name="ContextCellGrid" />
-                                    <TextBlock x:Name="CheckpointBufferText" FontSize="11" FontFamily="Consolas" Foreground="{DynamicResource PurpleBrush}" Margin="0,10,0,0" Visibility="Collapsed" />
-                                </StackPanel>
-                            </Border>
-
-                            <Border Grid.Column="2" Style="{StaticResource CardStyle}">
-                                <StackPanel>
-                                    <TextBlock Text="Active Category Breakdown" FontSize="13.5" FontWeight="SemiBold" />
-                                    <TextBlock Text="Normalized to exact API tokenized context size" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,10" />
-                                    <StackPanel x:Name="CategoryBreakdownHost" />
-                                </StackPanel>
-                            </Border>
-                        </Grid>
-
-                        <!-- Row 3: Full-Width Context Growth & Compaction Checkpoints Chart (Approved) -->
-                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
+                                <Border x:Name="HeroWkCard" Grid.Column="2" Style="{StaticResource CardStyle}">
                                     <StackPanel>
-                                        <TextBlock Text="Context Growth &amp; Compaction Checkpoints" FontSize="13.5" FontWeight="SemiBold" />
-                                        <TextBlock Text="Cyan = total context per step · Green = prompt cache read · Violet markers = CHECKPOINT compactions" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,0" />
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Weekly remaining" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                                            <Border x:Name="HeroWkBadge" Grid.Column="1" Padding="7,2" CornerRadius="6" Background="{DynamicResource BgTertiaryBrush}">
+                                                <TextBlock x:Name="HeroWkBadgeText" Text="Unavailable" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock x:Name="HeroWkPct" Text="—" FontFamily="Consolas" FontSize="32" FontWeight="Bold" Margin="0,3,0,12" Foreground="{DynamicResource WarnBrush}" />
+                                        <Border Height="7" CornerRadius="3.5" Background="{DynamicResource TrackBrush}" ClipToBounds="True" Margin="0,0,0,10">
+                                            <Grid x:Name="HeroWkBar" />
+                                        </Border>
+                                        <TextBlock x:Name="HeroWkSub" Text="—" FontFamily="Consolas" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                </Grid>
-                                <controls:ContextGrowthChart x:Name="GrowthChart" Height="215" />
+                                </Border>
+                            </Grid>
 
-                                <!-- Inline Compactions Ledger when compactions exist -->
-                                <StackPanel x:Name="CompactionsSection" Visibility="Collapsed" Margin="0,12,0,0">
-                                    <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,0,0,10" />
-                                    <TextBlock x:Name="CompactionsHeader" Text="Compaction Checkpoints" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource PurpleBrush}" Margin="0,0,0,6" />
-                                    <DataGrid x:Name="CompactionsGrid" Style="{StaticResource CleanGrid}" MaxHeight="160" RowHeight="32">
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Remaining by model group" Style="{StaticResource SectionTitle}" Margin="0,0,0,12" />
+
+                                    <StackPanel x:Name="LiveQuotaBucketsHost" Visibility="Collapsed" Margin="0,0,0,10" />
+
+                                    <TextBlock x:Name="QuotaEmptyText" Text="Open Antigravity and sign in to load model quotas." Foreground="{DynamicResource FgSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="QuotaAlertsCard" Style="{StaticResource CardStyle}" Visibility="Collapsed" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Quota alerts" Style="{StaticResource SectionTitle}" Margin="0,0,0,8" />
+                                    <StackPanel x:Name="QuotaAlertsHost" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="QuotaHistoryCard" Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Text="Remaining quota history" Style="{StaticResource SectionTitle}" Foreground="{DynamicResource FgPrimaryBrush}" Margin="0,0,0,8" />
+                                    <controls:QuotaHistoryChart x:Name="QuotaHistoryCanvas" Height="130" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+
+                <DockPanel x:Name="TabContextView" Visibility="Collapsed">
+                    <DockPanel DockPanel.Dock="Top" Style="{StaticResource PageToolbar}">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ComboBox x:Name="InspectorSessionCombo" Width="365" AutomationProperties.Name="Conversation to inspect" />
+                            <Button x:Name="PinSessionBtn" Content="Pin to widget" Style="{StaticResource GhostBtn}" MinWidth="108" Margin="12,0,0,0"
+                                    ToolTip="Pin this conversation to the floating widget" />
+                        </StackPanel>
+                        <TextBlock Text="Conversation context" Style="{StaticResource PageTitle}" Margin="0,0,12,0" />
+                    </DockPanel>
+
+                    <ScrollViewer Style="{StaticResource PageScroll}">
+                        <StackPanel x:Name="InspectorPanels">
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,12">
+                                        <WrapPanel x:Name="InspectorBadgesPanel" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="12,0,0,0" />
+                                        <TextBlock Text="Context window" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                                    </DockPanel>
+
+                                    <TextBlock x:Name="InspectorEmptyText" Text="No matching conversation" Foreground="{DynamicResource FgMutedBrush}" Visibility="Collapsed" />
+                                    <StackPanel x:Name="InspectorSummary">
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="InspectorCtxNumbers" FontFamily="Consolas" FontSize="15.5" FontWeight="Bold" Foreground="{DynamicResource FgPrimaryBrush}" />
+                                            <TextBlock x:Name="InspectorCtxPct" Grid.Column="1" FontFamily="Consolas" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <Border Height="9" CornerRadius="4.5" Background="{DynamicResource TrackBrush}" ClipToBounds="True" Margin="0,0,0,12">
+                                            <Grid x:Name="InspectorStackedBar" />
+                                        </Border>
+
+                                        <!-- 4 Pulse Tiles -->
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Grid.Column="0" Style="{StaticResource InnerTile}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Latest turn" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
+                                                    <TextBlock x:Name="InspLatestTurn" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
+                                                    <TextBlock x:Name="InspProjected" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="2" Style="{StaticResource InnerTile}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Cumulative" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
+                                                    <TextBlock x:Name="InspCumulative" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
+                                                    <TextBlock x:Name="InspCumulativeSub" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="4" Style="{StaticResource InnerTile}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Peak and cache" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
+                                                    <TextBlock x:Name="InspPeakCache" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
+                                                <TextBlock x:Name="InspCounts" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" Style="{StaticResource TruncatedCell}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="6" Style="{StaticResource InnerTile}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Reference cost" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" />
+                                                    <TextBlock x:Name="InspCost" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Margin="0,3,0,1" />
+                                                    <TextBlock x:Name="InspCostSub" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="ContextAlertsCard" Style="{StaticResource CardStyle}" Visibility="Collapsed" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Context alerts" Style="{StaticResource SectionTitle}" Margin="0,0,0,8" />
+                                    <StackPanel x:Name="ContextAlertsHost" />
+                                </StackPanel>
+                            </Border>
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="Context window grid" Style="{StaticResource SectionTitle}" />
+                                        <TextBlock x:Name="CellGridSubtitle" Text="Each cell = 1% of model limit" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,12" />
+                                        <controls:ContextGridControl x:Name="ContextCellGrid" />
+                                        <TextBlock x:Name="CheckpointBufferText" FontSize="11" FontFamily="Consolas" Foreground="{DynamicResource PurpleBrush}" Margin="0,10,0,0" Visibility="Collapsed" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="Context by category" Style="{StaticResource SectionTitle}" />
+                                        <TextBlock Text="Normalized to exact API tokenized context size" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,10" />
+                                        <StackPanel x:Name="CategoryBreakdownHost" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="Context growth and compaction" Style="{StaticResource SectionTitle}" />
+                                            <TextBlock Text="Cyan = total context per step · Green = prompt cache read · Violet markers = CHECKPOINT compactions" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <controls:ContextGrowthChart x:Name="GrowthChart" Height="215" />
+
+                                    <!-- Inline Compactions Ledger when compactions exist -->
+                                    <StackPanel x:Name="CompactionsSection" Visibility="Collapsed" Margin="0,12,0,0">
+                                        <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,0,0,10" />
+                                        <TextBlock x:Name="CompactionsHeader" Text="Compaction Checkpoints" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource PurpleBrush}" Margin="0,0,0,6" />
+                                        <DataGrid x:Name="CompactionsGrid" Style="{StaticResource CleanGrid}" MaxHeight="160" RowHeight="32">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Step" Binding="{Binding Step}" Width="0.6*" ElementStyle="{StaticResource MonoCell}" />
+                                                <DataGridTextColumn Header="Timestamp" Binding="{Binding Time}" Width="1.4*" ElementStyle="{StaticResource MonoCell}" />
+                                                <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                                <DataGridTextColumn Header="Summary" Binding="{Binding Summary}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                                <DataGridTextColumn Header="Freed" Binding="{Binding Freed}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                                <DataGridTextColumn Header="Reduction" Binding="{Binding Ratio}" Width="0.8*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="Tool context" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
+                                        <StackPanel x:Name="SessionToolsBarsHost" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="Largest steps" Style="{StaticResource SectionTitle}" Margin="0,0,0,2" />
+                                        <TextBlock Text="Click any step to filter telemetry below" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,0,0,8" />
+                                        <StackPanel x:Name="HeaviestStepsHost" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <Border x:Name="SubagentsCard" Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock x:Name="SubagentsHeader" Text="Subagent Rollup" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock x:Name="SubagentsSubtitle" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,8" />
+                                    <DataGrid x:Name="SubagentsGrid" Style="{StaticResource CleanGrid}" MaxHeight="200">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Step" Binding="{Binding Step}" Width="0.6*" ElementStyle="{StaticResource MonoCell}" />
-                                            <DataGridTextColumn Header="Timestamp" Binding="{Binding Time}" Width="1.4*" ElementStyle="{StaticResource MonoCell}" />
-                                            <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                            <DataGridTextColumn Header="Summary" Binding="{Binding Summary}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                            <DataGridTextColumn Header="Freed" Binding="{Binding Freed}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                            <DataGridTextColumn Header="Reduction" Binding="{Binding Ratio}" Width="0.8*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="2*" />
+                                            <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="*" />
+                                            <DataGridTextColumn Header="Calls" Binding="{Binding Calls}" Width="0.7*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Peak Context" Binding="{Binding Peak}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Total Tokens" Binding="{Binding Total}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Ref Spend" Binding="{Binding Cost}" Width="0.9*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </StackPanel>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Row 4: 2-Column Bloat Diagnostics -->
-                        <Grid Margin="0,0,0,12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.15*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                            </Border>
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8">
                                 <StackPanel>
-                                    <TextBlock Text="Top Tool Context Consumers" FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,10" />
-                                    <StackPanel x:Name="SessionToolsBarsHost" />
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock x:Name="StepsHeader" Text="Step telemetry" Style="{StaticResource SectionTitle}" />
+                                            <TextBlock Text="Latest 80 steps in reverse chronological order" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="8" Padding="3" Margin="0,0,10,0" VerticalAlignment="Center">
+                                            <StackPanel x:Name="StepKindPillsHost" Orientation="Horizontal" />
+                                        </Border>
+                                        <TextBox x:Name="StepFilterBox" Grid.Column="2" Width="210" Style="{StaticResource ObsidianTextBox}" Tag="Filter model, tool, #step..." />
+                                    </Grid>
+
+                                    <DataGrid x:Name="StepsGrid" Style="{StaticResource CleanGrid}" MaxHeight="320" RowHeight="32">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Step" Binding="{Binding Step}" Width="0.55*" ElementStyle="{StaticResource MonoCell}" />
+                                            <DataGridTextColumn Header="Model / Kind" Binding="{Binding Model}" Width="1.6*" />
+                                            <DataGridTextColumn Header="Context" Binding="{Binding Context}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Δ" Binding="{Binding Delta}" Width="0.8*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Uncached" Binding="{Binding Input}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Cache" Binding="{Binding Cache}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Hit %" Binding="{Binding Hit}" Width="0.6*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Out" Binding="{Binding Output}" Width="0.7*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Tools" Binding="{Binding Tools}" Width="1.6*" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+
+                <DockPanel x:Name="TabUsageView" Visibility="Collapsed">
+                    <DockPanel DockPanel.Dock="Top" Style="{StaticResource PageToolbar}">
+                        <Border DockPanel.Dock="Right" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
+                            <StackPanel x:Name="WindowPillsPanel" Orientation="Horizontal" />
+                        </Border>
+                        <TextBlock Text="Transcript usage" Style="{StaticResource PageTitle}" />
+                    </DockPanel>
+
+                    <ScrollViewer Style="{StaticResource PageScroll}">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0" Style="{StaticResource PillStripCard}">
+                                    <StackPanel>
+                                        <TextBlock Text="Tokens" FontSize="12" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                        <TextBlock FontFamily="Consolas" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0">
+                                            <Run x:Name="StripTokensVal" Text="—" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="2" Style="{StaticResource PillStripCard}">
+                                    <StackPanel>
+                                        <TextBlock Text="Cache hit" FontSize="12" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                        <TextBlock FontFamily="Consolas" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0">
+                                            <Run x:Name="StripCacheVal" Text="—" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="4" Style="{StaticResource PillStripCard}">
+                                    <StackPanel>
+                                        <TextBlock Text="Model calls" FontSize="12" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                        <TextBlock FontFamily="Consolas" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0">
+                                            <Run x:Name="StripCallsVal" Text="—" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="6" Style="{StaticResource PillStripCard}">
+                                    <StackPanel>
+                                        <TextBlock Text="Reference cost" FontSize="12" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                        <TextBlock FontFamily="Consolas" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0">
+                                            <Run x:Name="StripSpendVal" Text="—" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock x:Name="UsageChartTitle" Text="Token usage over time" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
+                                    <controls:BurnRateBarChart x:Name="BurnRateChart" Height="190" />
+
+                                    <!-- Centered unclipped legend strip -->
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,4">
+                                        <Ellipse Width="8" Height="8" Fill="#22C58A" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="Cache Read" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                        <Ellipse Width="8" Height="8" Fill="#60A5FA" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="Uncached Input" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,0,18,0" VerticalAlignment="Center" />
+                                        <Ellipse Width="8" Height="8" Fill="#F5B333" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="Output" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 
-                            <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                            <Border x:Name="UsageAlertsCard" Style="{StaticResource CardStyle}" Visibility="Collapsed" Margin="0,0,0,12">
                                 <StackPanel>
-                                    <TextBlock Text="Heaviest Individual Steps" FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,2" />
-                                    <TextBlock Text="Click any step to filter telemetry below" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,0,0,8" />
-                                    <StackPanel x:Name="HeaviestStepsHost" />
+                                    <TextBlock Text="Local budget alerts" Style="{StaticResource SectionTitle}" Margin="0,0,0,8" />
+                                    <StackPanel x:Name="UsageAlertsHost" />
                                 </StackPanel>
                             </Border>
-                        </Grid>
 
-                        <!-- Below-Fold: Subagent Rollup (hidden when 0) -->
-                        <Border x:Name="SubagentsCard" Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="Collapsed">
-                            <StackPanel>
-                                <TextBlock x:Name="SubagentsHeader" Text="Subagent Rollup" FontSize="13.5" FontWeight="SemiBold" />
-                                <TextBlock x:Name="SubagentsSubtitle" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,8" />
-                                <DataGrid x:Name="SubagentsGrid" Style="{StaticResource CleanGrid}" MaxHeight="200">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="2*" />
-                                        <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="*" />
-                                        <DataGridTextColumn Header="Calls" Binding="{Binding Calls}" Width="0.7*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Peak Context" Binding="{Binding Peak}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Total Tokens" Binding="{Binding Total}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Ref Spend" Binding="{Binding Cost}" Width="0.9*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Below-Fold: Filterable Per-Step Context Telemetry -->
-                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock x:Name="StepsHeader" Text="Per-Step Context Telemetry" FontSize="13.5" FontWeight="SemiBold" />
-                                        <TextBlock Text="Latest 80 steps in reverse chronological order" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,0" />
-                                    </StackPanel>
-                                    <Border Grid.Column="1" Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="8" Padding="3" Margin="0,0,10,0" VerticalAlignment="Center">
-                                        <StackPanel x:Name="StepKindPillsHost" Orientation="Horizontal" />
-                                    </Border>
-                                    <TextBox x:Name="StepFilterBox" Grid.Column="2" Width="210" Style="{StaticResource ObsidianTextBox}" Tag="Filter model, tool, #step..." />
-                                </Grid>
-
-                                <DataGrid x:Name="StepsGrid" Style="{StaticResource CleanGrid}" MaxHeight="320" RowHeight="32">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Step" Binding="{Binding Step}" Width="0.55*" ElementStyle="{StaticResource MonoCell}" />
-                                        <DataGridTextColumn Header="Model / Kind" Binding="{Binding Model}" Width="1.6*" />
-                                        <DataGridTextColumn Header="Context" Binding="{Binding Context}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Δ" Binding="{Binding Delta}" Width="0.8*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Uncached" Binding="{Binding Input}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Cache" Binding="{Binding Cache}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Hit %" Binding="{Binding Hit}" Width="0.6*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Out" Binding="{Binding Output}" Width="0.7*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Tools" Binding="{Binding Tools}" Width="1.6*" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-
-                <!-- ============================================================ -->
-                <!-- TAB 3: MODELS & TOOLS (Panel 4)                              -->
-                <!-- ============================================================ -->
-                <ScrollViewer x:Name="TabModelsView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
-                    <StackPanel>
-                        <!-- Row 1: Model Efficiency Breakdown -->
-                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock x:Name="ModelsHeader" Text="Model Efficiency Breakdown" FontSize="13.5" FontWeight="SemiBold" />
-                                        <TextBlock Text="Invocations, avg &amp; peak context footprint, prompt cache hit rate, share bar, and reference spend" FontSize="11" Foreground="{DynamicResource FgMutedBrush}" Margin="0,2,0,0" />
-                                    </StackPanel>
-                                    <Border Grid.Column="1" Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="8" Padding="3" VerticalAlignment="Center">
-                                        <StackPanel x:Name="ModelsWindowPills" Orientation="Horizontal" />
-                                    </Border>
-                                </Grid>
-
-                                <!-- Custom rich Obsidian table matching Panel 4 -->
-                                <Grid Margin="8,0,8,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="1.9*" />
-                                        <ColumnDefinition Width="1.2*" />
-                                        <ColumnDefinition Width="0.75*" />
-                                        <ColumnDefinition Width="0.75*" />
-                                        <ColumnDefinition Width="1.15*" />
-                                        <ColumnDefinition Width="0.85*" />
-                                        <ColumnDefinition Width="1.5*" />
-                                        <ColumnDefinition Width="0.85*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="MODEL" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" />
-                                    <TextBlock Grid.Column="1" Text="QUOTA GROUP" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" />
-                                    <TextBlock Grid.Column="2" Text="CONTEXT" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
-                                    <TextBlock Grid.Column="3" Text="CALLS" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
-                                    <TextBlock Grid.Column="4" Text="AVG / PEAK" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
-                                    <TextBlock Grid.Column="5" Text="CACHE HIT" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
-                                    <TextBlock Grid.Column="6" Text="TOTAL" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" Margin="0,0,8,0" />
-                                    <TextBlock Grid.Column="7" Text="REF COST" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
-                                </Grid>
-                                <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,0,0,4" />
-                                <StackPanel x:Name="ModelsTableHost" />
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Row 2: 2-Column Global Intelligence -->
-                        <Grid Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.1*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <!-- Left: Global Tool Context Bloat Ranking -->
-                            <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
                                 <StackPanel>
-                                    <TextBlock Text="Global Tool Context Bloat Ranking" FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                    <TextBlock Text="Usage by model" Style="{StaticResource SectionTitle}" Margin="0,0,0,12" />
+                                    <Grid Margin="8,0,8,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="1.9*" />
+                                            <ColumnDefinition Width="1.2*" />
+                                            <ColumnDefinition Width="0.75*" />
+                                            <ColumnDefinition Width="0.75*" />
+                                            <ColumnDefinition Width="1.15*" />
+                                            <ColumnDefinition Width="0.85*" />
+                                            <ColumnDefinition Width="1.5*" />
+                                            <ColumnDefinition Width="0.85*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Model" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" />
+                                        <TextBlock Grid.Column="1" Text="Group" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" />
+                                        <TextBlock Grid.Column="2" Text="Window" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
+                                        <TextBlock Grid.Column="3" Text="Calls" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
+                                        <TextBlock Grid.Column="4" Text="Avg / peak" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
+                                        <TextBlock Grid.Column="5" Text="Cache hit" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
+                                        <TextBlock Grid.Column="6" Text="Tokens" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" Margin="0,0,8,0" />
+                                        <TextBlock Grid.Column="7" Text="Ref. cost" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgMutedBrush}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,0,0,4" />
+                                    <StackPanel x:Name="ModelsTableHost" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Tools in active sessions" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Lifetime tool totals for sessions active in the selected period." Foreground="{DynamicResource FgSecondaryBrush}" FontSize="11.5" Margin="0,3,0,12" />
                                     <StackPanel x:Name="GlobalToolsBarsHost" />
                                 </StackPanel>
                             </Border>
 
-                            <!-- Right: Account Available Models -->
-                            <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
                                 <StackPanel>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <TextBlock x:Name="AccountModelsHeader" Text="Account Available Models" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                            <Border Margin="8,0,0,0" Padding="6,2" CornerRadius="5" Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" VerticalAlignment="Center">
-                                                <TextBlock Text="agy models" FontFamily="Consolas" FontSize="10" Foreground="{DynamicResource FgMutedBrush}" />
-                                            </Border>
-                                        </StackPanel>
-                                        <Button x:Name="RefreshModelsBtn" Grid.Column="1" Content="Refresh Models" Style="{StaticResource GhostBtn}" Padding="10,5" FontSize="11.5" />
+                                    <Grid Margin="0,0,0,10">
+                                        <TextBlock Text="5-hour and 7-day comparison" Style="{StaticResource SectionTitle}" />
+                                        <TextBlock x:Name="UsagePaceText" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" HorizontalAlignment="Right" />
                                     </Grid>
-                                    <StackPanel x:Name="AccountModelsListHost" />
+                                    <DataGrid x:Name="UsageComparisonGrid" Style="{StaticResource CleanGrid}" MaxHeight="220">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Model group" Binding="{Binding GroupLabel}" Width="1.6*" />
+                                            <DataGridTextColumn Header="5h Usage" Binding="{Binding FiveHourVolume}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Rate &amp; Calls" Binding="{Binding FiveHourRate}" Width="1.2*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="7d Usage" Binding="{Binding SevenDayVolume}" Width="*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Cache" Binding="{Binding CacheHit}" Width="0.7*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                            <DataGridTextColumn Header="Ref Spend (7d)" Binding="{Binding RefCost}" Width="0.9*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
                                 </StackPanel>
                             </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+
+                <DockPanel x:Name="TabSessionsView" Visibility="Collapsed">
+                    <DockPanel DockPanel.Dock="Top" Style="{StaticResource PageToolbar}">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBox x:Name="SessionSearchBox" Width="232" Style="{StaticResource CompactTextBox}" Tag="Search title, model, ID…" Margin="0,0,16,0" AutomationProperties.Name="Search sessions" />
+                            <CheckBox x:Name="ShowSubagentsCheck" Content="Show subagents" Style="{StaticResource PillSwitch}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="Recorded sessions" Style="{StaticResource PageTitle}" />
+                            <TextBlock x:Name="SessionsCountText" FontSize="12" Foreground="{DynamicResource FgSecondaryBrush}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </DockPanel>
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,6,0" Padding="16,10,16,14">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <DataGrid x:Name="SessionsGrid" Style="{StaticResource CleanGrid}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="#" Binding="{Binding Rank}" Width="38" ElementStyle="{StaticResource MonoCell}" />
+                                    <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2.4*" ElementStyle="{StaticResource TruncatedCell}" />
+                                    <DataGridTemplateColumn Header="Source" Width="64">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{DynamicResource BgTertiaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="5" Padding="6,2" HorizontalAlignment="Left">
+                                                    <TextBlock Text="{Binding Surface}" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="1.4*" ElementStyle="{StaticResource TruncatedCell}" />
+                                    <DataGridTextColumn Header="Context" Binding="{Binding Context}" Width="0.75*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                    <DataGridTemplateColumn Header="Used %" Width="78" HeaderStyle="{StaticResource RightHeaderStyle}">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{Binding UsedBg}" CornerRadius="9" Padding="8,2" HorizontalAlignment="Right">
+                                                    <TextBlock Text="{Binding UsedPct}" FontFamily="Consolas" FontSize="10.5" FontWeight="Bold" Foreground="{Binding UsedFg}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Total Tok" Binding="{Binding Total}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                    <DataGridTextColumn Header="Cache %" Binding="{Binding Cache}" Width="0.65*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                    <DataGridTextColumn Header="CP" Binding="{Binding Compactions}" Width="0.5*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                    <DataGridTextColumn Header="Ref Cost" Binding="{Binding Cost}" Width="0.75*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                    <DataGridTextColumn Header="Updated" Binding="{Binding LastActive}" Width="0.8*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Grid.Row="1" Text="Double-click or press Enter to inspect a session." FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="8,10,0,0" />
                         </Grid>
-                    </StackPanel>
-                </ScrollViewer>
+                    </Border>
+                </DockPanel>
 
-                <!-- ============================================================ -->
-                <!-- TAB 4: SESSIONS & SETTINGS (Panel 5)                         -->
-                <!-- ============================================================ -->
-                <ScrollViewer x:Name="TabSessionsView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
-                    <StackPanel>
-                        <!-- Row 1: Recorded Sessions Ledger -->
-                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="Recorded Sessions" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                        <TextBlock x:Name="SessionsCountText" Text="· 0 sessions" FontSize="12" Foreground="{DynamicResource FgMutedBrush}" Margin="7,0,0,0" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                    <TextBox x:Name="SessionSearchBox" Grid.Column="1" Width="250" Style="{StaticResource ObsidianTextBox}" Tag="Search title, model, ID..." Margin="0,0,14,0" />
-                                    <CheckBox x:Name="ShowSubagentsCheck" Grid.Column="2" Content="Show subagents" Style="{StaticResource PillSwitch}" VerticalAlignment="Center" />
-                                </Grid>
+                <DockPanel x:Name="TabSettingsView" Visibility="Collapsed">
+                    <DockPanel DockPanel.Dock="Top" Style="{StaticResource PageToolbar}">
+                        <Button x:Name="SaveSettingsBtn" DockPanel.Dock="Right" Content="Save preferences" Style="{StaticResource PrimaryCtaBtn}" VerticalAlignment="Center" />
+                        <TextBlock Text="Settings" Style="{StaticResource PageTitle}" />
+                    </DockPanel>
 
-                                <DataGrid x:Name="SessionsGrid" Style="{StaticResource CleanGrid}" MaxHeight="265">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="#" Binding="{Binding Rank}" Width="38" ElementStyle="{StaticResource MonoCell}" />
-                                        <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2.4*" />
-                                        <DataGridTemplateColumn Header="Source" Width="64">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <Border Background="{DynamicResource BgTertiaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="5" Padding="6,2" HorizontalAlignment="Left">
-                                                        <TextBlock Text="{Binding Surface}" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
-                                                    </Border>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                        </DataGridTemplateColumn>
-                                        <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="1.4*" />
-                                        <DataGridTextColumn Header="Context" Binding="{Binding Context}" Width="0.75*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTemplateColumn Header="Used %" Width="78" HeaderStyle="{StaticResource RightHeaderStyle}">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <Border Background="{Binding UsedBg}" CornerRadius="9" Padding="8,2" HorizontalAlignment="Right">
-                                                        <TextBlock Text="{Binding UsedPct}" FontFamily="Consolas" FontSize="10.5" FontWeight="Bold" Foreground="{Binding UsedFg}" />
-                                                    </Border>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                        </DataGridTemplateColumn>
-                                        <DataGridTextColumn Header="Total Tok" Binding="{Binding Total}" Width="0.85*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Cache %" Binding="{Binding Cache}" Width="0.65*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="CP" Binding="{Binding Compactions}" Width="0.5*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Ref Cost" Binding="{Binding Cost}" Width="0.75*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                        <DataGridTextColumn Header="Updated" Binding="{Binding LastActive}" Width="0.8*" HeaderStyle="{StaticResource RightHeaderStyle}" ElementStyle="{StaticResource RightTextCell}" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <TextBlock Text="Double-click any row to open it directly in Context Inspector" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" Margin="4,6,0,0" />
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Row 2: 2-Column Widget Settings + Live CLI Quota Bridge -->
-                        <Grid Margin="0,0,0,8">
+                    <ScrollViewer Style="{StaticResource PageScroll}">
+                        <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="12" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                            <!-- Left: Floating Widget & Alert Settings -->
-                            <Border Grid.Column="0" Style="{StaticResource CardStyle}">
-                                <StackPanel>
-                                    <TextBlock Text="Floating Widget &amp; Alert Settings" FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,12" />
-
-                                    <!-- Widget Shape Toggle -->
-                                    <Grid Margin="0,0,0,10">
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Widget appearance and placement" Style="{StaticResource SectionTitle}" Margin="0,0,0,12" />
+                                    <Grid Grid.Row="1">
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="116" />
+                                            <ColumnDefinition Width="106" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Widget Shape" VerticalAlignment="Center" Foreground="{DynamicResource FgSecondaryBrush}" FontSize="12" />
-                                        <Border Grid.Column="1" Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="8" Padding="3">
-                                            <Grid x:Name="ShapeSegmentHost" />
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="35" />
+                                            <RowDefinition Height="35" />
+                                            <RowDefinition Height="35" />
+                                            <RowDefinition Height="35" />
+                                            <RowDefinition Height="35" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <Label Content="Shape" Style="{StaticResource SettingLabel}" />
+                                        <Border Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
+                                            <UniformGrid x:Name="ShapeSegmentHost" Rows="1" />
+                                        </Border>
+
+                                        <Label Grid.Row="1" Content="Theme" Style="{StaticResource SettingLabel}" />
+                                        <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
+                                            <UniformGrid x:Name="ThemeSegmentHost" Rows="1" />
+                                        </Border>
+
+                                        <Label Grid.Row="2" Content="Orb size (px)" Style="{StaticResource SettingLabel}" />
+                                        <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
+                                            <UniformGrid x:Name="OrbSizeSegmentHost" Rows="1" />
+                                        </Border>
+
+                                        <Label Grid.Row="3" Content="Idle opacity" Target="{Binding ElementName=OpacitySlider}" Style="{StaticResource SettingLabel}" />
+                                        <DockPanel Grid.Row="3" Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock x:Name="OpacityLabel" DockPanel.Dock="Right" Width="46" TextAlignment="Right" FontFamily="Consolas" FontSize="12" VerticalAlignment="Center" />
+                                            <Slider x:Name="OpacitySlider" Style="{StaticResource ObsidianSlider}" Minimum="0.4" Maximum="1.0"
+                                                    TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                                        </DockPanel>
+
+                                        <Label Grid.Row="4" Content="Dock mode" Target="{Binding ElementName=DockModeCombo}" Style="{StaticResource SettingLabel}" />
+                                        <ComboBox x:Name="DockModeCombo" Grid.Row="4" Grid.Column="1" VerticalAlignment="Center">
+                                            <ComboBoxItem Tag="FollowAntigravity" Content="Follow Antigravity window" />
+                                            <ComboBoxItem Tag="FreeFloat" Content="Always-on-top free float" />
+                                        </ComboBox>
+
+                                        <Label Grid.Row="5" Content="Anchor corner" Style="{StaticResource SettingLabel}" />
+                                        <Border Grid.Row="5" Grid.Column="1" Style="{StaticResource SegmentTrack}" Margin="0,4,0,0">
+                                            <UniformGrid x:Name="AnchorGridHost" Rows="2" Columns="2" />
                                         </Border>
                                     </Grid>
+                                    <Button x:Name="ResetPosBtn" Grid.Row="2" Content="Reset widget position" Style="{StaticResource GhostBtn}" HorizontalAlignment="Right" Margin="0,12,0,0" />
+                                </Grid>
+                            </Border>
 
-                                    <!-- Dock Mode + 4-Corner Anchor Grid -->
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="12" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
+                            <Border Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Startup and Windows integration" Style="{StaticResource SectionTitle}" Margin="0,0,0,7" />
+                                    <StackPanel Grid.Row="1">
+                                        <CheckBox x:Name="StartWithWindowsCheck" Content="Start with Windows" Style="{StaticResource SettingToggle}" />
+                                        <CheckBox x:Name="FollowLifecycleCheck" Content="Follow Antigravity start and exit" Style="{StaticResource SettingToggle}" />
 
-                                        <StackPanel Grid.Column="0">
-                                            <TextBlock Text="Dock Mode" Foreground="{DynamicResource FgSecondaryBrush}" FontSize="11.5" Margin="0,0,0,5" />
-                                            <ComboBox x:Name="DockModeCombo">
-                                                <ComboBoxItem Tag="FollowAntigravity" Content="Follow Antigravity Window" />
-                                                <ComboBoxItem Tag="FreeFloat" Content="Always-On-Top Free Float" />
-                                            </ComboBox>
-                                        </StackPanel>
+                                        <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,9,0,12" />
+                                        <TextBlock Text="Windows visibility" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,5" />
+                                        <CheckBox x:Name="ShowTrayIconCheck" Content="Show system tray icon" Style="{StaticResource SettingToggle}" />
+                                        <CheckBox x:Name="ShowTaskbarButtonCheck" Content="Show console in taskbar" Style="{StaticResource SettingToggle}" />
+                                        <CheckBox x:Name="RegisterStartMenuCheck" Content="Add UsageOrb to Start menu" Style="{StaticResource SettingToggle}" />
+                                    </StackPanel>
+                                    <Button x:Name="LaunchAntigravityBtn" Grid.Row="2" Content="Launch Antigravity with proxy settings"
+                                            Style="{StaticResource GhostBtn}" HorizontalAlignment="Right" Margin="0,12,0,0" />
+                                </Grid>
+                            </Border>
 
-                                        <!-- 2x2 Visual Anchor Selector (TL / TR / BL / BR) -->
-                                        <StackPanel Grid.Column="2">
-                                            <TextBlock Text="Anchor" Foreground="{DynamicResource FgSecondaryBrush}" FontSize="11.5" Margin="0,0,0,5" HorizontalAlignment="Center" />
-                                            <UniformGrid x:Name="AnchorGridHost" Rows="2" Columns="2" Width="76" Height="52" />
-                                        </StackPanel>
-                                    </Grid>
-
-                                    <!-- Orb Size + Idle Opacity -->
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="16" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-
-                                        <StackPanel Grid.Column="0">
-                                            <TextBlock Text="Orb Size (px)" Foreground="{DynamicResource FgSecondaryBrush}" FontSize="11.5" Margin="0,0,0,5" />
-                                            <Border Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="8" Padding="3">
-                                                <StackPanel x:Name="OrbSizeSegmentHost" Orientation="Horizontal" />
-                                            </Border>
-                                        </StackPanel>
-
-                                        <StackPanel Grid.Column="2">
-                                            <Grid Margin="0,0,0,5">
-                                                <TextBlock Text="Idle Opacity" Foreground="{DynamicResource FgSecondaryBrush}" FontSize="11.5" />
-                                                <TextBlock x:Name="OpacityLabel" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="11.5" Foreground="{DynamicResource FgPrimaryBrush}" />
-                                            </Grid>
-                                            <Slider x:Name="OpacitySlider" Style="{StaticResource ObsidianSlider}" Minimum="0.4" Maximum="1.0" TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0,4,0,0" />
-                                        </StackPanel>
-                                    </Grid>
-
-                                    <!-- Theme + Start with Windows -->
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-
-                                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                            <TextBlock Text="Theme" Foreground="{DynamicResource FgSecondaryBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                            <Border Background="{DynamicResource BgPrimaryBrush}" BorderBrush="{DynamicResource BorderPrimaryBrush}" BorderThickness="1" CornerRadius="8" Padding="3">
-                                                <StackPanel x:Name="ThemeSegmentHost" Orientation="Horizontal" />
-                                            </Border>
-                                        </StackPanel>
-
-                                        <CheckBox x:Name="StartWithWindowsCheck" Grid.Column="2" Content="Start with Windows" Style="{StaticResource PillSwitch}" VerticalAlignment="Center" />
-                                    </Grid>
-
-                                    <!-- 4 Compact Threshold & Est. Baseline Inputs -->
-                                    <UniformGrid Columns="4" Margin="0,0,0,14">
-                                        <StackPanel Margin="0,0,6,0">
-                                            <TextBlock Text="Ctx Warn %" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" Margin="0,0,0,4" />
-                                            <TextBox x:Name="WarnPctBox" Style="{StaticResource ObsidianTextBox}" FontFamily="Consolas" />
-                                        </StackPanel>
-                                        <StackPanel Margin="3,0">
-                                            <TextBlock Text="Ctx Crit %" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" Margin="0,0,0,4" />
-                                            <TextBox x:Name="CritPctBox" Style="{StaticResource ObsidianTextBox}" FontFamily="Consolas" />
-                                        </StackPanel>
-                                        <StackPanel Margin="3,0">
-                                            <TextBlock Text="5h Est. Base" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" Margin="0,0,0,4" ToolTip="Optional token budget for a 5-hour estimate. Leave blank to show only reported quota." />
-                                            <TextBox x:Name="EstBase5hBox" Style="{StaticResource ObsidianTextBox}" FontFamily="Consolas" />
-                                        </StackPanel>
-                                        <StackPanel Margin="6,0,0,0">
-                                            <TextBlock Text="7d Est. Base" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" Margin="0,0,0,4" ToolTip="Optional token budget for a weekly estimate. Leave blank to show only reported quota." />
-                                            <TextBox x:Name="EstBase7dBox" Style="{StaticResource ObsidianTextBox}" FontFamily="Consolas" />
-                                        </StackPanel>
-                                    </UniformGrid>
-
-                                    <!-- Action Buttons -->
+                            <Border Grid.Row="1" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="Alerts and local estimates" Style="{StaticResource SectionTitle}" Margin="0,0,0,14" />
+                                    <TextBlock Text="Context alerts" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="10" />
+                                            <ColumnDefinition Width="12" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <Button x:Name="SaveSettingsBtn" Grid.Column="0" Content="Save Preferences" Style="{StaticResource PrimaryCtaBtn}" />
-                                        <Button x:Name="ResetPosBtn" Grid.Column="2" Content="Reset Position" Style="{StaticResource GhostBtn}" />
+                                        <StackPanel>
+                                            <Label Content="Warning (%)" Target="{Binding ElementName=WarnPctBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                            <TextBox x:Name="WarnPctBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <Label Content="Critical (%)" Target="{Binding ElementName=CritPctBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                            <TextBox x:Name="CritPctBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" />
+                                        </StackPanel>
                                     </Grid>
+
+                                    <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,14,0,12" />
+                                    <TextBlock Text="Quota estimates" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="12" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <Label Content="5-hour budget (tokens)" Target="{Binding ElementName=EstBase5hBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                            <TextBox x:Name="EstBase5hBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" Tag="Optional" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <Label Content="7-day budget (tokens)" Target="{Binding ElementName=EstBase7dBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                            <TextBox x:Name="EstBase7dBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" Tag="Optional" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock Text="Used to estimate remaining quota when a live reading is unavailable." TextWrapping="Wrap"
+                                               FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,9,0,0" />
                                 </StackPanel>
                             </Border>
 
-                            <!-- Right: Live Backend Quota Bridge (Antigravity CLI) -->
-                            <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                            <Border x:Name="QuotaSourcesCard" Grid.Row="1" Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
                                 <StackPanel>
-                                    <Grid Margin="0,0,0,10">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Optional CLI Quota Bridge" FontSize="13.5" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                        <Border x:Name="CliSyncBadge" Grid.Column="1" Margin="8,0,0,0" Padding="8,2.5" CornerRadius="8" Background="{DynamicResource BgTertiaryBrush}">
-                                            <TextBlock x:Name="CliSyncBadgeText" Text="Not linked" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" />
-                                        </Border>
-                                    </Grid>
-
-                                    <TextBlock Text="UsageOrb reads quota automatically when Antigravity App is open and signed in. Use the statusLine bridge if you also use Antigravity CLI."
-                                               TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource FgSecondaryBrush}" LineHeight="18" Margin="0,0,0,12" />
-
-                                    <TextBox x:Name="StatusLineCommandBox"
-                                             Style="{StaticResource ObsidianTextBox}"
-                                             IsReadOnly="True"
-                                             TextWrapping="Wrap"
-                                             FontFamily="Consolas"
-                                             FontSize="11"
-                                             Foreground="{DynamicResource CyanBrush}"
-                                             Padding="10,8"
-                                             Margin="0,0,0,12" />
-
-                                    <Grid Margin="0,0,0,14">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="1.3*" />
-                                            <ColumnDefinition Width="10" />
-                                            <ColumnDefinition Width="0.8*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Button x:Name="AutoConfigCliBtn" Grid.Column="0" Content="Auto-Configure CLI statusLine" Style="{StaticResource PrimaryCtaBtn}" />
-                                        <Button x:Name="CopyStatusLineCmdBtn" Grid.Column="2" Content="Copy Command" Style="{StaticResource GhostBtn}" />
-                                    </Grid>
-
-                                    <Border Style="{StaticResource InnerTile}">
-                                        <StackPanel>
-                                            <TextBlock Text="Monitored Paths (Read-Only)" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,0,0,6" />
-                                            <TextBlock x:Name="DataPathsText" FontFamily="Consolas" FontSize="10.5" Foreground="{DynamicResource FgMutedBrush}" TextWrapping="Wrap" LineHeight="16" />
-                                        </StackPanel>
-                                    </Border>
+                                    <DockPanel Margin="0,0,0,8">
+                                        <TextBlock x:Name="DesktopQuotaStatusText" DockPanel.Dock="Right" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Desktop telemetry" Style="{StaticResource SectionTitle}" />
+                                    </DockPanel>
+                                    <TextBlock Text="Quota updates automatically while Antigravity is open and signed in."
+                                               TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                    <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,14,0,12" />
+                                    <Expander Header="Monitored transcript folders" Foreground="{DynamicResource FgPrimaryBrush}" FontSize="12" FontWeight="SemiBold">
+                                        <TextBlock x:Name="DataPathsText" FontFamily="Consolas" FontSize="11.5" FontWeight="Normal"
+                                                   Foreground="{DynamicResource FgSecondaryBrush}" TextWrapping="Wrap" LineHeight="18" Margin="0,10,0,0" />
+                                    </Expander>
                                 </StackPanel>
                             </Border>
                         </Grid>
-                    </StackPanel>
-                </ScrollViewer>
+                    </ScrollViewer>
+                </DockPanel>
             </Grid>
         </Grid>
     </Border>

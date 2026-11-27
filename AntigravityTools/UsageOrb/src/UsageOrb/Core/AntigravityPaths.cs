@@ -31,18 +31,6 @@ public static class AntigravityPaths
 
     public static string GetSettingsFilePath() => Path.Combine(GetAppDataDir(), "settings.json");
 
-    public static string GetModelsCacheFilePath() => Path.Combine(GetAppDataDir(), "models-cache.json");
-
-    public static string GetCliSettingsFilePath() =>
-        Path.Combine(GetGeminiHomeDir(), "antigravity-cli", "settings.json");
-
-    public static string GetStatusLineStateFilePath()
-    {
-        var overrideFile = Environment.GetEnvironmentVariable("USAGEORB_STATUSLINE_FILE");
-        if (!string.IsNullOrWhiteSpace(overrideFile)) return overrideFile;
-        return Path.Combine(GetGeminiHomeDir(), "antigravity", "usage-orb-telemetry", "statusline-state.json");
-    }
-
     public static IReadOnlyList<BrainRoot> GetExistingBrainRoots() =>
         GetBrainRoots().Where(c => Directory.Exists(c.BrainDir)).ToList();
 
@@ -52,7 +40,6 @@ public static class AntigravityPaths
         var candidates = new List<BrainRoot>
         {
             new(AntigravitySurface.App, Path.Combine(geminiHome, "antigravity", "brain")),
-            new(AntigravitySurface.Cli, Path.Combine(geminiHome, "antigravity-cli", "brain")),
             new(AntigravitySurface.Ide, Path.Combine(geminiHome, "antigravity-ide", "brain")),
         };
 

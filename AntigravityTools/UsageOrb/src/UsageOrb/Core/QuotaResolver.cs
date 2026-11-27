@@ -71,14 +71,11 @@ public static class QuotaResolver
             bucket is not null ? (cached ? "Cached" : bucket.WillExhaustBeforeReset == true ? "At risk" : "Live")
                 : estimated is not null ? "Est." : "Unavailable",
             bucket?.GetLiveResetInSeconds(now),
-            bucket?.ResetTime,
             usage.TotalTokens,
             usage.BurnRateTokensPerHour,
-            usage.Invocations,
             usage.SessionsCount,
             baseline,
             cached ? null : bucket?.WillExhaustBeforeReset,
-            cached ? null : bucket?.ProjectedExhaustionTime,
             bucket?.PoolName ?? bucket?.Label);
     }
 }

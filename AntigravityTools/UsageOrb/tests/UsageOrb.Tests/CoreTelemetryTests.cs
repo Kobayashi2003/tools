@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -7,6 +8,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using UsageOrb.Core;
+using UsageOrb.Platform;
 using Xunit;
 
 namespace UsageOrb.Tests;
@@ -20,6 +22,50 @@ public sealed class CoreTelemetryTests : IDisposable
     private readonly string _tmpDir;
     private readonly Dictionary<string, string?> _origEnv = new();
 
+    [Fact]
+    public void ExistingSettingsKeepTrayAndTaskbarVisibleWithoutRegisteringStartMenu()
+    {
+        var path = AntigravityPaths.GetSettingsFilePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{"orbVisible":false}""");
+
+        var settings = SettingsStore.LoadSettings();
+        Assert.True(settings.ShowTrayIcon);
+        Assert.True(settings.ShowTaskbarButton);
+        Assert.False(settings.RegisterStartMenuShortcut);
+
+        settings.ShowTrayIcon = false;
+        settings.ShowTaskbarButton = false;
+        settings.RegisterStartMenuShortcut = true;
+        SettingsStore.SaveSettings(settings);
+        var reloaded = SettingsStore.LoadSettings();
+        Assert.False(reloaded.ShowTrayIcon);
+        Assert.False(reloaded.ShowTaskbarButton);
+        Assert.True(reloaded.RegisterStartMenuShortcut);
+    }
+
+    [Fact]
+    public void StartMenuRegistrationCreatesConsoleShortcutAndRemovesOnlyItsOwnLink()
+    {
+        var programs = Path.Combine(_tmpDir, "Programs");
+        var executable = Path.Combine(AppContext.BaseDirectory, "UsageOrb.exe");
+        var path = Path.Combine(programs, StartMenuShortcut.FileName);
+
+        StartMenuShortcut.SetRegistration(programs, executable, enabled: true);
+        var link = StartMenuShortcut.ReadShortcut(path);
+        Assert.Equal(executable, link.Target, ignoreCase: true);
+        Assert.Equal("--console", link.Arguments);
+        StartMenuShortcut.SetRegistration(programs, executable, enabled: true);
+        Assert.Single(Directory.GetFiles(programs));
+        StartMenuShortcut.SetRegistration(programs, executable, enabled: false);
+        Assert.False(File.Exists(path));
+
+        File.WriteAllText(path, "A file with the same name");
+        StartMenuShortcut.SetRegistration(programs, executable, enabled: false);
+        Assert.Throws<System.Runtime.InteropServices.COMException>(() => StartMenuShortcut.SetRegistration(programs, executable, enabled: true));
+        Assert.Equal("A file with the same name", File.ReadAllText(path));
+    }
+
     public CoreTelemetryTests()
     {
         _tmpDir = Path.Combine(Path.GetTempPath(), $"usageorb-test-{Guid.NewGuid():N}");
@@ -27,7 +73,6 @@ public sealed class CoreTelemetryTests : IDisposable
 
         SetEnv("USAGEORB_GEMINI_HOME", _tmpDir);
         SetEnv("USAGEORB_DATA_DIR", Path.Combine(_tmpDir, "appdata"));
-        SetEnv("USAGEORB_STATUSLINE_FILE", Path.Combine(_tmpDir, "statusline-state.json"));
         SetEnv("ANTIGRAVITY_APP_DATA_DIR", null);
         TranscriptParser.ClearCache();
     }
@@ -113,30 +158,6 @@ public sealed class CoreTelemetryTests : IDisposable
     }
 
     [Fact]
-    public void UsesCliPercentageForActiveConversationEvenBeforeTranscriptExists()
-    {
-        var now = DateTimeOffset.Parse("2026-11-22T10:00:00Z");
-        TelemetryStore.RecordStatusLineSnapshot(new RawStatusLinePayload
-        {
-            ConversationId = "cli-without-log",
-            ConversationTitle = "CLI conversation",
-            Model = new() { Id = "gemini-4-argon-medium" },
-            ContextWindow = new()
-            {
-                ContextWindowSize = 1_048_576,
-                UsedPercentage = 14.24,
-                CurrentUsage = new() { InputTokens = 63_382, CacheReadInputTokens = 20_857 },
-            },
-        }, now);
-
-        var snapshot = AnalyticsEngine.Collect(new AppSettings(), now: now);
-        var session = Assert.Single(snapshot.Sessions);
-        Assert.Equal("cli-without-log", snapshot.ActiveSession?.ConversationId);
-        Assert.Equal(AntigravitySurface.Cli, session.Surface);
-        Assert.Equal(14.24, session.ContextUsedPercent, 2);
-    }
-
-    [Fact]
     public void UsesCompletedContextAndIncludesCachedInputInCompaction()
     {
         var now = DateTimeOffset.Parse("2026-11-22T10:00:00Z");
@@ -158,19 +179,15 @@ public sealed class CoreTelemetryTests : IDisposable
     public void DoesNotInferQuotaPeriodFromResetCountdownOrShowExpiredLiveQuota()
     {
         var now = DateTimeOffset.Parse("2026-11-22T10:00:00Z");
-        TelemetryStore.RecordStatusLineSnapshot(new RawStatusLinePayload
+        var readings = new Dictionary<string, DesktopQuotaReading>
         {
-            Quota = new()
-            {
-                ["gemini-weekly"] = new() { RemainingFraction = 0.63, ResetInSeconds = 300 },
-                ["flash"] = new() { RemainingFraction = 0.91, ResetInSeconds = 600 },
-                ["gemini-5h"] = new() { RemainingFraction = 0.8, Disabled = true },
-            },
-        }, now);
-        TelemetryStore.RecordStatusLineSnapshot(new RawStatusLinePayload { ConversationId = "another-chat" }, now.AddSeconds(1));
-
+            ["gemini-weekly"] = new("Weekly", null, 0.63, null, null, 300, false, null),
+            ["flash"] = new("Flash", null, 0.91, null, null, 600, false, null),
+            ["gemini-5h"] = new("5-hour", null, 0.8, null, null, null, true, null),
+        };
+        var desktop = DesktopQuotaSnapshot.Capture(now, readings);
         var settings = new AppSettings();
-        var snapshot = AnalyticsEngine.Collect(settings, now: now.AddSeconds(1));
+        var snapshot = AnalyticsEngine.Collect(settings, now.AddSeconds(1), desktop);
         var (fiveHour, weekly) = QuotaResolver.Resolve(snapshot, settings, now.AddSeconds(1));
         Assert.False(fiveHour.IsLive);
         Assert.Null(fiveHour.RemainingPercent);
@@ -211,23 +228,15 @@ public sealed class CoreTelemetryTests : IDisposable
         };
         var readTask = DesktopQuotaClient.ReadAsync(server, timeout.Token);
         await Task.WhenAll(responseTask, readTask);
-        var payload = await readTask;
-        Assert.NotNull(payload);
+        var readings = await readTask;
+        Assert.NotNull(readings);
 
         var now = DateTimeOffset.Parse("2026-11-23T10:00:00Z");
         var settings = new AppSettings();
         WriteTranscript("antigravity", "gemini", [new { type = "PLANNER_RESPONSE", model = "gemini-4-neon-high", input_tokens = 100 }]);
         WriteTranscript("antigravity", "claude", [new { type = "PLANNER_RESPONSE", model = "claude-opus-5-5-high", input_tokens = 100 }]);
         WriteTranscript("antigravity", "argon", [new { type = "PLANNER_RESPONSE", model = "gemini-4-argon-medium", input_tokens = 100 }]);
-        TelemetryStore.RecordStatusLineSnapshot(new RawStatusLinePayload
-        {
-            Quota = new() { ["gemini-weekly"] = new() { RemainingFraction = 0.9 } },
-        }, now);
-
-        var desktop = new StatusLineStateFile
-        {
-            LatestQuota = new CapturedStatusLine { CapturedAt = now, Payload = payload },
-        };
+        var desktop = DesktopQuotaSnapshot.Capture(now, readings);
         var snapshot = AnalyticsEngine.Collect(settings, now, desktop);
         Assert.Equal(now, snapshot.DesktopQuotaLastSeenAt);
         var (gemini5h, geminiWeek) = QuotaResolver.Resolve(snapshot, settings, now, snapshot.Sessions.Single(s => s.ConversationId == "gemini"));
@@ -357,107 +366,50 @@ public sealed class CoreTelemetryTests : IDisposable
     }
 
     [Fact]
-    public void RecordsStatusLineSnapshotsCalculatesBurnRateAndRendersAnsi()
+    public void EstimatesDesktopQuotaBurnRateWithinTheSameResetWindow()
     {
-        var t1 = DateTimeOffset.Parse("2026-11-22T08:00:00Z");
-        var t2 = DateTimeOffset.Parse("2026-11-22T10:00:00Z");
-
-        TelemetryStore.RecordStatusLineSnapshot(new RawStatusLinePayload
+        var now = DateTimeOffset.Parse("2026-11-22T10:00:00Z");
+        var weekly = new DesktopQuotaReading("Weekly", "Gemini Models", 0.25, null, now.AddHours(10), null, false, WindowKey.SevenDays);
+        var previous = DesktopQuotaSnapshot.Capture(now.AddHours(-1), new Dictionary<string, DesktopQuotaReading>
         {
-            ConversationId = "conv-sl",
-            PlanTier = "Pro",
-            Email = "dev@example.com",
-            Quota = new Dictionary<string, RawStatusLineQuotaBucket>
-            {
-                ["gemini-weekly"] = new() { RemainingFraction = 0.90, ResetTime = "2026-11-29T00:00:00Z", ResetInSeconds = 560000 },
-                ["ai-credits"] = new() { RemainingAmount = 42 },
-            },
-            ContextWindow = new RawStatusLineContextWindow
-            {
-                ContextWindowSize = 1_048_576,
-                UsedPercentage = 14.2,
-                TotalInputTokens = 90_000,
-                TotalOutputTokens = 12_000,
-                CurrentUsage = new RawStatusLineCurrentUsage { InputTokens = 60_000, CacheReadInputTokens = 80_000, OutputTokens = 500 },
-            },
-        }, t1);
-
-        var state = TelemetryStore.RecordStatusLineSnapshot(new RawStatusLinePayload
+            ["gemini-weekly"] = weekly,
+        });
+        var latest = DesktopQuotaSnapshot.Capture(now, new Dictionary<string, DesktopQuotaReading>
         {
-            ConversationId = "conv-sl",
-            PlanTier = "Pro",
-            Email = "dev@example.com",
-            Quota = new Dictionary<string, RawStatusLineQuotaBucket>
-            {
-                ["gemini-weekly"] = new() { RemainingFraction = 0.80, ResetTime = "2026-11-29T00:00:00Z", ResetInSeconds = 552800 },
-                ["ai-credits"] = new() { RemainingAmount = 42 },
-            },
-        }, t2);
+            ["gemini-weekly"] = weekly with { RemainingFraction = 0.20 },
+        }, previous);
 
-        var buckets = TelemetryStore.BuildQuotaBucketStatuses(state, t2);
-        var weekly = buckets.First(b => b.Id == "gemini-weekly");
-        Assert.NotNull(weekly.RemainingFraction);
-        Assert.Equal(0.80, weekly.RemainingFraction!.Value, 3);
-        Assert.NotNull(weekly.BurnRatePerHour);
-        Assert.Equal(0.05, weekly.BurnRatePerHour!.Value, 3);
-        Assert.True(weekly.WillExhaustBeforeReset);
+        Assert.Single(previous.History);
+        Assert.Equal(2, latest.History.Count);
+        var quota = Assert.Single(latest.BuildBucketStatuses(now));
+        Assert.Equal(0.05, quota.BurnRatePerHour!.Value, 3);
+        Assert.Equal(now.AddHours(4), quota.ProjectedExhaustionTime);
+        Assert.True(quota.WillExhaustBeforeReset);
 
-        var ansi = StatusLineRunner.RenderAnsi(state.Latest!.Payload);
-        Assert.Contains("80.0%", ansi);
-        Assert.Contains("Pro", ansi);
+        var afterReset = DesktopQuotaSnapshot.Capture(now.AddHours(1), new Dictionary<string, DesktopQuotaReading>
+        {
+            ["gemini-weekly"] = weekly with { RemainingFraction = 1 },
+        }, latest);
+        Assert.Null(Assert.Single(afterReset.BuildBucketStatuses(now.AddHours(1))).BurnRatePerHour);
     }
 
     [Fact]
-    public void CompiledWinExeSupportsHeadlessStatusLineStdioMode()
+    public void DisplaysCreditBalanceWithoutCreatingAPercentageHistory()
     {
-        var exePath = Path.Combine(AppContext.BaseDirectory, "UsageOrb.exe");
-        Assert.True(File.Exists(exePath), $"Expected UsageOrb.exe at {exePath}");
-
-        var psi = new ProcessStartInfo
+        var now = DateTimeOffset.Parse("2026-11-22T10:00:00Z");
+        var desktop = DesktopQuotaSnapshot.Capture(now, new Dictionary<string, DesktopQuotaReading>
         {
-            FileName = exePath,
-            Arguments = "--statusline",
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardInputEncoding = Encoding.UTF8,
-            StandardOutputEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.Environment["USAGEORB_STATUSLINE_FILE"] = Path.Combine(_tmpDir, "cli-stdio-state.json");
+            ["credits"] = new("AI credits", null, null, 25, null, null, false, null),
+        });
 
-        using var proc = Process.Start(psi)!;
-        var sampleJson = """
-            {
-              "agent_state": "idle",
-              "plan_tier": "Pro",
-              "model": { "id": "gemini-4-neon-xhigh", "display_name": "Gemini 4 Neon (XHigh)" },
-              "context_window": {
-                "context_window_size": 524288,
-                "used_percentage": 45.3,
-                "total_input_tokens": 252000,
-                "total_output_tokens": 103800,
-                "current_usage": { "input_tokens": 14000, "cache_read_input_tokens": 223559, "output_tokens": 800 }
-              },
-              "quota": {
-                "gemini-weekly": { "remaining_fraction": 0.9378, "reset_in_seconds": 560580 },
-                "gemini-5h": { "remaining_fraction": 0.72, "reset_in_seconds": 10800 }
-              },
-              "terminal_width": 115
-            }
-            """;
+        Assert.Empty(desktop.History);
+        Assert.Equal(25, Assert.Single(desktop.BuildBucketStatuses(now)).RemainingAmount);
+    }
 
-        proc.StandardInput.Write(sampleJson);
-        proc.StandardInput.Close();
-
-        string stdout = proc.StandardOutput.ReadToEnd();
-        Assert.True(proc.WaitForExit(8000));
-        Assert.Equal(0, proc.ExitCode);
-        Assert.Contains("Gemini 4 Neon (XHigh)", stdout);
-        Assert.Contains("93.8%", stdout);
-        Assert.Contains("72.0%", stdout);
-        Assert.True(File.Exists(Path.Combine(_tmpDir, "cli-stdio-state.json")));
+    [Fact]
+    public void RejectsUnknownLaunchOptionsBeforeStartingTheDesktop()
+    {
+        Assert.Equal(2, Program.Main(["--unknown-option"]));
     }
 
     [Fact]
@@ -476,7 +428,6 @@ public sealed class CoreTelemetryTests : IDisposable
             WeeklyEstBaselineTokens = 200_000_000,
         };
 
-        // 1. Before CLI sync: calibrated estimated remaining %
         var snapEst = AnalyticsEngine.Collect(settings, now: now);
         var (est5h, estWk) = QuotaResolver.Resolve(snapEst, settings, now);
         Assert.False(est5h.IsLive);
@@ -485,18 +436,12 @@ public sealed class CoreTelemetryTests : IDisposable
         Assert.Equal(75.0, est5h.RemainingPercent!.Value, 1);
         Assert.Equal(90.0, estWk.RemainingPercent!.Value, 1);
 
-        // 2. After CLI sync: exact live backend fractions take priority
-        TelemetryStore.RecordStatusLineSnapshot(new RawStatusLinePayload
+        var readings = new Dictionary<string, DesktopQuotaReading>
         {
-            PlanTier = "Pro",
-            Quota = new Dictionary<string, RawStatusLineQuotaBucket>
-            {
-                ["gemini-5h"] = new() { RemainingFraction = 0.84, ResetInSeconds = 8280 },
-                ["gemini-weekly"] = new() { RemainingFraction = 0.41, ResetInSeconds = 309600 },
-            },
-        }, now);
-
-        var snapLive = AnalyticsEngine.Collect(settings, now: now);
+            ["gemini-5h"] = new("5-hour", null, 0.84, null, null, 8280, false, WindowKey.FiveHours),
+            ["gemini-weekly"] = new("Weekly", null, 0.41, null, null, 309600, false, WindowKey.SevenDays),
+        };
+        var snapLive = AnalyticsEngine.Collect(settings, now, DesktopQuotaSnapshot.Capture(now, readings));
         var (live5h, liveWk) = QuotaResolver.Resolve(snapLive, settings, now);
         Assert.True(live5h.IsLive);
         Assert.True(liveWk.IsLive);
@@ -507,7 +452,7 @@ public sealed class CoreTelemetryTests : IDisposable
     }
 
     [Fact]
-    public void SafelyConfiguresCliStatusLinePreservingExistingSettingsAndParsesShorthand()
+    public void ParsesAndFormatsTokenBudgetShorthand()
     {
         Assert.Equal(80_000_000L, FormatUtil.ParseTokenShorthand("80M"));
         Assert.Equal(500_000_000L, FormatUtil.ParseTokenShorthand("500m"));
@@ -515,23 +460,6 @@ public sealed class CoreTelemetryTests : IDisposable
         Assert.Equal(524_000L, FormatUtil.ParseTokenShorthand("524K"));
         Assert.Equal("80M", FormatUtil.TokensCompact(80_000_000));
         Assert.Equal("500M", FormatUtil.TokensCompact(500_000_000));
-
-        // Seed an existing CLI settings.json with unrelated user preferences
-        var cliPath = AntigravityPaths.GetCliSettingsFilePath();
-        Directory.CreateDirectory(Path.GetDirectoryName(cliPath)!);
-        File.WriteAllText(cliPath, """{ "theme": "dark", "model": "gemini-4-neon-high" }""");
-
-        Assert.False(TelemetryStore.IsCliStatusLineConfigured(@"D:\Tools\UsageOrb.exe"));
-
-        var res = TelemetryStore.ConfigureCliStatusLine(@"D:\Tools\UsageOrb.exe");
-        Assert.True(res.Success);
-        Assert.True(TelemetryStore.IsCliStatusLineConfigured(@"D:\Tools\UsageOrb.exe"));
-
-        using var doc = JsonDocument.Parse(File.ReadAllText(cliPath));
-        Assert.Equal("dark", doc.RootElement.GetProperty("theme").GetString());
-        Assert.Equal("gemini-4-neon-high", doc.RootElement.GetProperty("model").GetString());
-        Assert.Equal("command", doc.RootElement.GetProperty("statusLine").GetProperty("type").GetString());
-        Assert.Equal("\"D:/Tools/UsageOrb.exe\" --statusline", doc.RootElement.GetProperty("statusLine").GetProperty("command").GetString());
     }
 
     [Fact]

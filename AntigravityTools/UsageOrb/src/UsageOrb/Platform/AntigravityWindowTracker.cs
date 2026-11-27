@@ -26,16 +26,21 @@ public sealed class AntigravityWindowTracker : IDisposable
     private readonly List<IntPtr> _hooks = [];
     private readonly NativeMethods.WinEventDelegate _eventCallback;
     private readonly DispatcherTimer _fallbackTimer;
+    private readonly Func<IntPtr, bool> _isOverlayInteraction;
+    private readonly Func<TrackedWindowState, NativeMethods.RECT?> _getDockedBounds;
     private IntPtr _lastTrackedHwnd = IntPtr.Zero;
     private TrackedWindowState _currentState = new(false, false, IntPtr.Zero, default, 1.0);
+    private bool _suspended;
     private bool _disposed;
 
     public event Action<TrackedWindowState>? StateChanged;
 
     public TrackedWindowState CurrentState => _currentState;
 
-    public AntigravityWindowTracker()
+    public AntigravityWindowTracker(Func<IntPtr, bool> isOverlayInteraction, Func<TrackedWindowState, NativeMethods.RECT?> getDockedBounds)
     {
+        _isOverlayInteraction = isOverlayInteraction;
+        _getDockedBounds = getDockedBounds;
         // Keep delegate rooted for lifetime of WinEventHook
         _eventCallback = OnWinEvent;
 
@@ -47,7 +52,7 @@ public sealed class AntigravityWindowTracker : IDisposable
 
         _fallbackTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromMilliseconds(450),
+            Interval = TimeSpan.FromMilliseconds(250),
         };
         _fallbackTimer.Tick += (_, _) => EvaluateNow();
         _fallbackTimer.Start();
@@ -80,7 +85,7 @@ public sealed class AntigravityWindowTracker : IDisposable
         uint dwEventThread,
         uint dwmsEventTime)
     {
-        if (_disposed) return;
+        if (_disposed || _suspended) return;
 
         // Filter noisy child-object location/name events (OBJID_WINDOW == 0)
         if (eventType is NativeMethods.EVENT_OBJECT_LOCATIONCHANGE or NativeMethods.EVENT_OBJECT_NAMECHANGE &&
@@ -99,7 +104,7 @@ public sealed class AntigravityWindowTracker : IDisposable
 
     public void EvaluateNow()
     {
-        if (_disposed) return;
+        if (_disposed || _suspended) return;
 
         var targetHwnd = FindBestAntigravityWindow();
         _lastTrackedHwnd = targetHwnd;
@@ -118,7 +123,6 @@ public sealed class AntigravityWindowTracker : IDisposable
         else
         {
             double dpiScale = NativeMethods.GetDpiScaleForWindow(targetHwnd);
-            bool unoccluded = IsWindowEffectivelyVisible(targetHwnd, rect);
             string title = NativeMethods.GetWindowTitle(targetHwnd);
             NativeMethods.GetWindowThreadProcessId(targetHwnd, out uint pid);
             var process = GetProcessName(pid);
@@ -126,10 +130,15 @@ public sealed class AntigravityWindowTracker : IDisposable
             {
                 "antigravity" => AntigravitySurface.App,
                 "antigravity-ide" => AntigravitySurface.Ide,
-                "agy" or "antigravity-cli" => AntigravitySurface.Cli,
                 _ => null,
             };
-            next = new TrackedWindowState(true, unoccluded, targetHwnd, rect, dpiScale, title, surface);
+            next = new TrackedWindowState(true, false, targetHwnd, rect, dpiScale, title, surface);
+            var foreground = NativeMethods.GetForegroundWindow();
+            if (foreground == targetHwnd || _isOverlayInteraction(foreground))
+            {
+                var bounds = _getDockedBounds(next);
+                next = next with { IsVisibleAndUnoccluded = bounds is null || !NativeMethods.IsRectObscured(targetHwnd, bounds.Value, _ownPid) };
+            }
         }
 
         if (!StatesEqual(_currentState, next))
@@ -137,6 +146,14 @@ public sealed class AntigravityWindowTracker : IDisposable
             _currentState = next;
             StateChanged?.Invoke(next);
         }
+    }
+
+    internal void SetSuspended(bool suspended)
+    {
+        if (_suspended == suspended) return;
+        _suspended = suspended;
+        _fallbackTimer.IsEnabled = !suspended;
+        if (!suspended) EvaluateNow();
     }
 
     private IntPtr FindBestAntigravityWindow()
@@ -192,17 +209,15 @@ public sealed class AntigravityWindowTracker : IDisposable
         _ = NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
         if (pid == 0 || pid == _ownPid) return false;
 
-        var procName = GetProcessName(pid);
-        if (procName.Contains("usageorb", StringComparison.OrdinalIgnoreCase)) return false;
+        var procName = GetProcessName(pid).ToLowerInvariant();
 
-        if (procName.Contains("antigravity", StringComparison.OrdinalIgnoreCase))
+        if (procName is "antigravity" or "antigravity-ide")
         {
             exactProcessMatch = true;
             return true;
         }
 
-        // Fallback for IDE/terminal hosts displaying Antigravity in the title (excluding browsers)
-        if (procName is "chrome" or "msedge" or "firefox" or "brave" or "opera" or "vivaldi")
+        if (procName is not ("code" or "code - insiders" or "cursor" or "windsurf" or "devenv" or "rider64"))
         {
             return false;
         }
@@ -212,39 +227,6 @@ public sealed class AntigravityWindowTracker : IDisposable
             !title.Contains("UsageOrb", StringComparison.OrdinalIgnoreCase))
         {
             return true;
-        }
-
-        return false;
-    }
-
-    private bool IsWindowEffectivelyVisible(IntPtr targetHwnd, NativeMethods.RECT rect)
-    {
-        var fg = NativeMethods.GetForegroundWindow();
-        if (fg == targetHwnd) return true;
-
-        if (fg != IntPtr.Zero)
-        {
-            _ = NativeMethods.GetWindowThreadProcessId(fg, out uint fgPid);
-            if (fgPid == _ownPid) return true;
-        }
-
-        // Check a few anchor sample points inside the Antigravity window to see whether
-        // another window is covering it (e.g., maximized app in front on same monitor)
-        var probes = new NativeMethods.POINT[]
-        {
-            new() { X = rect.Left + Math.Min(48, rect.Width / 4), Y = rect.Bottom - Math.Min(48, rect.Height / 4) },
-            new() { X = rect.Right - Math.Min(48, rect.Width / 4), Y = rect.Bottom - Math.Min(48, rect.Height / 4) },
-            new() { X = rect.Left + rect.Width / 2, Y = rect.Top + Math.Min(40, rect.Height / 4) },
-        };
-
-        foreach (var pt in probes)
-        {
-            var hit = NativeMethods.WindowFromPoint(pt);
-            if (hit == IntPtr.Zero) continue;
-            var root = NativeMethods.GetAncestor(hit, NativeMethods.GA_ROOT);
-            if (root == targetHwnd) return true;
-            _ = NativeMethods.GetWindowThreadProcessId(root, out uint hitPid);
-            if (hitPid == _ownPid) return true;
         }
 
         return false;

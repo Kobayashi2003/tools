@@ -9,21 +9,15 @@ public sealed class ParsedTranscriptRecord
 {
     public required string ConversationId { get; init; }
     public required AntigravitySurface Surface { get; init; }
-    public required string TranscriptPath { get; init; }
     public required long FileSizeBytes { get; init; }
     public required long LastWriteUtcTicks { get; init; }
     public required string Title { get; init; }
     public string? InferredWorkspace { get; init; }
-    public required DateTimeOffset StartedAt { get; init; }
     public required DateTimeOffset LastActiveAt { get; init; }
-    public required IReadOnlyList<string> ModelsUsed { get; init; }
     public required string PrimaryModelId { get; init; }
-    public required IReadOnlyList<QuotaGroupId> QuotaGroupsUsed { get; init; }
     public required int UserTurns { get; init; }
     public required int ModelInvocations { get; init; }
     public required int ToolCallCount { get; init; }
-    public required int ErrorCount { get; init; }
-    public required int MediaCount { get; init; }
     public required long TotalInputTokens { get; init; }
     public required long TotalCacheReadTokens { get; init; }
     public required long TotalOutputTokens { get; init; }
@@ -37,7 +31,7 @@ public sealed class ParsedTranscriptRecord
     public required IReadOnlyList<StepTelemetry> Steps { get; init; }
     public required IReadOnlyList<CompactionEvent> Compactions { get; init; }
     public required IReadOnlyList<ToolContextStat> Tools { get; init; }
-    public required Dictionary<string, (long Weight, int Count)> RawActiveCategories { get; init; }
+    public required Dictionary<string, long> RawActiveCategories { get; init; }
     public required long BaselineSystemOverheadTokens { get; init; }
     public required long LatestCheckpointSummaryTokens { get; init; }
     public required IReadOnlyList<HeaviestStepInfo> HeaviestSteps { get; init; }
@@ -175,20 +169,15 @@ public static partial class TranscriptParser
     private static ParsedTranscriptRecord BuildParsedRecord(DiscoveredTranscript item, List<JsonDocument> docs)
     {
         var defaultTime = new DateTimeOffset(item.LastWriteUtcTicks, TimeSpan.Zero);
-        var startedAt = defaultTime;
         var lastActiveAt = defaultTime;
-        bool hasStartTime = false;
 
         string title = "Untitled Session";
         bool titleFound = false;
 
         var modelCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var quotaGroups = new HashSet<QuotaGroupId>();
         int userTurns = 0;
         int modelInvocations = 0;
         int toolCallCount = 0;
-        int errorCount = 0;
-        int mediaCount = 0;
         long totalInputTokens = 0;
         long totalCacheReadTokens = 0;
         long totalOutputTokens = 0;
@@ -223,11 +212,7 @@ public static partial class TranscriptParser
 
         int activeStartIdx = lastCheckpointIdx >= 0 ? lastCheckpointIdx : 0;
 
-        var rawActiveCategories = new Dictionary<string, (long Weight, int Count)>(StringComparer.Ordinal);
-        foreach (var meta in CategoryMeta)
-        {
-            rawActiveCategories[meta.Key] = (0L, meta.Key == "system_overhead" ? 1 : 0);
-        }
+        var rawActiveCategories = new Dictionary<string, long>(StringComparer.Ordinal);
 
         long baselineSystemOverhead = 0;
         bool capturedBaseline = false;
@@ -248,31 +233,17 @@ public static partial class TranscriptParser
             if (!string.IsNullOrEmpty(createdRaw) && DateTimeOffset.TryParse(createdRaw, out var parsedTs))
             {
                 createdAt = parsedTs;
-                if (!hasStartTime)
-                {
-                    startedAt = parsedTs;
-                    hasStartTime = true;
-                }
-
                 lastActiveAt = parsedTs;
             }
 
             bool hasError = (root.TryGetProperty("error", out var errProp) && errProp.ValueKind != JsonValueKind.Null &&
                              (errProp.ValueKind != JsonValueKind.String || !string.IsNullOrEmpty(errProp.GetString()))) ||
                             string.Equals(status, "ERROR", StringComparison.OrdinalIgnoreCase);
-            if (hasError) errorCount++;
 
-            if (root.TryGetProperty("media", out var mediaProp) && mediaProp.ValueKind == JsonValueKind.Array)
+            if (inActiveWindow && root.TryGetProperty("media", out var mediaProp) && mediaProp.ValueKind == JsonValueKind.Array)
             {
-                int mCount = mediaProp.GetArrayLength();
-                if (mCount > 0)
-                {
-                    mediaCount += mCount;
-                    if (inActiveWindow)
-                    {
-                        AddCategory(rawActiveCategories, "media", mCount * 258L, mCount);
-                    }
-                }
+                int mediaCount = mediaProp.GetArrayLength();
+                if (mediaCount > 0) AddCategory(rawActiveCategories, "media", mediaCount * 258L);
             }
 
             if (type == "USER_INPUT")
@@ -293,7 +264,7 @@ public static partial class TranscriptParser
 
                 if (inActiveWindow)
                 {
-                    AddCategory(rawActiveCategories, "user_messages", userTok, 1);
+                    AddCategory(rawActiveCategories, "user_messages", userTok);
                     if (userTok > 150)
                     {
                         heaviestCandidates.Add(new HeaviestStepInfo(stepIdx, "USER_INPUT", $"User prompt (#{userTurns})", userTok, createdAt));
@@ -308,7 +279,7 @@ public static partial class TranscriptParser
                 long sysTok = EstimateTextTokens(GetString(root, "content"));
                 if (inActiveWindow)
                 {
-                    AddCategory(rawActiveCategories, "system_messages", sysTok, 1);
+                    AddCategory(rawActiveCategories, "system_messages", sysTok);
                     if (sysTok > 300)
                     {
                         heaviestCandidates.Add(new HeaviestStepInfo(stepIdx, "SYSTEM_MESSAGE", "System notice / task output", sysTok, createdAt));
@@ -329,10 +300,8 @@ public static partial class TranscriptParser
                 long summaryTok = Math.Max(0L, GetLong(root, "output_tokens") ?? EstimateTextTokens(content));
                 long freedTok = Math.Max(0L, beforeTok - summaryTok);
                 double ratio = beforeTok > 0 ? (double)freedTok / beforeTok : 0;
-                string preview = CollapseWhitespace(content);
-                if (preview.Length > 140) preview = preview[..140];
 
-                compactions.Add(new CompactionEvent(stepIdx, createdAt, beforeTok, summaryTok, freedTok, ratio, preview));
+                compactions.Add(new CompactionEvent(stepIdx, createdAt, beforeTok, summaryTok, freedTok, ratio));
 
                 var spec = ModelCatalog.Resolve(lastPlannerModel);
                 long delta = summaryTok - prevContextTokens;
@@ -350,8 +319,6 @@ public static partial class TranscriptParser
                     0,
                     [],
                     0,
-                    0,
-                    content.Length,
                     hasError,
                     ModelCatalog.EstimateCostUsd(lastPlannerModel, beforeTok, 0, summaryTok)));
 
@@ -363,7 +330,7 @@ public static partial class TranscriptParser
                 if (i == lastCheckpointIdx)
                 {
                     latestCheckpointSummary = summaryTok;
-                    rawActiveCategories["checkpoint_summary"] = (summaryTok, 1);
+                    rawActiveCategories["checkpoint_summary"] = summaryTok;
                     capturedBaseline = false;
                     preFirstPlannerUserTokens = 0;
                 }
@@ -380,7 +347,6 @@ public static partial class TranscriptParser
 
                 var spec = ModelCatalog.Resolve(modelId);
                 modelCounts[modelId] = modelCounts.GetValueOrDefault(modelId) + 1;
-                quotaGroups.Add(spec.QuotaGroup);
 
                 long inputTok = Math.Max(0L, GetLong(root, "input_tokens") ?? 0);
                 long cacheTok = Math.Max(0L, GetLong(root, "cache_read_tokens") ?? 0);
@@ -410,7 +376,7 @@ public static partial class TranscriptParser
                 {
                     long subtracted = preFirstPlannerUserTokens + latestCheckpointSummary;
                     baselineSystemOverhead = Math.Max(0L, totalCtx - subtracted);
-                    rawActiveCategories["system_overhead"] = (baselineSystemOverhead, 1);
+                    rawActiveCategories["system_overhead"] = baselineSystemOverhead;
                     capturedBaseline = true;
                 }
 
@@ -433,7 +399,7 @@ public static partial class TranscriptParser
                         stat.ArgTokens += argTok;
                         if (inActiveWindow)
                         {
-                            AddCategory(rawActiveCategories, "tool_arguments", argTok, 1);
+                            AddCategory(rawActiveCategories, "tool_arguments", argTok);
                         }
 
                         if (tc.TryGetProperty("args", out var subArgs) && subArgs.ValueKind == JsonValueKind.Object)
@@ -472,8 +438,8 @@ public static partial class TranscriptParser
 
                 if (inActiveWindow)
                 {
-                    if (thinkingTok > 0) AddCategory(rawActiveCategories, "agent_thinking", thinkingTok, 1);
-                    if (contentTok > 0) AddCategory(rawActiveCategories, "agent_responses", contentTok, 1);
+                    if (thinkingTok > 0) AddCategory(rawActiveCategories, "agent_thinking", thinkingTok);
+                    if (contentTok > 0) AddCategory(rawActiveCategories, "agent_responses", contentTok);
                 }
 
                 steps.Add(new StepTelemetry(
@@ -490,8 +456,6 @@ public static partial class TranscriptParser
                     totalCtx > 0 ? (double)cacheTok / totalCtx : 0,
                     stepToolNames,
                     stepToolNames.Count,
-                    thinking?.Length ?? 0,
-                    content?.Length ?? 0,
                     hasError,
                     stepCost));
 
@@ -527,7 +491,7 @@ public static partial class TranscriptParser
 
                 if (inActiveWindow)
                 {
-                    AddCategory(rawActiveCategories, "tool_outputs", outTok, 1);
+                    AddCategory(rawActiveCategories, "tool_outputs", outTok);
                     if (outTok > 250)
                     {
                         heaviestCandidates.Add(new HeaviestStepInfo(stepIdx, "TOOL_OUTPUT", $"{associatedTool} output", outTok, createdAt));
@@ -569,21 +533,15 @@ public static partial class TranscriptParser
         {
             ConversationId = item.ConversationId,
             Surface = item.Surface,
-            TranscriptPath = item.TranscriptPath,
             FileSizeBytes = item.SizeBytes,
             LastWriteUtcTicks = item.LastWriteUtcTicks,
             Title = title,
             InferredWorkspace = InferWorkspacePath(observedProjectPaths),
-            StartedAt = startedAt,
             LastActiveAt = lastActiveAt,
-            ModelsUsed = modelCounts.Keys.ToList(),
             PrimaryModelId = primaryModel,
-            QuotaGroupsUsed = quotaGroups.ToList(),
             UserTurns = userTurns,
             ModelInvocations = modelInvocations,
             ToolCallCount = toolCallCount,
-            ErrorCount = errorCount,
-            MediaCount = mediaCount,
             TotalInputTokens = totalInputTokens,
             TotalCacheReadTokens = totalCacheReadTokens,
             TotalOutputTokens = totalOutputTokens,
@@ -607,49 +565,16 @@ public static partial class TranscriptParser
 
     internal static SessionDetail BuildSessionDetail(
         ParsedTranscriptRecord record,
-        string? activeConversationId,
         string? parentConversationId,
-        CapturedStatusLine? liveStatusLine,
         IReadOnlyDictionary<string, ParsedTranscriptRecord> allParsedById,
         DateTimeOffset now,
         ConversationSummary? summary)
     {
-        var livePayload = liveStatusLine?.Payload;
-        var lastMeasurement = record.Steps.LastOrDefault(step => step.TotalContextTokens > 0);
-        var currentPayload = liveStatusLine is not null &&
-            (lastMeasurement is null || liveStatusLine.CapturedAt >= lastMeasurement.CreatedAt)
-            ? livePayload : null;
-        var liveCtx = currentPayload?.ContextWindow;
-        long? liveWin = liveCtx?.ContextWindowSize is > 0 ? liveCtx.ContextWindowSize : null;
-
-        var modelId = !string.IsNullOrWhiteSpace(currentPayload?.Model?.Id)
-            ? currentPayload.Model.Id
-            : record.PrimaryModelId;
-        var spec = ModelCatalog.Resolve(modelId, liveWin);
-
+        var spec = ModelCatalog.Resolve(record.PrimaryModelId);
         long currentCtx = record.CurrentContextTokens;
-        long latestIn = record.LatestInputTokens;
-        long latestCache = record.LatestCacheReadTokens;
-        long latestOut = record.LatestOutputTokens;
-
-        if (liveCtx?.CurrentUsage is { } usage)
-        {
-            latestIn = (usage.InputTokens ?? 0) + (usage.CacheCreationInputTokens ?? 0);
-            latestCache = usage.CacheReadInputTokens ?? 0;
-            latestOut = usage.OutputTokens ?? 0;
-            currentCtx = latestIn + latestCache;
-        }
-
         long windowSize = spec.ContextWindow;
-        double? livePercent = liveCtx?.GetUsedPercentage();
-        if (livePercent is not null && liveWin is not null)
-        {
-            currentCtx = (long)Math.Round(livePercent.Value / 100 * windowSize);
-        }
-        double usedPct = livePercent ?? Math.Clamp((double)currentCtx / windowSize * 100.0, 0, 100);
+        double usedPct = Math.Clamp((double)currentCtx / windowSize * 100.0, 0, 100);
         long remaining = Math.Max(0L, windowSize - currentCtx);
-        long projectedNext = currentCtx + latestOut;
-        bool exceeds200k = currentPayload?.Exceeds200kTokens ?? (currentCtx > 200_000);
 
         // Normalize active-window categories to sum cleanly to currentCtx
         long anchoredSystem = Math.Min(currentCtx, record.BaselineSystemOverheadTokens);
@@ -667,17 +592,17 @@ public static partial class TranscriptParser
             "media",
         ];
 
-        long rawDynamicSum = dynamicKeys.Sum(k => record.RawActiveCategories.TryGetValue(k, out var v) ? v.Weight : 0L);
+        long rawDynamicSum = dynamicKeys.Sum(k => record.RawActiveCategories.GetValueOrDefault(k));
 
         var categories = new List<ContextCategoryItem>();
         foreach (var (key, label, colorHex) in CategoryMeta)
         {
-            var raw = record.RawActiveCategories.TryGetValue(key, out var val) ? val : (Weight: 0L, Count: 0);
+            long weight = record.RawActiveCategories.GetValueOrDefault(key);
             long tokens = key switch
             {
                 "system_overhead" => anchoredSystem,
                 "checkpoint_summary" => anchoredCheckpoint,
-                _ => rawDynamicSum > 0 ? (long)Math.Round((double)raw.Weight / rawDynamicSum * dynamicBudget) : 0L,
+                _ => rawDynamicSum > 0 ? (long)Math.Round((double)weight / rawDynamicSum * dynamicBudget) : 0L,
             };
 
             if (tokens > 0 || key is "user_messages" or "agent_responses" or "tool_outputs")
@@ -688,7 +613,6 @@ public static partial class TranscriptParser
                     tokens,
                     currentCtx > 0 ? (double)tokens / currentCtx * 100.0 : 0,
                     windowSize > 0 ? (double)tokens / windowSize * 100.0 : 0,
-                    raw.Count,
                     colorHex));
             }
         }
@@ -718,71 +642,46 @@ public static partial class TranscriptParser
             record.ModelInvocations + subagents.Sum(s => s.Invocations),
             record.EstimatedCostUsd + subagents.Sum(s => s.EstimatedCostUsd));
 
-        long totalInput = record.ModelInvocations > 0 ? record.TotalInputTokens : liveCtx?.TotalInputTokens ?? 0;
-        long totalOutput = record.ModelInvocations > 0 ? record.TotalOutputTokens : liveCtx?.TotalOutputTokens ?? 0;
-        long totalInAndCache = totalInput + record.TotalCacheReadTokens;
-        long totalBilled = totalInAndCache + totalOutput;
+        long totalInAndCache = record.TotalInputTokens + record.TotalCacheReadTokens;
+        long totalBilled = totalInAndCache + record.TotalOutputTokens;
         double cacheHitRate = totalInAndCache > 0 ? (double)record.TotalCacheReadTokens / totalInAndCache : 0;
-
-        string? workspace = livePayload?.Workspace?.ProjectDir
-                            ?? livePayload?.Workspace?.CurrentDir
-                            ?? livePayload?.Cwd
-                            ?? summary?.Workspace
-                            ?? record.InferredWorkspace;
-        string title = !string.IsNullOrWhiteSpace(summary?.Title) ? summary.Title
-            : !string.IsNullOrWhiteSpace(livePayload?.ConversationTitle) ? livePayload.ConversationTitle : record.Title;
-
+        string? workspace = summary?.Workspace ?? record.InferredWorkspace;
+        string title = !string.IsNullOrWhiteSpace(summary?.Title) ? summary.Title : record.Title;
         var mtimeUtc = new DateTimeOffset(record.LastWriteUtcTicks, TimeSpan.Zero);
-        bool isRecentlyWriting = currentPayload?.AgentState is "working" or "tool_use" or "reviewing"
-            ? liveStatusLine!.CapturedAt >= now.AddSeconds(-15)
-            : record.FileSizeBytes > 0 && mtimeUtc >= now.AddSeconds(-15);
+        bool isRecentlyWriting = record.FileSizeBytes > 0 && mtimeUtc >= now.AddSeconds(-15);
 
         return new SessionDetail(
             record.ConversationId,
             record.Surface,
             title,
             workspace,
-            record.TranscriptPath,
-            record.FileSizeBytes,
-            record.StartedAt,
             record.LastActiveAt,
-            string.Equals(activeConversationId, record.ConversationId, StringComparison.OrdinalIgnoreCase),
             isRecentlyWriting,
             parentConversationId is not null,
-            parentConversationId,
             spec.Id,
-            !string.IsNullOrWhiteSpace(currentPayload?.Model?.DisplayName)
-                ? currentPayload.Model.DisplayName
-                : spec.DisplayName,
-            record.ModelsUsed,
-            record.QuotaGroupsUsed,
+            spec.DisplayName,
             windowSize,
-            spec.ContextWindowSource,
             currentCtx,
-            projectedNext,
+            currentCtx + record.LatestOutputTokens,
             usedPct,
             remaining,
-            exceeds200k,
+            currentCtx > 200_000,
             Math.Max(record.PeakContextTokens, currentCtx),
-            latestIn,
-            latestCache,
-            latestOut,
+            record.LatestInputTokens,
+            record.LatestCacheReadTokens,
+            record.LatestOutputTokens,
             record.LastContextDelta,
-            totalInput,
+            record.TotalInputTokens,
             record.TotalCacheReadTokens,
-            totalOutput,
+            record.TotalOutputTokens,
             totalBilled,
             cacheHitRate,
             record.UserTurns,
             record.ModelInvocations,
             record.ToolCallCount,
-            record.ErrorCount,
-            record.MediaCount,
             record.Compactions.Count,
             record.EstimatedCostUsd,
-            livePayload?.Cost?.TotalUsd,
             categories,
-            remaining,
             record.LatestCheckpointSummaryTokens,
             record.Compactions,
             record.Steps,
@@ -859,11 +758,8 @@ public static partial class TranscriptParser
         return stat;
     }
 
-    private static void AddCategory(Dictionary<string, (long Weight, int Count)> dict, string key, long weight, int count)
-    {
-        var prev = dict.TryGetValue(key, out var val) ? val : (Weight: 0L, Count: 0);
-        dict[key] = (prev.Weight + weight, prev.Count + count);
-    }
+    private static void AddCategory(Dictionary<string, long> categories, string key, long weight) =>
+        categories[key] = categories.GetValueOrDefault(key) + weight;
 
     private static string ExtractTitle(string? content)
     {
@@ -877,8 +773,6 @@ public static partial class TranscriptParser
         if (string.IsNullOrEmpty(first)) return "Untitled Session";
         return first.Length > 84 ? first[..81] + "..." : first;
     }
-
-    private static string CollapseWhitespace(string text) => WhitespaceCollapseRegex().Replace(text, " ").Trim();
 
     private static string Unquote(string value)
     {
@@ -937,6 +831,4 @@ public static partial class TranscriptParser
     [GeneratedRegex("\"conversationId\"\\s*:\\s*\"([a-zA-Z0-9-]+)\"")]
     private static partial Regex SubagentIdRegex();
 
-    [GeneratedRegex("\\s+")]
-    private static partial Regex WhitespaceCollapseRegex();
 }

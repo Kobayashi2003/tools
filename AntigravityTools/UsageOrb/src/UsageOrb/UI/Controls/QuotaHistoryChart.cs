@@ -45,7 +45,7 @@ public sealed class QuotaHistoryChart : Canvas
         var border = TryFindResource("BorderSubtleBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.DimGray;
 
         var bucketIds = _history
-            .SelectMany(p => p.Buckets.Where(kv => kv.Value.RemainingFraction.HasValue).Select(kv => kv.Key))
+            .SelectMany(p => p.RemainingFractions.Keys)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (bucketIds.Count == 0) return;
@@ -92,10 +92,10 @@ public sealed class QuotaHistoryChart : Canvas
 
             for (int i = 0; i < _history.Count; i++)
             {
-                if (_history[i].Buckets.TryGetValue(id, out var sample) && sample.RemainingFraction.HasValue)
+                if (_history[i].RemainingFractions.TryGetValue(id, out var fraction))
                 {
                     double x = padL + (double)i / (_history.Count - 1) * plotW;
-                    double y = padT + plotH - Math.Clamp(sample.RemainingFraction.Value, 0, 1) * plotH;
+                    double y = padT + plotH - Math.Clamp(fraction, 0, 1) * plotH;
                     pts.Add(new System.Windows.Point(x, y));
                 }
             }
