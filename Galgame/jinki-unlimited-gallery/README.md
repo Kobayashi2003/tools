@@ -63,13 +63,3 @@ The VN save and CG flag handlers are guarded during replay. CG availability is c
 An isolated Windows copy was used to check the title entry, CG grid, full-size viewer, and replay lists. The defeat card layout was checked in a test package with sample images. Package inspection confirmed all 364 replay references and exit commands. It also checked all 22 installed thumbnail references against the first event CG in each original script.
 
 The patch reuses the game's shipped UMG widgets and runs excerpts through the existing visual-novel player. [Unreal Engine 4.27 widget documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/creating-widgets?application_version=4.27)
-
-## Development checks
-
-Run these commands from the project directory.
-
-```powershell
-dotnet restore --locked-mode
-dotnet build --configuration Release --no-restore
-dotnet format whitespace --no-restore --verify-no-changes
-```

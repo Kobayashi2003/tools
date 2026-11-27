@@ -1,8 +1,3 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = []
-# ///
-
 """Build a removable Voice Continue PAK from a supported game installation."""
 
 import argparse

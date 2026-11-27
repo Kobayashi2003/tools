@@ -1,6 +1,6 @@
 # Galgame tools
 
-Utilities for visual novels. Each tool owns its dependencies, build configuration, and development checks.
+Utilities for visual novels. Each project README lists its requirements and commands.
 
 | Project | What it does |
 | --- | --- |

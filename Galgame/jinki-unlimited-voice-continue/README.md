@@ -8,11 +8,11 @@ The generator supports the inspected Windows release of JINKI -Unlimited-. It ch
 
 ## Build
 
-Run these commands from this project directory with uv, Python 3.11 or newer, and repak v0.2.3. Set the game and repak paths for your installation.
+Run these commands from this project directory with Python 3.11 or newer and repak v0.2.3. Set the game and repak paths for your installation.
 
 ```powershell
 $null = New-Item -ItemType Directory -Path '.\output' -Force
-uv run .\build_patch.py 'C:\Games\JINKI -Unlimited-' --repak '.\path\to\repak.exe' --output '.\output\JinkiVoiceContinue_P.pak'
+python .\build_patch.py 'C:\Games\JINKI -Unlimited-' --repak '.\path\to\repak.exe' --output '.\output\JinkiVoiceContinue_P.pak'
 ```
 
 The output directory must exist and the destination PAK must be new. Without `--output`, the generator writes `JinkiVoiceContinue_P.pak` in the current directory.
@@ -27,13 +27,3 @@ The output directory must exist and the destination PAK must be new. Without `--
 ## Verification
 
 A fresh build from this project matched the installed PAK byte for byte. Package inspection verified both jump targets and the original `VoicePlay` and explicit `StopVoice` handlers. To check playback, advance from a voiced line through unvoiced text and a sound effect, then advance to the next voiced line.
-
-## Development checks
-
-Run these commands from the project directory.
-
-```powershell
-uvx ruff check
-uvx ruff format --check
-uvx basedpyright
-```

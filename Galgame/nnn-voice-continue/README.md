@@ -56,15 +56,4 @@ The detector covers the interpreter layouts seen in the ten samples. A rebuild u
 
 The soundvoice revision skipped 2,186 additional channel-0 stops. The final 100 output scripts and all original backups were verified byte for byte. The installation hash check confirmed the revised output in all ten game directories. In-game listening tests remain pending. [Previous revision verification](patch-verification.json)
 
-## Development checks
-
-Run these commands from the tool directory.
-
-```powershell
-pnpm install --frozen-lockfile
-pnpm lint
-pnpm format:check
-pnpm test
-```
-
-Run `pnpm format` to apply formatting.
+Run `node --test` from this directory to check engine detection and script patching.
