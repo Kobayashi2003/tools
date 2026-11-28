@@ -18,13 +18,12 @@ internal static partial class GalleryPatch
         var option = Get<NormalExport>(asset, "Option_Button");
         var optionBox = Get<NormalExport>(asset, "OptionBox");
         var exit = Get<NormalExport>(asset, "EXIT_Button");
-        var optionSlot = (ObjectPropertyData)Property(optionBox, "Slot");
-        var verticalSlot = (NormalExport)optionSlot.Value.ToExport(asset);
+        var verticalSlot = ObjectTarget(asset, optionBox, "Slot");
         var verticalBox = (NormalExport)verticalSlot.OuterIndex.ToExport(asset);
         var menuSlots = (ArrayPropertyData)Property(verticalBox, "Slots");
-        var childSlot = (NormalExport)((ObjectPropertyData)Property(option, "Slot")).Value.ToExport(asset);
-        var optionNavigation = (NormalExport)((ObjectPropertyData)Property(option, "Navigation")).Value.ToExport(asset);
-        var exitNavigation = (NormalExport)((ObjectPropertyData)Property(exit, "Navigation")).Value.ToExport(asset);
+        var childSlot = ObjectTarget(asset, option, "Slot");
+        var optionNavigation = ObjectTarget(asset, option, "Navigation");
+        var exitNavigation = ObjectTarget(asset, exit, "Navigation");
         var optionClick = asset.Exports.OfType<FunctionExport>().Single(x => x.ObjectName.ToString().Contains("_Option_Button_"));
         var graph = Get<FunctionExport>(asset, "ExecuteUbergraph_WBP_Alpha2_TItle");
 
@@ -43,10 +42,12 @@ internal static partial class GalleryPatch
         var boxName = box.ObjectName;
         ((StrPropertyData)Property(gallery, "ButtonText")).Value = new FString("Gallery");
 
-        var menuSlot = (ObjectPropertyData)menuSlots.Value.Cast<ObjectPropertyData>().Single(x => x.Value.Index == IndexOf(asset, verticalSlot).Index).Clone();
-        menuSlot.Value = IndexOf(asset, slot);
         var menu = menuSlots.Value.Cast<ObjectPropertyData>().ToList();
-        menu.Insert(menu.FindIndex(x => x.Value.Index == IndexOf(asset, verticalSlot).Index) + 1, menuSlot);
+        var optionRowIndex = IndexOf(asset, verticalSlot).Index;
+        var optionRow = menu.Single(entry => entry.Value.Index == optionRowIndex);
+        var galleryRow = (ObjectPropertyData)optionRow.Clone();
+        galleryRow.Value = IndexOf(asset, slot);
+        menu.Insert(menu.IndexOf(optionRow) + 1, galleryRow);
         menuSlots.Value = menu.ToArray();
 
         // Six 60-unit rows with 20-unit gaps fit the original 460-unit title rule.
@@ -155,10 +156,10 @@ internal static partial class GalleryPatch
         foreach (var entry in rows)
         {
             var row = (NormalExport)entry.Value.ToExport(asset);
-            var box = (NormalExport)((ObjectPropertyData)Property(row, "Content")).Value.ToExport(asset);
+            var box = ObjectTarget(asset, row, "Content");
             var slotIndex = ((ArrayPropertyData)Property(box, "Slots")).Value.Cast<ObjectPropertyData>().Single().Value;
             var slot = (NormalExport)slotIndex.ToExport(asset);
-            var button = (NormalExport)((ObjectPropertyData)Property(slot, "Content")).Value.ToExport(asset);
+            var button = ObjectTarget(asset, slot, "Content");
             if (slot.OuterIndex.Index != IndexOf(asset, box).Index ||
                 ((ObjectPropertyData)Property(slot, "Parent")).Value.Index != IndexOf(asset, box).Index ||
                 ((ObjectPropertyData)Property(button, "Slot")).Value.Index != slotIndex.Index)

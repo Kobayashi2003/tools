@@ -13,58 +13,28 @@ internal static partial class GalleryPatch
 {
     private static void PatchGalleryTabs(UAsset asset)
     {
-        var menuClass = Get<ClassExport>(asset, "W_Recollection_Main_C");
         var defaults = Get<NormalExport>(asset, "Default__W_Recollection_Main_C");
-        var labels = ((ArrayPropertyData)Property(defaults, "TextList")).Value.Cast<TextPropertyData>().ToArray();
-        string[] names = { "CG", "Scene", "Defeat" };
-        string[] widgets = { "W_Config_Button_Widget_CG", "W_Config_Button_Widget_Replay", "W_Config_Button_Widget_Music" };
+        var labels = (ArrayPropertyData)Property(defaults, "TextList");
+        string[] names = { "CG", "Scene" };
+        labels.Value = labels.Value.Take(names.Length).ToArray();
+        string[] widgets = { "W_Config_Button_Widget_CG", "W_Config_Button_Widget_Replay" };
         for (var i = 0; i < names.Length; i++)
         {
-            SetLabel(labels[i], names[i]);
+            SetLabel((TextPropertyData)labels.Value[i], names[i]);
             SetLabel((TextPropertyData)Property(Get<NormalExport>(asset, widgets[i]), "Button_Text"), names[i]);
         }
 
         // The shipped game-specific list initializes each card through Set_WidgetInfo.
-        var cgPackage = ImportIndex(asset, "/VN_Plugin/VN_Plus/BluePrint/Widget/Recollection/W_Gallery_List");
-        cgPackage.ToImport(asset).ObjectName = new FName(asset, "/Game/JinkiGallery/W_Gallery_List");
-        RedirectGalleryImport(asset, "Config/W_Config_Button_Widget", "W_Config_Button_Widget");
-        RedirectGalleryImport(asset, "Recollection/W_OptionMain_Object", "W_OptionMain_Object");
-
-        var scene = Get<NormalExport>(asset, "W_Recollection_List");
-        var sceneSlot = ObjectTarget(asset, scene, "Slot");
-        var overlay = (NormalExport)sceneSlot.OuterIndex.ToExport(asset);
-        var added = new Dictionary<int, FPackageIndex>();
-        var defeat = CloneExport(asset, scene, "W_Defeat_List", added);
-        var defeatSlot = CloneExport(asset, sceneSlot, "Defeat_OverlaySlot", added);
-        var defeatClass = AddImport(asset, "/Script/UMG", "WidgetBlueprintGeneratedClass",
-            "/Game/JinkiGallery/W_Recollection_List", "W_Recollection_List_C");
-        var defeatDefaults = AddImport(asset, "/Game/JinkiGallery/W_Recollection_List", "W_Recollection_List_C",
-            "/Game/JinkiGallery/W_Recollection_List", "Default__W_Recollection_List_C");
-        var defeatReferences = new Dictionary<int, FPackageIndex>(added)
+        RedirectGalleryImport(asset, "Recollection/W_Gallery_List");
+        RedirectGalleryImport(asset, "Config/W_Config_Button_Widget");
+        RedirectGalleryImport(asset, "Recollection/W_OptionMain_Object");
+        RedirectGalleryImport(asset, "Recollection/W_Recollection_List");
+        foreach (var name in new[] { "W_Gallery_List", "W_Recollection_List" })
         {
-            [scene.ClassIndex.Index] = defeatClass,
-            [ImportIndex(asset, "Default__W_Recollection_List_C").Index] = defeatDefaults,
-        };
-        defeat.ClassIndex = defeatClass;
-        RemapExport(asset, defeatSlot, added);
-        RemapExport(asset, defeat, defeatReferences);
-        AppendSlot(asset, overlay, defeatSlot);
-        foreach (var slot in new[] { sceneSlot, defeatSlot, ObjectTarget(asset, Get<NormalExport>(asset, "W_Gallery_List"), "Slot") })
-        {
+            var slot = ObjectTarget(asset, Get<NormalExport>(asset, name), "Slot");
             SetByteProperty(slot, "HorizontalAlignment", 0);
             SetByteProperty(slot, "VerticalAlignment", 0);
         }
-        var defeatField = (FObjectProperty)CloneField(menuClass, scene.ObjectName, defeat.ObjectName);
-        defeatField.PropertyClass = defeatClass;
-        menuClass.LoadedProperties = menuClass.LoadedProperties.Append(defeatField).ToArray();
-        menuClass.SerializationBeforeSerializationDependencies.Add(defeatClass);
-        var graph = Get<FunctionExport>(asset, "ExecuteUbergraph_W_Recollection_Main");
-        var lists = (EX_SetArray)At(asset, graph, 0xB7);
-        ReplaceWithJump(asset, graph, 0xB7, new EX_SetArray
-        {
-            AssigningProperty = lists.AssigningProperty,
-            Elements = lists.Elements.Append(FieldVariable(defeat.ObjectName, IndexOf(asset, menuClass))).ToArray(),
-        });
 
         var foreground = ThemeColor(0xE6F2FA);
         var title = Get<NormalExport>(asset, "ConfigTitle");
@@ -91,9 +61,13 @@ internal static partial class GalleryPatch
         var tabs = Get<NormalExport>(asset, "Tab_Box");
         var tabsSlot = ObjectTarget(asset, tabs, "Slot");
         SetAnchors(tabsSlot, new FVector2D(1, 0), new FVector2D(1, 0));
-        SetLayout(tabsSlot, -28, -42, 510, 54);
+        SetLayout(tabsSlot, -28, -42, 340, 54);
         ((BoolPropertyData)Property(tabsSlot, "bAutoSize")).Value = false;
-        foreach (var entry in ((ArrayPropertyData)Property(tabs, "Slots")).Value.Cast<ObjectPropertyData>())
+        var slots = (ArrayPropertyData)Property(tabs, "Slots");
+        var music = Get<NormalExport>(asset, "W_Config_Button_Widget_Music");
+        var musicSlot = IndexOf(asset, ObjectTarget(asset, music, "Slot"));
+        slots.Value = slots.Value.Cast<ObjectPropertyData>().Where(entry => entry.Value.Index != musicSlot.Index).ToArray();
+        foreach (var entry in slots.Value.Cast<ObjectPropertyData>())
             FindProperty<FloatPropertyData>(Property((NormalExport)entry.Value.ToExport(asset), "Padding"), "Right").Value = 10;
     }
 
@@ -105,32 +79,29 @@ internal static partial class GalleryPatch
         SetLayout(ObjectTarget(cg, scroll, "Slot"), -772, -337, 1544, 674);
         WriteAsset(cg, Path.Combine(output, PatchContent + "W_Gallery_List.uasset"));
 
-        var defeatList = LoadAsset(Path.Combine(extracted, GalleryWidgetPath + "W_Recollection_List.uasset"));
-        PatchSceneGrid(defeatList, true);
-        RedirectGalleryImport(defeatList, "Recollection/W_Recollection_Button", "W_Recollection_Button");
-        WriteAsset(defeatList, Path.Combine(output, PatchContent + "W_Recollection_List.uasset"));
-        var defeatCard = LoadAsset(Path.Combine(extracted, GalleryWidgetPath + "W_Recollection_Button.uasset"));
-        PatchSceneCards(defeatCard, true);
-        WriteAsset(defeatCard, Path.Combine(output, PatchContent + "W_Recollection_Button.uasset"));
+        var sceneList = LoadAsset(Path.Combine(extracted, GalleryWidgetPath + "W_Recollection_List.uasset"));
+        PatchSceneGrid(sceneList);
+        RedirectGalleryImport(sceneList, "Recollection/W_Recollection_Button");
+        WriteAsset(sceneList, Path.Combine(output, PatchContent + "W_Recollection_List.uasset"));
+        var sceneCard = LoadAsset(Path.Combine(extracted, GalleryWidgetPath + "W_Recollection_Button.uasset"));
+        PatchSceneCards(sceneCard);
+        WriteAsset(sceneCard, Path.Combine(output, PatchContent + "W_Recollection_Button.uasset"));
 
         // Copy the plug-in tab widget under the gallery mount for independent styling.
-        var tabPackage = Directory.GetFiles(Path.Combine(extracted, WidgetPath), "W_Config_Button_Widget.uasset", SearchOption.AllDirectories).Single();
-        var tab = LoadAsset(tabPackage);
+        var tab = LoadAsset(Path.Combine(extracted, WidgetPath + "Config/W_Config_Button_Widget.uasset"));
         var text = Get<NormalExport>(tab, "TextBlock_3");
         SetFontSize(text, 23);
         SetColor(text, "ColorAndOpacity", ThemeColor(0xE6F2FA));
         ((BytePropertyData)Property(text, "Justification")).Value = 1;
         SetLayout(ObjectTarget(tab, Get<NormalExport>(tab, "Button_632"), "Slot"), 0, 0, 160, 54);
-        var parent = ImportIndex(tab, "/VN_Plugin/VN_Plus/BluePrint/Widget/Config/W_ConfigButton_Object");
-        parent.ToImport(tab).ObjectName = new FName(tab, "/Game/JinkiGallery/W_ConfigButton_Object");
+        RedirectGalleryImport(tab, "Config/W_ConfigButton_Object");
         WriteAsset(tab, Path.Combine(output, PatchContent + "W_Config_Button_Widget.uasset"));
 
         var options = LoadAsset(Path.Combine(extracted, GalleryWidgetPath + "W_OptionMain_Object.uasset"));
-        RedirectGalleryImport(options, "Config/W_ConfigButton_Object", "W_ConfigButton_Object");
+        RedirectGalleryImport(options, "Config/W_ConfigButton_Object");
         WriteAsset(options, Path.Combine(output, PatchContent + "W_OptionMain_Object.uasset"));
 
-        var stylePackage = Directory.GetFiles(Path.Combine(extracted, WidgetPath), "W_ConfigButton_Object.uasset", SearchOption.AllDirectories).Single();
-        var style = LoadAsset(stylePackage);
+        var style = LoadAsset(Path.Combine(extracted, WidgetPath + "Config/W_ConfigButton_Object.uasset"));
         var visible = Get<FunctionExport>(style, "ButtonVisible");
         SetTabTint(0x78, ThemeColor(0x286478));
         SetTabTint(0x106, ThemeColor(0x22384D));
@@ -149,10 +120,10 @@ internal static partial class GalleryPatch
         }
     }
 
-    private static void RedirectGalleryImport(UAsset asset, string source, string target)
+    private static void RedirectGalleryImport(UAsset asset, string source)
     {
         var index = ImportIndex(asset, "/VN_Plugin/VN_Plus/BluePrint/Widget/" + source);
-        index.ToImport(asset).ObjectName = new FName(asset, "/Game/JinkiGallery/" + target);
+        index.ToImport(asset).ObjectName = new FName(asset, "/Game/JinkiGallery/" + Path.GetFileName(source));
     }
 
     private static void UnlockCgGallery(UAsset asset)
@@ -195,20 +166,20 @@ internal static partial class GalleryPatch
         layer.Value = GalleryLayer + 1;
     }
 
-    private static void PatchSceneGrid(UAsset asset, bool withThumbnails)
+    private static void PatchSceneGrid(UAsset asset)
     {
         var tiles = Get<NormalExport>(asset, "Slot_TileView");
         SetLayout(ObjectTarget(asset, tiles, "Slot"), 0, 0, 1496, 674);
-        ((FloatPropertyData)Property(tiles, "EntryHeight")).Value = withThumbnails ? 128 : 88;
+        ((FloatPropertyData)Property(tiles, "EntryHeight")).Value = 128;
         ((FloatPropertyData)Property(tiles, "EntryWidth")).Value = 620;
     }
 
-    private static void PatchSceneCards(UAsset asset, bool withThumbnails)
+    private static void PatchSceneCards(UAsset asset)
     {
         var widget = Get<ClassExport>(asset, "W_Recollection_Button_C");
         var image = Get<NormalExport>(asset, "List_Texutre");
         var click = Get<NormalExport>(asset, "Button_100");
-        var slot = (NormalExport)((ObjectPropertyData)Property(click, "Slot")).Value.ToExport(asset);
+        var slot = ObjectTarget(asset, click, "Slot");
         var panel = (NormalExport)slot.OuterIndex.ToExport(asset);
         var card = Get<NormalExport>(asset, "BackGround_Boder");
         FillCanvas(ObjectTarget(asset, Get<NormalExport>(asset, "InvalidationBox_84"), "Slot"), 0, 0, 0, 0);
@@ -244,17 +215,14 @@ internal static partial class GalleryPatch
         image.Data.Add(new EnumPropertyData(new FName(asset, "Visibility"))
         {
             EnumType = new FName(asset, "ESlateVisibility"),
-            Value = new FName(asset, withThumbnails ? "ESlateVisibility::HitTestInvisible" : "ESlateVisibility::Hidden"),
+            Value = new FName(asset, "ESlateVisibility::HitTestInvisible"),
         });
-        FillCanvas(labelSlot, withThumbnails ? 224 : 24, withThumbnails ? 31 : 17, 30, 16);
-        if (withThumbnails)
-        {
-            var imageSlot = ObjectTarget(asset, image, "Slot");
-            var origin = new FVector2D(0, 0);
-            SetAnchors(imageSlot, origin, origin);
-            FindProperty<Vector2DPropertyData>(Property(imageSlot, "LayoutData"), "Alignment").Value = origin;
-            SetLayout(imageSlot, 16, 10, 192, 108);
-        }
+        FillCanvas(labelSlot, 224, 31, 30, 16);
+        var imageSlot = ObjectTarget(asset, image, "Slot");
+        var origin = new FVector2D(0, 0);
+        SetAnchors(imageSlot, origin, origin);
+        FindProperty<Vector2DPropertyData>(Property(imageSlot, "LayoutData"), "Alignment").Value = origin;
+        SetLayout(imageSlot, 16, 10, 192, 108);
         asset.AddNameReference(new FString("ByteProperty"));
         label.Data.Add(new BytePropertyData(new FName(asset, "Justification")) { EnumType = new FName(asset, "None"), Value = 0 });
         label.Data.Add(new BoolPropertyData(new FName(asset, "AutoWrapText")) { Value = true });

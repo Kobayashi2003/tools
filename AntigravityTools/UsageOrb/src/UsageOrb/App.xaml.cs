@@ -221,7 +221,7 @@ public partial class App : System.Windows.Application
             var lastSnapshot = _telemetryService?.LatestSnapshot;
             _telemetryService?.Dispose();
             _telemetryService = null;
-            if (closeConsole) _managementWindow?.Hide();
+            if (closeConsole && _managementWindow is { IsManagingAntigravity: false } console) console.Hide();
             if (lastSnapshot?.DesktopQuotaLastSeenAt is not null)
             {
                 var pausedSnapshot = lastSnapshot with

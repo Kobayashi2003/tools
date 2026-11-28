@@ -21,9 +21,8 @@ internal static partial class GalleryPatch
         PatchAsset(GalleryWidgetPath + "W_Gallery_List_Object.uasset", UnlockCgGallery);
         PatchAsset(GalleryWidgetPath + "W_GalleryObject.uasset", RaiseCgPreview);
         PatchAsset(GalleryWidgetPath + "RecoolectionListObject.uasset", PatchSceneList);
-        PatchAsset(GalleryWidgetPath + "W_Recollection_List.uasset", asset => PatchSceneGrid(asset, false));
-        PatchAsset(GalleryWidgetPath + "W_Recollection_Button.uasset", asset => PatchSceneCards(asset, false));
         PatchAsset(VnContent + "BluePrint/VNInstanceObject.uasset", PatchSaveGuards);
+        PatchAsset(GameContent + "T_Rex/Blueprints/GameMode/BP_TrexGameMode.uasset", PatchReplayMouseCapture);
         BuildGalleryWidgets(extracted, output);
         BuildSceneCatalog(extracted, output);
 

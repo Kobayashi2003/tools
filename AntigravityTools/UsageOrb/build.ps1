@@ -1,4 +1,9 @@
 # Builds, tests, and publishes Antigravity UsageOrb to dist/UsageOrb.exe.
+[CmdletBinding()]
+param(
+    [switch]$SelfContained
+)
+
 $ErrorActionPreference = 'Stop'
 
 $root = $PSScriptRoot
@@ -14,13 +19,15 @@ Write-Host '==> Running unit & integration tests...' -ForegroundColor Cyan
 dotnet test $testProj -c Release
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host '==> Publishing self-contained Windows x64 executable to dist/...' -ForegroundColor Cyan
+$includeRuntime = $SelfContained.IsPresent.ToString().ToLowerInvariant()
+$publishMode = if ($SelfContained) { 'self-contained' } else { 'framework-dependent' }
+Write-Host "==> Publishing $publishMode Windows x64 executable to dist/..." -ForegroundColor Cyan
 
 try {
     dotnet publish $appProj `
         -c Release `
         -r win-x64 `
-        --self-contained true `
+        --self-contained $includeRuntime `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -p:DebugSymbols=false `

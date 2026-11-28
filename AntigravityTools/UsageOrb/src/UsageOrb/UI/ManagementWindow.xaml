@@ -41,6 +41,32 @@
             <Setter Property="Padding" Value="0,0,6,0" />
         </Style>
 
+        <Style x:Key="SettingsTab" TargetType="TabItem">
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="Foreground" Value="{DynamicResource FgPrimaryBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBorder" Padding="{TemplateBinding Padding}" Background="Transparent"
+                                BorderThickness="0,0,0,2" BorderBrush="Transparent">
+                            <ContentPresenter x:Name="TabHeader" ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              TextElement.FontSize="12.5" TextElement.Foreground="{DynamicResource FgSecondaryBrush}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource BgRowHoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                <Setter TargetName="TabHeader" Property="TextElement.Foreground" Value="{DynamicResource FgPrimaryBrush}" />
+                                <Setter TargetName="TabHeader" Property="TextElement.FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="SectionTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="SemiBold" />
@@ -791,159 +817,216 @@
                         <TextBlock Text="Settings" Style="{StaticResource PageTitle}" />
                     </DockPanel>
 
-                    <ScrollViewer Style="{StaticResource PageScroll}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
+                    <TabControl x:Name="SettingsSections" AutomationProperties.Name="Settings sections" KeyboardNavigation.TabNavigation="Local">
+                        <TabControl.Template>
+                            <ControlTemplate TargetType="TabControl">
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource BorderSubtleBrush}"
+                                            BorderThickness="0,0,0,1" Margin="0,0,6,12">
+                                        <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="1" />
+                                    </Border>
+                                    <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
+                                </DockPanel>
+                            </ControlTemplate>
+                        </TabControl.Template>
 
-                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <TabItem x:Name="GeneralSettingsTab" Header="General" Style="{StaticResource SettingsTab}">
+                            <ScrollViewer Style="{StaticResource PageScroll}">
                                 <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <TextBlock Text="Widget appearance and placement" Style="{StaticResource SectionTitle}" Margin="0,0,0,12" />
-                                    <Grid Grid.Row="1">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="106" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="35" />
-                                            <RowDefinition Height="35" />
-                                            <RowDefinition Height="35" />
-                                            <RowDefinition Height="35" />
-                                            <RowDefinition Height="35" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
 
-                                        <Label Content="Shape" Style="{StaticResource SettingLabel}" />
-                                        <Border Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
-                                            <UniformGrid x:Name="ShapeSegmentHost" Rows="1" />
-                                        </Border>
+                                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Text="Widget appearance and placement" Style="{StaticResource SectionTitle}" Margin="0,0,0,12" />
+                                            <Grid Grid.Row="1">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="106" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="35" />
+                                                    <RowDefinition Height="35" />
+                                                    <RowDefinition Height="35" />
+                                                    <RowDefinition Height="35" />
+                                                    <RowDefinition Height="35" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
 
-                                        <Label Grid.Row="1" Content="Theme" Style="{StaticResource SettingLabel}" />
-                                        <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
-                                            <UniformGrid x:Name="ThemeSegmentHost" Rows="1" />
-                                        </Border>
+                                                <Label Content="Shape" Style="{StaticResource SettingLabel}" />
+                                                <Border Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
+                                                    <UniformGrid x:Name="ShapeSegmentHost" Rows="1" />
+                                                </Border>
 
-                                        <Label Grid.Row="2" Content="Orb size (px)" Style="{StaticResource SettingLabel}" />
-                                        <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
-                                            <UniformGrid x:Name="OrbSizeSegmentHost" Rows="1" />
-                                        </Border>
+                                                <Label Grid.Row="1" Content="Theme" Style="{StaticResource SettingLabel}" />
+                                                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
+                                                    <UniformGrid x:Name="ThemeSegmentHost" Rows="1" />
+                                                </Border>
 
-                                        <Label Grid.Row="3" Content="Idle opacity" Target="{Binding ElementName=OpacitySlider}" Style="{StaticResource SettingLabel}" />
-                                        <DockPanel Grid.Row="3" Grid.Column="1" VerticalAlignment="Center">
-                                            <TextBlock x:Name="OpacityLabel" DockPanel.Dock="Right" Width="46" TextAlignment="Right" FontFamily="Consolas" FontSize="12" VerticalAlignment="Center" />
-                                            <Slider x:Name="OpacitySlider" Style="{StaticResource ObsidianSlider}" Minimum="0.4" Maximum="1.0"
-                                                    TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center" />
-                                        </DockPanel>
+                                                <Label Grid.Row="2" Content="Orb size (px)" Style="{StaticResource SettingLabel}" />
+                                                <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource SegmentTrack}" VerticalAlignment="Center">
+                                                    <UniformGrid x:Name="OrbSizeSegmentHost" Rows="1" />
+                                                </Border>
 
-                                        <Label Grid.Row="4" Content="Dock mode" Target="{Binding ElementName=DockModeCombo}" Style="{StaticResource SettingLabel}" />
-                                        <ComboBox x:Name="DockModeCombo" Grid.Row="4" Grid.Column="1" VerticalAlignment="Center">
-                                            <ComboBoxItem Tag="FollowAntigravity" Content="Follow Antigravity window" />
-                                            <ComboBoxItem Tag="FreeFloat" Content="Always-on-top free float" />
-                                        </ComboBox>
+                                                <Label Grid.Row="3" Content="Idle opacity" Target="{Binding ElementName=OpacitySlider}" Style="{StaticResource SettingLabel}" />
+                                                <DockPanel Grid.Row="3" Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock x:Name="OpacityLabel" DockPanel.Dock="Right" Width="46" TextAlignment="Right" FontFamily="Consolas" FontSize="12" VerticalAlignment="Center" />
+                                                    <Slider x:Name="OpacitySlider" Style="{StaticResource ObsidianSlider}" Minimum="0.4" Maximum="1.0"
+                                                            TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                                                </DockPanel>
 
-                                        <Label Grid.Row="5" Content="Anchor corner" Style="{StaticResource SettingLabel}" />
-                                        <Border Grid.Row="5" Grid.Column="1" Style="{StaticResource SegmentTrack}" Margin="0,4,0,0">
-                                            <UniformGrid x:Name="AnchorGridHost" Rows="2" Columns="2" />
-                                        </Border>
-                                    </Grid>
-                                    <Button x:Name="ResetPosBtn" Grid.Row="2" Content="Reset widget position" Style="{StaticResource GhostBtn}" HorizontalAlignment="Right" Margin="0,12,0,0" />
+                                                <Label Grid.Row="4" Content="Dock mode" Target="{Binding ElementName=DockModeCombo}" Style="{StaticResource SettingLabel}" />
+                                                <ComboBox x:Name="DockModeCombo" Grid.Row="4" Grid.Column="1" VerticalAlignment="Center">
+                                                    <ComboBoxItem Tag="FollowAntigravity" Content="Follow Antigravity window" />
+                                                    <ComboBoxItem Tag="FreeFloat" Content="Always-on-top free float" />
+                                                </ComboBox>
+
+                                                <Label Grid.Row="5" Content="Anchor corner" Style="{StaticResource SettingLabel}" />
+                                                <Border Grid.Row="5" Grid.Column="1" Style="{StaticResource SegmentTrack}" Margin="0,4,0,0">
+                                                    <UniformGrid x:Name="AnchorGridHost" Rows="2" Columns="2" />
+                                                </Border>
+                                            </Grid>
+                                            <Button x:Name="ResetPosBtn" Grid.Row="2" Content="Reset widget position" Style="{StaticResource GhostBtn}" HorizontalAlignment="Right" Margin="0,12,0,0" />
+                                        </Grid>
+                                    </Border>
+
+                                    <Border Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <TextBlock Text="Windows integration" Style="{StaticResource SectionTitle}" Margin="0,0,0,7" />
+                                            <CheckBox x:Name="StartWithWindowsCheck" Content="Start with Windows" Style="{StaticResource SettingToggle}" />
+                                            <CheckBox x:Name="ShowTrayIconCheck" Content="Show system tray icon" Style="{StaticResource SettingToggle}" />
+                                            <CheckBox x:Name="ShowTaskbarButtonCheck" Content="Show console in taskbar" Style="{StaticResource SettingToggle}" />
+                                            <CheckBox x:Name="RegisterStartMenuCheck" Content="Add UsageOrb to Start menu" Style="{StaticResource SettingToggle}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border x:Name="QuotaEstimatesCard" Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <TextBlock Text="Alerts and local estimates" Style="{StaticResource SectionTitle}" Margin="0,0,0,14" />
+                                            <TextBlock Text="Context alerts" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="12" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <Label Content="Warning (%)" Target="{Binding ElementName=WarnPctBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                                    <TextBox x:Name="WarnPctBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2">
+                                                    <Label Content="Critical (%)" Target="{Binding ElementName=CritPctBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                                    <TextBox x:Name="CritPctBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" />
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,14,0,12" />
+                                            <TextBlock Text="Quota estimates" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="12" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <Label Content="5-hour budget (tokens)" Target="{Binding ElementName=EstBase5hBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                                    <TextBox x:Name="EstBase5hBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" Tag="Optional" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2">
+                                                    <Label Content="7-day budget (tokens)" Target="{Binding ElementName=EstBase7dBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                                    <TextBox x:Name="EstBase7dBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" Tag="Optional" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <TextBlock Text="Used to estimate remaining quota when a live reading is unavailable." TextWrapping="Wrap"
+                                                       FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,9,0,0" />
+                                        </StackPanel>
+                                    </Border>
+
                                 </Grid>
-                            </Border>
+                            </ScrollViewer>
+                        </TabItem>
 
-                            <Border Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <TabItem x:Name="AntigravitySettingsTab" Header="Antigravity" Style="{StaticResource SettingsTab}">
+                            <ScrollViewer Style="{StaticResource PageScroll}">
                                 <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <TextBlock Text="Startup and Windows integration" Style="{StaticResource SectionTitle}" Margin="0,0,0,7" />
-                                    <StackPanel Grid.Row="1">
-                                        <CheckBox x:Name="StartWithWindowsCheck" Content="Start with Windows" Style="{StaticResource SettingToggle}" />
-                                        <CheckBox x:Name="FollowLifecycleCheck" Content="Follow Antigravity start and exit" Style="{StaticResource SettingToggle}" />
 
-                                        <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,9,0,12" />
-                                        <TextBlock Text="Windows visibility" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,5" />
-                                        <CheckBox x:Name="ShowTrayIconCheck" Content="Show system tray icon" Style="{StaticResource SettingToggle}" />
-                                        <CheckBox x:Name="ShowTaskbarButtonCheck" Content="Show console in taskbar" Style="{StaticResource SettingToggle}" />
-                                        <CheckBox x:Name="RegisterStartMenuCheck" Content="Add UsageOrb to Start menu" Style="{StaticResource SettingToggle}" />
-                                    </StackPanel>
-                                    <Button x:Name="LaunchAntigravityBtn" Grid.Row="2" Content="Launch Antigravity with proxy settings"
-                                            Style="{StaticResource GhostBtn}" HorizontalAlignment="Right" Margin="0,12,0,0" />
+                                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <TextBlock Text="Connection" Style="{StaticResource SectionTitle}" Margin="0,0,0,14" />
+                                            <Label Content="Proxy mode" Target="{Binding ElementName=AntigravityProxyModeCombo}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                            <ComboBox x:Name="AntigravityProxyModeCombo">
+                                                <ComboBoxItem Tag="Auto" Content="Automatic" />
+                                                <ComboBoxItem Tag="Manual" Content="Manual proxy" />
+                                                <ComboBoxItem Tag="Direct" Content="Direct connection" />
+                                            </ComboBox>
+                                            <StackPanel x:Name="ManualAntigravityProxyFields" Visibility="Collapsed" Margin="0,12,0,0">
+                                                <Label Content="Proxy URL" Target="{Binding ElementName=AntigravityProxyUrlBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
+                                                <TextBox x:Name="AntigravityProxyUrlBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" Tag="http://127.0.0.1:7890" />
+                                            </StackPanel>
+                                            <TextBlock x:Name="AntigravityProxyModeHelp" Foreground="{DynamicResource FgSecondaryBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,9,0,0" />
+                                            <TextBlock x:Name="AntigravityProxyValidation" Foreground="{DynamicResource WarnBrush}" FontSize="11.5"
+                                                       TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <DockPanel Margin="0,0,0,14">
+                                                <TextBlock x:Name="AntigravityWindowStatus" DockPanel.Dock="Right" FontSize="11.5" VerticalAlignment="Center" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                                <TextBlock Text="Desktop controls" Style="{StaticResource SectionTitle}" />
+                                            </DockPanel>
+                                            <UniformGrid Columns="2" Margin="0,0,0,8">
+                                                <Button x:Name="LaunchAntigravityBtn" Content="Launch Antigravity" Style="{StaticResource GhostBtn}" Margin="0,0,4,0" />
+                                                <Button x:Name="RestartAntigravityBtn" Content="Restart Antigravity" Style="{StaticResource GhostBtn}" Margin="4,0,0,0" />
+                                            </UniformGrid>
+                                            <TextBlock Text="Launch and restart use the proxy shown on this page." FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" TextWrapping="Wrap" />
+                                            <TextBlock x:Name="AntigravityActionStatus" Visibility="Collapsed" FontSize="12" TextWrapping="Wrap" Margin="0,10,0,0"
+                                                       AutomationProperties.LiveSetting="Polite" />
+                                            <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,14,0,6" />
+                                            <CheckBox x:Name="FollowLifecycleCheck" Content="Follow Antigravity start and exit" Style="{StaticResource SettingToggle}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <DockPanel Margin="0,0,0,8">
+                                                <TextBlock x:Name="DesktopQuotaStatusText" DockPanel.Dock="Right" Text="Waiting for quota" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" />
+                                                <TextBlock Text="Desktop telemetry" Style="{StaticResource SectionTitle}" />
+                                            </DockPanel>
+                                            <TextBlock Text="Quota updates automatically while Antigravity is open and signed in."
+                                                       TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" />
+                                            <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,14,0,12" />
+                                            <Expander Header="Monitored transcript folders" Foreground="{DynamicResource FgPrimaryBrush}" FontSize="12" FontWeight="SemiBold">
+                                                <TextBlock x:Name="DataPathsText" FontFamily="Consolas" FontSize="11.5" FontWeight="Normal"
+                                                           Foreground="{DynamicResource FgSecondaryBrush}" TextWrapping="Wrap" LineHeight="18" Margin="0,10,0,0" />
+                                            </Expander>
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
-                            </Border>
-
-                            <Border Grid.Row="1" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                                <StackPanel>
-                                    <TextBlock Text="Alerts and local estimates" Style="{StaticResource SectionTitle}" Margin="0,0,0,14" />
-                                    <TextBlock Text="Context alerts" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="12" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel>
-                                            <Label Content="Warning (%)" Target="{Binding ElementName=WarnPctBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
-                                            <TextBox x:Name="WarnPctBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" />
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="2">
-                                            <Label Content="Critical (%)" Target="{Binding ElementName=CritPctBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
-                                            <TextBox x:Name="CritPctBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" />
-                                        </StackPanel>
-                                    </Grid>
-
-                                    <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,14,0,12" />
-                                    <TextBlock Text="Quota estimates" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="12" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel>
-                                            <Label Content="5-hour budget (tokens)" Target="{Binding ElementName=EstBase5hBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
-                                            <TextBox x:Name="EstBase5hBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" Tag="Optional" />
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="2">
-                                            <Label Content="7-day budget (tokens)" Target="{Binding ElementName=EstBase7dBox}" Style="{StaticResource SettingLabel}" Margin="0,0,0,5" />
-                                            <TextBox x:Name="EstBase7dBox" Style="{StaticResource CompactTextBox}" FontFamily="Consolas" Tag="Optional" />
-                                        </StackPanel>
-                                    </Grid>
-                                    <TextBlock Text="Used to estimate remaining quota when a live reading is unavailable." TextWrapping="Wrap"
-                                               FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" Margin="0,9,0,0" />
-                                </StackPanel>
-                            </Border>
-
-                            <Border x:Name="QuotaSourcesCard" Grid.Row="1" Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                                <StackPanel>
-                                    <DockPanel Margin="0,0,0,8">
-                                        <TextBlock x:Name="DesktopQuotaStatusText" DockPanel.Dock="Right" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" VerticalAlignment="Center" />
-                                        <TextBlock Text="Desktop telemetry" Style="{StaticResource SectionTitle}" />
-                                    </DockPanel>
-                                    <TextBlock Text="Quota updates automatically while Antigravity is open and signed in."
-                                               TextWrapping="Wrap" FontSize="11.5" Foreground="{DynamicResource FgSecondaryBrush}" />
-                                    <Border Height="1" Background="{DynamicResource BorderSubtleBrush}" Margin="0,14,0,12" />
-                                    <Expander Header="Monitored transcript folders" Foreground="{DynamicResource FgPrimaryBrush}" FontSize="12" FontWeight="SemiBold">
-                                        <TextBlock x:Name="DataPathsText" FontFamily="Consolas" FontSize="11.5" FontWeight="Normal"
-                                                   Foreground="{DynamicResource FgSecondaryBrush}" TextWrapping="Wrap" LineHeight="18" Margin="0,10,0,0" />
-                                    </Expander>
-                                </StackPanel>
-                            </Border>
-                        </Grid>
-                    </ScrollViewer>
+                            </ScrollViewer>
+                        </TabItem>
+                    </TabControl>
                 </DockPanel>
             </Grid>
         </Grid>

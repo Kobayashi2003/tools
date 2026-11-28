@@ -1,14 +1,13 @@
 # JINKI -Unlimited- Gallery
 
-`JinkiGallery_P.pak` adds one **Gallery** entry to the title screen alongside **Option**. The gallery has a dark blue layout, a scrollable CG grid, and two replay lists with the game's Japanese scene titles.
+`JinkiGallery_P.pak` adds one **Gallery** entry to the title screen alongside **Option**. The gallery has a scrollable CG grid and a scene list with the game's Japanese scenario titles.
 
 | Tab | Available entries |
 | --- | --- |
 | **CG** | All 52 original CG entries, including their image variants. Select a thumbnail to open the full-size viewer and right-click to return to the grid. The mission base CG gallery is also unlocked. |
-| **Scene** | 342 standalone ADV excerpts, including defeat episodes without an event CG. |
-| **Defeat** | 22 defeat episodes with event CGs. Each card shows the first event CG used by that episode. |
+| **Scene** | 22 battle-defeat replays with event CGs. Each card shows the first event CG used by that scene. |
 
-All entries are available immediately. [SceneCatalog.tsv](SceneCatalog.tsv) lists the replay IDs, script names, categories, titles, and defeat thumbnail keys.
+All entries are available immediately. [SceneCatalog.tsv](SceneCatalog.tsv) lists the replay IDs, script names, categories, titles, and thumbnail keys.
 
 ## Supported build
 
@@ -34,8 +33,10 @@ dotnet restore --locked-mode
 dotnet build --configuration Release --no-restore
 & $repak unpack -q -o $extracted -i "$vn/BluePrint" -i "$vn/DataTable/Script/setting" `
   -i "$trex/Blueprints/UI/Title" -i "$trex/Blueprints/UI/Recollection" `
+  -i "$trex/Blueprints/GameMode/BP_TrexGameMode.uasset" `
+  -i "$trex/Blueprints/GameMode/BP_TrexGameMode.uexp" `
   -i "$trex/DataTable/DataTable/DT_Story_Master.uasset" `
-  -i "$trex/DataTable/DataTable/DT_Story_Master.uexp" -i "$trex/DataTable/Script" $sourcePak
+  -i "$trex/DataTable/DataTable/DT_Story_Master.uexp" -i "$trex/DataTable/Script/D01_01" $sourcePak
 dotnet .\bin\Release\net8.0\GalleryPatch.dll $extracted $overlay |
   Set-Content -Encoding utf8 .\work\SceneCatalog.tsv
 & $repak pack -q --version V11 $overlay .\output\JinkiGallery_P.pak
@@ -56,10 +57,12 @@ The voice continuation PAK can be installed alongside this PAK. To restore the p
 
 The replay catalogue uses segments starting at the authored entry label that contain dialogue and reach a known endpoint using presentation commands. Entries with combat, map loads, branch commands, or other dependencies before that endpoint are omitted. An unconditional jump to another indexed episode in the defeat arc ends the current excerpt. Each excerpt runs from a dedicated script copy with `EndSceneGallery` as its last command. This command returns to the title map.
 
-Replay titles come from the game's story table. The generator identifies defeat candidates from the game's defeat arc and defeat-related story titles. For each candidate, it scans the excerpt's `Texture` commands in script order and resolves their keys through the original texture table. The first key in the event CG directory supplies the thumbnail. Candidates without a matching CG appear under **Scene**. Backgrounds and black screens do not count as event CGs.
+The generator uses the entries in the game's D01 defeat arc and takes replay titles from the story table. It scans each excerpt's `Texture` commands in script order and resolves their keys through the original texture table. An excerpt qualifies for **Scene** when it uses a texture from the event CG directory. The first matching texture supplies the thumbnail.
 
 The VN save and CG flag handlers are guarded during replay. CG availability is computed when the gallery opens, so opening it does not write unlock flags to the save.
 
-An isolated Windows copy was used to check the title entry, CG grid, full-size viewer, and replay lists. The defeat card layout was checked in a test package with sample images. Package inspection confirmed all 364 replay references and exit commands. It also checked all 22 installed thumbnail references against the first event CG in each original script.
+An isolated Windows copy was used to check the title entry, CG grid, full-size viewer, and scene playback. The scene card layout was checked with sample images. Package inspection confirmed the 22 replay references, exit commands, and first-event-CG thumbnail keys.
+
+The replay map delivers the initial left click to the dialogue handler even when that click acquires mouse capture. Replays can still contain authored black backgrounds and timed fades, such as the opening of scene 61001.
 
 The patch reuses the game's shipped UMG widgets and runs excerpts through the existing visual-novel player. [Unreal Engine 4.27 widget documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/creating-widgets?application_version=4.27)

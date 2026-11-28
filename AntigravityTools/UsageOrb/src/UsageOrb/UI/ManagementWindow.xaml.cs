@@ -54,6 +54,8 @@ public partial class ManagementWindow : Window
     private int _draftOrbSize;
     private ThemePreference _draftTheme;
 
+    internal bool IsManagingAntigravity { get; private set; }
+
     public event Action<AppSettings>? SettingsSaved;
     public event Action? ResetPositionRequested;
     public event Action? RefreshRequested;
@@ -97,8 +99,9 @@ public partial class ManagementWindow : Window
         PinSessionBtn.Click += OnPinSessionClicked;
         QuotaSettingsBtn.Click += (_, _) =>
         {
+            GeneralSettingsTab.IsSelected = true;
             SelectTab(ConsoleTab.Settings);
-            QuotaSourcesCard.BringIntoView();
+            Dispatcher.InvokeAsync(() => QuotaEstimatesCard.BringIntoView(), DispatcherPriority.Loaded);
         };
         RefreshBtn.Click += (_, _) => RefreshRequested?.Invoke();
         InspectorSessionCombo.SelectionChanged += OnInspectorSessionChanged;
@@ -116,8 +119,17 @@ public partial class ManagementWindow : Window
             if (e.Key == Key.Enter && OpenSelectedSession()) e.Handled = true;
         };
         OpacitySlider.ValueChanged += (_, _) => OpacityLabel.Text = $"{(int)Math.Round(OpacitySlider.Value * 100)}%";
-        SaveSettingsBtn.Click += OnSaveSettingsClicked;
-        LaunchAntigravityBtn.Click += OnLaunchAntigravityClicked;
+        SaveSettingsBtn.Click += (_, _) => SavePreferences();
+        SettingsSections.SelectionChanged += (_, e) =>
+        {
+            if (e.Source != SettingsSections || !AntigravitySettingsTab.IsSelected) return;
+            UpdateAntigravityControls();
+            RenderSelectedTab();
+        };
+        LaunchAntigravityBtn.Click += async (_, _) => await StartAntigravityAsync(restart: false);
+        RestartAntigravityBtn.Click += async (_, _) => await StartAntigravityAsync(restart: true);
+        AntigravityProxyModeCombo.SelectionChanged += (_, _) => UpdateProxyModeHelp();
+        AntigravityProxyUrlBox.TextChanged += (_, _) => AntigravityProxyValidation.Visibility = Visibility.Collapsed;
         ResetPosBtn.Click += (_, _) => ResetPositionRequested?.Invoke();
 
         _tabs =
@@ -132,10 +144,13 @@ public partial class ManagementWindow : Window
         BuildWindowPills();
         BuildStepKindPills();
         PopulateSettingsControls();
+        PopulateAntigravitySettings();
 
         _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _countdownTimer.Tick += (_, _) =>
         {
+            if (IsVisible && _selectedTab == ConsoleTab.Settings && AntigravitySettingsTab.IsSelected)
+                UpdateAntigravityControls();
             if (IsVisible && _selectedTab == ConsoleTab.Quotas && _snapshot is not null)
             {
                 RenderQuotaCards(_snapshot);
@@ -166,9 +181,12 @@ public partial class ManagementWindow : Window
 
     public void UpdateSettings(AppSettings settings)
     {
+        bool desktopSettingsChanged = _settings.AntigravityProxy != settings.AntigravityProxy ||
+            _settings.FollowAntigravityLifecycle != settings.FollowAntigravityLifecycle;
         _settings = settings.Clone();
         ShowInTaskbar = _settings.ShowTaskbarButton;
         PopulateSettingsControls();
+        if (desktopSettingsChanged) PopulateAntigravitySettings();
         if (_snapshot is not null) RenderAll();
     }
 
@@ -187,6 +205,8 @@ public partial class ManagementWindow : Window
     {
         _selectedTab = tab;
         UpdateNavTabs();
+        if (tab == ConsoleTab.Settings && AntigravitySettingsTab.IsSelected)
+            UpdateAntigravityControls();
         RenderSelectedTab();
     }
 
@@ -328,8 +348,8 @@ public partial class ManagementWindow : Window
             case ConsoleTab.Sessions:
                 RenderSessionsTable();
                 break;
-            case ConsoleTab.Settings:
-                RenderSettingsTab(snap);
+            case ConsoleTab.Settings when AntigravitySettingsTab.IsSelected:
+                RenderDesktopTelemetry(snap);
                 break;
         }
     }
@@ -1190,7 +1210,7 @@ public partial class ManagementWindow : Window
         }
     }
 
-    private void RenderSettingsTab(DashboardSnapshot snap)
+    private void RenderDesktopTelemetry(DashboardSnapshot snap)
     {
         DesktopQuotaStatusText.Text = snap.DesktopQuotaLastSeenAt is { } desktopRead
             ? $"Read {FormatUtil.RelativeTime(desktopRead)}"
@@ -1217,7 +1237,6 @@ public partial class ManagementWindow : Window
         long weeklyBudget = _settings.WeeklyTokenBudget ?? _settings.WeeklyEstBaselineTokens;
         EstBase7dBox.Text = weeklyBudget > 0 ? FormatUtil.TokensCompact(weeklyBudget) : "";
         StartWithWindowsCheck.IsChecked = _settings.StartWithWindows;
-        FollowLifecycleCheck.IsChecked = _settings.FollowAntigravityLifecycle;
         ShowTrayIconCheck.IsChecked = _settings.ShowTrayIcon;
         ShowTaskbarButtonCheck.IsChecked = _settings.ShowTaskbarButton;
         RegisterStartMenuCheck.IsChecked = _settings.RegisterStartMenuShortcut;
@@ -1290,8 +1309,10 @@ public partial class ManagementWindow : Window
         }
     }
 
-    private void OnSaveSettingsClicked(object sender, RoutedEventArgs e)
+    private void SavePreferences()
     {
+        if (!TryReadAntigravityProxy(out var proxy)) return;
+
         var next = _settings.Clone();
         next.WidgetShape = _draftShape;
         next.AnchorCorner = _draftAnchor;
@@ -1320,28 +1341,98 @@ public partial class ManagementWindow : Window
         }
 
         next.StartWithWindows = StartWithWindowsCheck.IsChecked == true;
-        next.FollowAntigravityLifecycle = FollowLifecycleCheck.IsChecked == true;
         next.ShowTrayIcon = ShowTrayIconCheck.IsChecked == true;
         next.ShowTaskbarButton = ShowTaskbarButtonCheck.IsChecked == true;
         next.RegisterStartMenuShortcut = RegisterStartMenuCheck.IsChecked == true;
+        next.AntigravityProxy = proxy;
+        next.FollowAntigravityLifecycle = FollowLifecycleCheck.IsChecked == true;
 
         SettingsSaved?.Invoke(next);
     }
 
-    private async void OnLaunchAntigravityClicked(object sender, RoutedEventArgs e)
+    private string? SelectedProxyMode => (AntigravityProxyModeCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+
+    private void PopulateAntigravitySettings()
     {
-        LaunchAntigravityBtn.IsEnabled = false;
+        var savedProxy = _settings.AntigravityProxy;
+        SelectComboByTag(AntigravityProxyModeCombo, savedProxy switch { null or "" => "Auto", "none" => "Direct", _ => "Manual" });
+        AntigravityProxyUrlBox.Text = savedProxy is null or "none" ? "" : savedProxy;
+        FollowLifecycleCheck.IsChecked = _settings.FollowAntigravityLifecycle;
+        UpdateProxyModeHelp();
+    }
+
+    private void UpdateProxyModeHelp()
+    {
+        AntigravityProxyValidation.Visibility = Visibility.Collapsed;
+        ManualAntigravityProxyFields.Visibility = SelectedProxyMode == "Manual" ? Visibility.Visible : Visibility.Collapsed;
+        AntigravityProxyModeHelp.Text = SelectedProxyMode switch
+        {
+            "Manual" => "Enter an HTTP or HTTPS proxy URL.",
+            "Direct" => "Launch Antigravity without a proxy.",
+            _ => "Use the proxy from environment variables or Windows settings.",
+        };
+    }
+
+    private bool TryReadAntigravityProxy(out string? proxy)
+    {
+        proxy = SelectedProxyMode switch
+        {
+            "Manual" => AntigravityProxyUrlBox.Text.Trim(),
+            "Direct" => "none",
+            _ => null,
+        };
+
+        if (SelectedProxyMode != "Manual") return true;
+        string message;
+        if (!AntigravityDesktop.TryParseProxy(proxy, out var uri))
+            message = "Enter an HTTP or HTTPS proxy URL with a host and port.";
+        else if (uri.UserInfo.Length > 0)
+            message = "For a proxy with credentials, use Automatic mode and set the proxy in the environment.";
+        else
+            return true;
+
+        AntigravitySettingsTab.IsSelected = true;
+        AntigravityProxyValidation.Text = message;
+        AntigravityProxyValidation.Visibility = Visibility.Visible;
+        Dispatcher.InvokeAsync(() => AntigravityProxyUrlBox.Focus(), DispatcherPriority.Loaded);
+        return false;
+    }
+
+    private void UpdateAntigravityControls()
+    {
+        bool open = AntigravityDesktop.IsWindowOpen();
+        AntigravityWindowStatus.Text = open ? "Window open" : "Window closed";
+        LaunchAntigravityBtn.IsEnabled = !IsManagingAntigravity && !open;
+        RestartAntigravityBtn.IsEnabled = !IsManagingAntigravity && open;
+        SaveSettingsBtn.IsEnabled = !IsManagingAntigravity;
+    }
+
+    private void ShowAntigravityStatus(string message, bool success)
+    {
+        AntigravityActionStatus.Text = message;
+        AntigravityActionStatus.SetResourceReference(TextBlock.ForegroundProperty, success ? "FgSecondaryBrush" : "WarnBrush");
+        AntigravityActionStatus.Visibility = Visibility.Visible;
+    }
+
+    private async Task StartAntigravityAsync(bool restart)
+    {
+        if (IsManagingAntigravity || !TryReadAntigravityProxy(out var proxy)) return;
+        IsManagingAntigravity = true;
+        UpdateAntigravityControls();
+        ShowAntigravityStatus(restart ? "Closing Antigravity and applying the selected proxy…" : "Starting Antigravity…", success: true);
         try
         {
-            ShowToast(await Task.Run(AntigravityDesktop.Launch));
+            var result = await Task.Run(() => AntigravityDesktop.StartAsync(proxy, restart));
+            ShowAntigravityStatus(result.Message, result.Success);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException or System.IO.IOException)
         {
-            ShowToast("Antigravity could not be started. Check the executable and proxy settings.");
+            ShowAntigravityStatus("Antigravity could not be started. Check the executable and proxy settings.", success: false);
         }
         finally
         {
-            LaunchAntigravityBtn.IsEnabled = true;
+            IsManagingAntigravity = false;
+            UpdateAntigravityControls();
         }
     }
 

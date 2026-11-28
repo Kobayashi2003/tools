@@ -59,8 +59,21 @@ public sealed class OverlayTests
         var launch = AntigravityDesktop.BuildLaunchInfo(@"C:\Example\Antigravity.exe", proxy);
         Assert.Equal(proxy, launch.Environment["HTTP_PROXY"]);
         Assert.Equal(proxy, launch.Environment["HTTPS_PROXY"]);
-        Assert.Contains("127.0.0.1", launch.Environment["NO_PROXY"]!.Split(','));
+        Assert.Contains("127.0.0.0/8", launch.Environment["NO_PROXY"]!.Split(','));
+        Assert.Contains("--proxy-server=http://127.0.0.1:3128", launch.ArgumentList);
+        Assert.Contains(launch.ArgumentList, arg => arg.StartsWith("--proxy-bypass-list=") && arg.Contains("localhost"));
         Assert.Equal(previous, Environment.GetEnvironmentVariable("HTTP_PROXY"));
         Assert.False(launch.UseShellExecute);
+    }
+
+    [Fact]
+    public void DirectAntigravityLaunchClearsInheritedProxyAndDisablesChromiumProxy()
+    {
+        var launch = AntigravityDesktop.BuildLaunchInfo(@"C:\Example\Antigravity.exe", "none");
+
+        Assert.False(launch.Environment.ContainsKey("HTTP_PROXY"));
+        Assert.False(launch.Environment.ContainsKey("HTTPS_PROXY"));
+        Assert.False(launch.Environment.ContainsKey("ALL_PROXY"));
+        Assert.Contains("--no-proxy-server", launch.ArgumentList);
     }
 }

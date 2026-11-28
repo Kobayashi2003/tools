@@ -45,12 +45,6 @@ internal static partial class GalleryPatch
         return new FPackageIndex(-asset.Imports.Count);
     }
 
-    private static FPackageIndex GetFunctionImport(UAsset asset, FPackageIndex owner, string name)
-    {
-        var i = asset.Imports.FindIndex(x => x.OuterIndex.Index == owner.Index && x.ObjectName.ToString() == name);
-        return i < 0 ? AddFunctionImport(asset, owner, name) : new FPackageIndex(-i - 1);
-    }
-
     private static EX_InstanceVariable FieldVariable(FName field, FPackageIndex owner) => new()
     {
         Variable = new KismetPropertyPointer { New = new FFieldPath { Path = new[] { field }, ResolvedOwner = owner } },

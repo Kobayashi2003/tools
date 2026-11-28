@@ -123,6 +123,7 @@ public sealed class AppSettings
     public bool RegisterStartMenuShortcut { get; set; }
     public bool StartWithWindows { get; set; }
     public bool FollowAntigravityLifecycle { get; set; }
+    public string? AntigravityProxy { get; set; }
     public double ContextWarnPercent { get; set; } = 70;
     public double ContextCriticalPercent { get; set; } = 88;
     public double QuotaLowPercent { get; set; } = 20;
